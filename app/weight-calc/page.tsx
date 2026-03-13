@@ -310,10 +310,11 @@ const sortedTapeItems = useMemo(() => {
 
   return (
     <div className="min-h-screen bg-zinc-950 p-8">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-          <div className="flex items-center gap-6">
-            <div className="flex flex-col items-center gap-1">
+      <div className="max-w-screen-2xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-3 items-center gap-8 lg:gap-12 mb-8">
+          {/* Left col: back + logo grouped (lg: flex-row to keep logo "where it is" next to back) */}
+          <div className="flex flex-col lg:flex-row lg:items-start items-center gap-4 lg:gap-8">
+            <div className="flex flex-col items-center lg:items-start gap-4 flex-shrink-0">
               <Link href="/" className="flex items-center gap-2 group relative bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-900 border border-blue-900/50 rounded-2xl px-6 py-3 font-medium text-white shadow-[0_20px_40px_-10px_rgba(30,58,138,0.3)] shadow-blue-950/60 hover:shadow-[0_30px_50px_-12px_rgba(30,58,138,0.4)] hover:shadow-blue-900/80 hover:-translate-y-1 hover:scale-[1.05] hover:border-blue-800/70 transition-all duration-500 ease-out overflow-hidden">
                 <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
                 Dashboard
@@ -326,27 +327,28 @@ const sortedTapeItems = useMemo(() => {
               width={250}
               height={123}
               priority
-              className="opacity-85 hover:opacity-95 backdrop-blur-sm max-h-28 rounded-3xl shadow-[0_10px_20px_-6px_rgba(30,58,138,0.3)] shadow-blue-950/60 hover:shadow-[0_15px_25px_-8px_rgba(30,58,138,0.4)] hover:shadow-blue-900/80 hover:-translate-y-0.5 transition-all duration-500 ease-out"
+              className="opacity-85 hover:opacity-95 backdrop-blur-sm max-h-28 rounded-3xl shadow-[0_10px_20px_-6px_rgba(30,58,138,0.3)] shadow-blue-950/60 hover:shadow-[0_15px_25px_-8px_rgba(30,58,138,0.4)] hover:shadow-blue-900/80 hover:-translate-y-0.5 transition-all duration-500 ease-out flex-shrink-0 lg:max-h-28"
             />
-            <div className="flex flex-col items-center gap-2">
-              <h1 className="text-4xl font-bold text-white tracking-tight mb-3">Weight Calculator</h1>
-              <div className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-2xl text-sm font-medium min-w-0">
-                <Users size={18} />
-                <span className="truncate max-w-48">{session?.user?.name ?? "User"}</span>
-              </div>
-              <p className="text-zinc-600 text-lg text-center">Advanced material weight calculations</p>
-            </div>
           </div>
-          {/* Right side empty for now */}
+          {/* Center col: Title/pill/subtitle perfectly centered with panels */}
+          <div className="flex flex-col items-center gap-3">
+            <h1 className="text-4xl font-bold text-white tracking-tight mb-3">Weight Calculator</h1>
+            <div className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-2xl text-sm font-medium min-w-0">
+              <Users size={18} />
+              <span className="truncate max-w-48">{session?.user?.name ?? "User"}</span>
+            </div>
+            <p className="text-zinc-600 text-lg text-center">Advanced material weight calculations</p>
+          </div>
+          {/* Right col empty */}
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-1 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
           <div className="bg-zinc-900/70 backdrop-blur-xl border border-zinc-700/50 rounded-3xl p-10 shadow-2xl">
             <h2 className="text-3xl font-bold text-white mb-8 flex items-center gap-3">
               <span>⚖️</span>
               Material & Shape
             </h2>
-            <div className="space-y-6">
+            <div className="space-y-8">
               <div>
                 <label className="block text-zinc-300 font-medium mb-3 text-lg">Material Type</label>
                 <select 
@@ -392,7 +394,6 @@ const sortedTapeItems = useMemo(() => {
               </div>
             </div>
           </div>
-          <div className="flex flex-col gap-8">
             <div className="bg-zinc-900/70 backdrop-blur-xl border border-zinc-700/50 rounded-3xl p-10 shadow-2xl relative">
             <h2 className="text-3xl font-bold text-white mb-8">Dimensions</h2>
             <div className="space-y-6">
@@ -437,19 +438,19 @@ const sortedTapeItems = useMemo(() => {
                 )}
               </div>
             </div>
-            <div className="mt-12 pt-10 border-t border-zinc-800">
-              <h3 className="text-2xl font-bold text-white mb-6">Weight & Cost</h3>
+            <div className="mt-10 pt-10 border-t border-zinc-800">
+              <h3 className="text-3xl font-bold text-white mb-6">Weight & Cost</h3>
               <div className="grid grid-cols-2 gap-12">
                 <div className="text-center">
-                  <div className="text-3xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">Weight (lbs)</div>
-                  <div className="text-5xl font-mono font-bold bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-600 bg-clip-text text-transparent mb-2 shadow-2xl">
+                  <div className="text-2xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">Weight (lbs)</div>
+                  <div className="text-4xl font-mono font-bold bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-600 bg-clip-text text-transparent mb-2 shadow-2xl">
                     {formattedWeight}
                   </div>
                   <p className="text-zinc-400 text-lg">({formattedWeightKg} kg)</p>
                 </div>
                 <div className="text-center">
-                  <div className="text-3xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">Est. Cost</div>
-                  <div className="text-5xl font-mono font-bold bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 bg-clip-text text-transparent mb-2 shadow-2xl">
+                  <div className="text-2xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">Est. Cost</div>
+                  <div className="text-4xl font-mono font-bold bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 bg-clip-text text-transparent mb-2 shadow-2xl">
                     {formattedCost}
                   </div>
                 </div>
@@ -464,7 +465,7 @@ const sortedTapeItems = useMemo(() => {
             </button>
           </div>
 
-            <div className="relative bg-zinc-900/70 backdrop-blur-xl border border-zinc-700/50 rounded-3xl p-20 shadow-2xl">
+            <div className="lg:col-span-2 relative bg-zinc-900/70 backdrop-blur-xl border border-zinc-700/50 rounded-3xl p-15 shadow-2xl">
   <h2 className="text-3xl font-bold text-white mb-8 flex items-center gap-3">
     <span>📋</span>Tape
   </h2>
@@ -572,12 +573,11 @@ const sortedTapeItems = useMemo(() => {
 
                     </button>
 
+                  
                   )}
-
                 </>
               )}
             </div>
-          </div>
         </div>
       </div>
 
