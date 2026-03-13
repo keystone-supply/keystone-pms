@@ -122,67 +122,114 @@ export default function Dashboard() {
   if (loading) return <div className="flex h-screen items-center justify-center bg-zinc-950 text-white p-10 text-center text-xl">Loading dashboard metrics…</div>;
 
   return (
-    <div className="min-h-screen p-8 max-w-7xl mx-auto space-y-10">
-      <div className="flex justify-between items-start mb-12 gap-8">
-        <div className="flex flex-col items-center">
-          <div className="mb-6">
-            <Image
-              src="/logo.png"
-              alt="Keystone Supply"
-              width={500}
-              height={246}
-              priority
-              className="opacity-85 hover:opacity-95 backdrop-blur-sm max-h-57 rounded-3xl shadow-[0_20px_40px_-12px_rgba(30,58,138,0.3)] shadow-blue-950/60 hover:shadow-[0_40px_50px_-15px_rgba(30,58,138,0.4)] hover:shadow-blue-900/80 transition-all duration-800 ease-out"
-            />
-          </div>
-          <div className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-2xl text-sm font-medium min-w-0 mb-3">
-            <Users size={18} />
-            <span className="truncate max-w-48">{session?.user?.name ?? "User"}</span>
-          </div>
-          <button
-            onClick={() => signOut({ callbackUrl: "/" })}
-            className="flex items-center gap-2 px-4 py-2 bg-zinc-900/80 border border-zinc-800/50 rounded-2xl text-sm font-medium text-zinc-400 hover:text-rose-400 hover:bg-rose-900/30 hover:border-rose-600/50 hover:shadow-md hover:shadow-rose-500/20 transition-all duration-300 group"
-            title="Sign Out"
-          >
-            <LogOut size={16} className="group-hover:rotate-180 transition-transform duration-300" />
-            <span>Sign Out</span>
-          </button>
-          <p className="text-zinc-600 text-lg text-center mt-4">Realtime across all 4 users • Last updated just now</p>
+    <>
+      {/* User & Sign Out - fixed top-right */}
+      <div className="fixed top-8 right-8 z-50 flex items-center gap-4">
+        <div className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-2xl text-sm font-medium min-w-0">
+          <Users size={18} />
+          <span className="truncate max-w-48">{session?.user?.name ?? "User"}</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-3 md:gap-4 auto-rows-fr justify-items-end ml-auto max-w-full lg:max-w-2xl">
-
-          <Link
-            href="/new-project"
-            className="flex items-center gap-2 group relative bg-gradient-to-r from-emerald-600/95 to-emerald-700/95 backdrop-blur-sm hover:from-emerald-600 hover:to-emerald-700 px-3 py-2 sm:px-5 sm:py-2.5 lg:px-8 lg:py-3.5 rounded-2xl font-semibold text-sm sm:text-base lg:text-lg shadow-[0_15px_35px_-10px_rgba(16,185,129,0.4)] shadow-emerald-500/40 hover:shadow-[0_25px_50px_-12px_rgba(16,185,129,0.5)] hover:shadow-emerald-500/60 hover:-translate-y-1 hover:scale-[1.05] hover:border-emerald-500/50 border-emerald-500/30 transition-all duration-500 ease-out overflow-hidden flex-shrink-0"
-          >
-            <Plus className="w-5 h-5" /> New Project
-          </Link>
-          <Link
-            href="/projects"
-            className="flex items-center gap-2 group relative bg-gradient-to-r from-blue-600/95 to-blue-700/95 backdrop-blur-sm hover:from-blue-600 hover:to-blue-700 px-3 py-2 sm:px-5 sm:py-2.5 lg:px-8 lg:py-3.5 rounded-2xl font-semibold text-sm sm:text-base lg:text-lg shadow-[0_15px_35px_-10px_rgba(59,130,246,0.4)] shadow-blue-500/40 hover:shadow-[0_25px_50px_-12px_rgba(59,130,246,0.5)] hover:shadow-blue-500/60 hover:-translate-y-1 hover:scale-[1.05] hover:border-blue-500/50 border-blue-500/30 transition-all duration-500 ease-out overflow-hidden flex-shrink-0"
-          >
-            <FolderOpen className="w-5 h-5" /> View All Projects
-          </Link>
-          <Link
-            href="/remnants"
-            className="flex items-center gap-2 group relative bg-gradient-to-r from-purple-600/95 to-purple-700/95 backdrop-blur-sm hover:from-purple-600 hover:to-purple-700 px-3 py-2 sm:px-5 sm:py-2.5 lg:px-8 lg:py-3.5 rounded-2xl font-semibold text-sm sm:text-base lg:text-lg shadow-[0_15px_35px_-10px_rgba(168,85,247,0.4)] shadow-purple-500/40 hover:shadow-[0_25px_50px_-12px_rgba(168,85,247,0.5)] hover:shadow-purple-500/60 hover:-translate-y-1 hover:scale-[1.05] hover:border-purple-500/50 border-purple-500/30 transition-all duration-500 ease-out overflow-hidden flex-shrink-0"
-          >
-            <Package className="w-5 h-5" /> Remnant Tracker
-          </Link>
-          <Link
-            href="/nest-tool"
-            className="flex items-center gap-2 group relative bg-gradient-to-r from-cyan-600/95 to-cyan-700/95 backdrop-blur-sm hover:from-cyan-600 hover:to-cyan-700 px-3 py-2 sm:px-5 sm:py-2.5 lg:px-8 lg:py-3.5 rounded-2xl font-semibold text-sm sm:text-base lg:text-lg shadow-[0_15px_35px_-10px_rgba(14,165,233,0.4)] shadow-cyan-500/40 hover:shadow-[0_25px_50px_-12px_rgba(14,165,233,0.5)] hover:shadow-cyan-500/60 hover:-translate-y-1 hover:scale-[1.05] hover:border-cyan-500/50 border-cyan-500/30 transition-all duration-500 ease-out overflow-hidden flex-shrink-0"
-          >
-            <Layers className="w-5 h-5" /> NestNow
-          </Link>
-          <Link
-            href="/weight-calc"
-            className="flex items-center gap-2 group relative bg-gradient-to-r from-amber-600/95 to-amber-700/95 backdrop-blur-sm hover:from-amber-600 hover:to-amber-700 px-3 py-2 sm:px-5 sm:py-2.5 lg:px-8 lg:py-3.5 rounded-2xl font-semibold text-sm sm:text-base lg:text-lg shadow-[0_15px_35px_-10px_rgba(245,158,11,0.4)] shadow-amber-500/40 hover:shadow-[0_25px_50px_-12px_rgba(245,158,11,0.5)] hover:shadow-amber-500/60 hover:-translate-y-1 hover:scale-[1.05] hover:border-amber-500/50 border-amber-500/30 transition-all duration-500 ease-out overflow-hidden flex-shrink-0"
-          >
-            <Scale className="w-5 h-5" /> Weight Calc
-          </Link>
-        </div>
+        <button
+          onClick={() => signOut({ callbackUrl: "/" })}
+          className="flex items-center gap-2 px-4 py-2 bg-zinc-900/80 border border-zinc-800/50 rounded-2xl text-sm font-medium text-zinc-400 hover:text-rose-400 hover:bg-rose-900/30 hover:border-rose-600/50 hover:shadow-md hover:shadow-rose-500/20 transition-all duration-300 group"
+          title="Sign Out"
+        >
+          <LogOut size={18} className="group-hover:rotate-180 transition-transform duration-300" />
+        </button>
       </div>
+      <div className="min-h-screen p-8 max-w-7xl mx-auto space-y-10">
+      <div className="text-center mb-16">
+<div className="flex flex-col items-center mx-auto max-w-4xl">
+<Image
+src="/logo.png"
+alt="Keystone Supply"
+width={500}
+height={246}
+priority
+className="opacity-85 hover:opacity-95 backdrop-blur-sm max-h-57 rounded-3xl shadow-[0_20px_40px_-12px_rgba(30,58,138,0.3)] shadow-blue-950/60 hover:shadow-[0_40px_50px_-15px_rgba(30,58,138,0.4)] hover:shadow-blue-900/80 transition-all duration-800 ease-out"
+/>
+<p className="text-zinc-600 text-lg text-center mt-6">Realtime across all 4 users • Last updated just now</p>
+</div>
+</div>
+
+{/* Quick Actions Orbs */}
+<section className="mb-10 px-6">
+  <h2 className="text-2xl font-bold text-center mb-12 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent drop-shadow-lg">Quick Actions</h2>
+  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 sm:gap-8 max-w-7xl mx-auto justify-items-center">
+    {/* New Project Orb */}
+    <Link
+      href="/new-project"
+      className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-full bg-gradient-to-r from-emerald-500/20 to-emerald-600/20 border-4 border-emerald-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(16,185,129,0.5)] hover:shadow-[0_0_60px_rgba(16,185,129,0.8)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-100"
+      title="+ New Project"
+    >
+      <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-emerald-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-emerald-500/60 group-hover:scale-110 transition-all duration-500">
+        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-emerald-400/50 to-transparent animate-shimmer"></div>
+        <Plus className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-emerald-100 drop-shadow-lg group-hover:rotate-90 transition-transform duration-500" />
+      </div>
+      <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">New Project</span>
+      {/* Neon Ring */}
+      <div className="absolute inset-0 rounded-full border-2 border-emerald-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+    </Link>
+    {/* View All Projects Orb - with dynamic badge */}
+    <Link
+      href="/projects"
+      className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-full bg-gradient-to-r from-blue-500/20 to-blue-600/20 border-4 border-blue-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(59,130,246,0.5)] hover:shadow-[0_0_60px_rgba(59,130,246,0.8)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-200"
+      title="View All Projects"
+    >
+      <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-blue-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-blue-500/60 group-hover:scale-110 transition-all duration-500">
+        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-blue-400/50 to-transparent animate-shimmer"></div>
+        <FolderOpen className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-blue-100 drop-shadow-lg group-hover:rotate-5 transition-transform duration-500" />
+        {/* Dynamic Badge */}
+        {metrics.openQuotes > 0 && (
+          <div className="absolute -bottom-2 -right-2 bg-rose-500 text-xs font-bold text-white px-2 py-1 rounded-full shadow-lg animate-pulse">
+            {metrics.openQuotes}
+          </div>
+        )}
+      </div>
+      <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">Projects</span>
+      <div className="absolute inset-0 rounded-full border-2 border-blue-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+    </Link>
+    {/* Remnant Tracker Orb */}
+    <Link
+      href="/remnants"
+      className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-full bg-gradient-to-r from-purple-500/20 to-purple-600/20 border-4 border-purple-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(168,85,247,0.5)] hover:shadow-[0_0_60px_rgba(168,85,247,0.8)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-300"
+      title="Remnant Tracker"
+    >
+      <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-purple-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-purple-500/60 group-hover:scale-110 transition-all duration-500">
+        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400/50 to-transparent animate-shimmer"></div>
+        <Package className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-purple-100 drop-shadow-lg" />
+      </div>
+      <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">Remnants</span>
+      <div className="absolute inset-0 rounded-full border-2 border-purple-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+    </Link>
+    {/* NestNow Orb */}
+    <Link
+      href="/nest-tool"
+      className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-full bg-gradient-to-r from-cyan-500/20 to-cyan-600/20 border-4 border-cyan-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(14,165,233,0.5)] hover:shadow-[0_0_60px_rgba(14,165,233,0.8)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-400"
+      title="NestNow Tool"
+    >
+      <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-cyan-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-cyan-500/60 group-hover:scale-110 transition-all duration-500">
+        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400/50 to-transparent animate-shimmer"></div>
+        <Layers className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-cyan-100 drop-shadow-lg group-hover:rotate-180 transition-transform duration-700" />
+      </div>
+      <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">NestNow</span>
+      <div className="absolute inset-0 rounded-full border-2 border-cyan-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+    </Link>
+    {/* Weight Calc Orb */}
+    <Link
+      href="/weight-calc"
+      className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-full bg-gradient-to-r from-amber-500/20 to-amber-600/20 border-4 border-amber-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(245,158,11,0.5)] hover:shadow-[0_0_60px_rgba(245,158,11,0.8)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-500"
+      title="Weight Calculator"
+    >
+      <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-amber-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-amber-500/60 group-hover:scale-110 transition-all duration-500">
+        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-amber-400/50 to-transparent animate-shimmer"></div>
+        <Scale className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-amber-100 drop-shadow-lg group-hover:animate-bounce" />
+      </div>
+      <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">Weight Calc</span>
+      <div className="absolute inset-0 rounded-full border-2 border-amber-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+    </Link>
+  </div>
+</section>
 
       {/* Metrics Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
@@ -259,5 +306,6 @@ export default function Dashboard() {
       </div>
 
     </div>
+  </>
   );
 }
