@@ -130,11 +130,11 @@
 
 @layer utilities {
   @keyframes shimmer {
-    0% { transform: translateX(-100%); }
-    100% { transform: translateX(100%); }
+    0% { transform: translateX(-300%); }
+    100% { transform: translateX(300%); }
   }
   .animate-shimmer {
-    animation: shimmer 2s infinite linear;
+    animation: shimmer 7s infinite linear;
   }
   @keyframes spin-slow {
     from { transform: rotate(0deg); }

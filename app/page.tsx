@@ -163,7 +163,7 @@ className="opacity-85 hover:opacity-95 backdrop-blur-sm max-h-57 rounded-3xl sha
       title="+ New Project"
     >
       <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-emerald-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-emerald-500/60 group-hover:scale-110 transition-all duration-500">
-        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-emerald-400/50 to-transparent animate-shimmer"></div>
+        <div className="absolute inset-[-70%] rounded-full bg-gradient-to-r from-emerald-400/50 to-transparent animate-shimmer"></div>
         <Plus className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-emerald-100 drop-shadow-lg group-hover:rotate-90 transition-transform duration-500" />
       </div>
       <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">New Project</span>
@@ -177,7 +177,7 @@ className="opacity-85 hover:opacity-95 backdrop-blur-sm max-h-57 rounded-3xl sha
       title="View All Projects"
     >
       <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-blue-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-blue-500/60 group-hover:scale-110 transition-all duration-500">
-        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-blue-400/50 to-transparent animate-shimmer"></div>
+        <div className="absolute inset-[-70%] rounded-full bg-gradient-to-r from-blue-400/50 to-transparent animate-shimmer"></div>
         <FolderOpen className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-blue-100 drop-shadow-lg group-hover:rotate-5 transition-transform duration-500" />
         {/* Dynamic Badge */}
         {metrics.openQuotes > 0 && (
@@ -196,7 +196,7 @@ className="opacity-85 hover:opacity-95 backdrop-blur-sm max-h-57 rounded-3xl sha
       title="Remnant Tracker"
     >
       <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-purple-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-purple-500/60 group-hover:scale-110 transition-all duration-500">
-        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400/50 to-transparent animate-shimmer"></div>
+        <div className="absolute inset-[-70%] rounded-full bg-gradient-to-r from-purple-400/50 to-transparent animate-shimmer"></div>
         <Package className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-purple-100 drop-shadow-lg" />
       </div>
       <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">Remnants</span>
@@ -209,7 +209,7 @@ className="opacity-85 hover:opacity-95 backdrop-blur-sm max-h-57 rounded-3xl sha
       title="NestNow Tool"
     >
       <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-cyan-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-cyan-500/60 group-hover:scale-110 transition-all duration-500">
-        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400/50 to-transparent animate-shimmer"></div>
+        <div className="absolute inset-[-70%] rounded-full bg-gradient-to-r from-cyan-400/50 to-transparent animate-shimmer"></div>
         <Layers className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-cyan-100 drop-shadow-lg group-hover:rotate-180 transition-transform duration-700" />
       </div>
       <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">NestNow</span>
@@ -222,7 +222,7 @@ className="opacity-85 hover:opacity-95 backdrop-blur-sm max-h-57 rounded-3xl sha
       title="Weight Calculator"
     >
       <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-amber-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-amber-500/60 group-hover:scale-110 transition-all duration-500">
-        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-amber-400/50 to-transparent animate-shimmer"></div>
+        <div className="absolute inset-[-70%] rounded-full bg-gradient-to-r from-amber-400/50 to-transparent animate-shimmer"></div>
         <Scale className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-amber-100 drop-shadow-lg group-hover:animate-bounce" />
       </div>
       <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">Weight Calc</span>
