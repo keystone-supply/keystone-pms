@@ -5,7 +5,7 @@ keystone-pms/app/new-project/page.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Save } from 'lucide-react';
 
@@ -43,7 +43,7 @@ export default function NewProject() {
   const [loading, setLoading] = useState(false);
   const [accessToken, setAccessToken] = useState('');
   const [form, setForm] = useState({ customer: '', project_name: '', customer_po: '', supply_industrial: 'SUPPLY' });
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+  
   const [nextJob, setNextJob] = useState('');
 
   useEffect(() => {

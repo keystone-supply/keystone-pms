@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Plus, Users, DollarSign, TrendingUp, CheckCircle, FolderOpen, Package, Layers, LogOut, Scale } from 'lucide-react';
@@ -31,9 +31,7 @@ export default function Dashboard() {
 
   const { data: session, status } = useSession();
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const supabase = createClient(supabaseUrl, supabaseAnonKey);
+  
 
   const fetchMetrics = async () => {
     const now = new Date();

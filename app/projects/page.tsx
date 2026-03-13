@@ -6,7 +6,7 @@ All Projects List Page – ENHANCED WITH INSTANT GLOBAL SEARCH
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabaseClient';
 import { Plus, Eye, ArrowLeft, Users } from 'lucide-react';
 import { useSession } from "next-auth/react";
 import Link from 'next/link';
@@ -20,7 +20,7 @@ export default function ProjectsPage() {
 
   const { data: session } = useSession();
 
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+  
 
   const fetchProjects = async () => {
     const { data } = await supabase
@@ -37,7 +37,9 @@ export default function ProjectsPage() {
       .channel('projects-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, fetchProjects)
       .subscribe();
-    return () => supabase.removeChannel(channel);
+    return () => {
+      channel.unsubscribe();
+    };
   }, []);
 
   if (loading) return <div className="p-10 text-center text-xl text-white">Loading projects…</div>;
@@ -73,7 +75,7 @@ export default function ProjectsPage() {
           </Link>
         </div>
 
-        <div className="bg-zinc-800 border border-zinc-600 rounded-3xl overflow-hidden shadow-2xl">
+        <div className="bg-zinc-900 border border-zinc-600 rounded-3xl overflow-hidden shadow-2xl">
           <table className="w-full">
             <thead className="bg-zinc-950 border-b border-zinc-800">
               <tr>
@@ -89,7 +91,7 @@ export default function ProjectsPage() {
             </thead>
             <tbody className="divide-y divide-zinc-700">
               {projects.map((p) => (
-                <tr key={p.id} className="hover:bg-zinc-950 transition-colors group">
+                <tr key={p.id} className="hover:bg-blue-600/80 transition-colors group">
                   <td className="px-8 py-6 font-mono text-lg font-semibold text-white">{p.project_number}</td>
                   <td className="px-8 py-6 uppercase font-medium text-white">{p.customer}</td>
                   <td className="px-8 py-6 uppercase text-white">{p.project_name}</td>
