@@ -30,6 +30,7 @@ interface Shape {
 
 interface TapeItem {
   id: string;
+  notes: string;
   material: MaterialKey;
   materialName: string;
   density: number;
@@ -53,10 +54,12 @@ export default function WeightCalcPage() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState('');
 
+  const [exportMethod, setExportMethod] = useState<'download' | 'onedrive'>('download');
+
   const materialDensities: Record<MaterialKey, MaterialInfo> = {
     al: { name: 'Aluminum 6061', density: 0.098 },
-    cs: { name: 'Carbon Steel A36', density: 0.284 },
-    ss: { name: 'AR500-Viking-Stainless Steel', density: 0.295 },
+    cs: { name: 'Mild A36', density: 0.284 },
+    ss: { name: 'AR500-Viking-SS', density: 0.295 },
   };
 
   const shapes: Shape[] = [
@@ -84,6 +87,7 @@ export default function WeightCalcPage() {
   const [lengthIn, setLengthIn] = useState<number>(96);
   const [dim1, setDim1] = useState(1);
   const [dim2, setDim2] = useState(0.25);
+  const [quantity, setQuantity] = useState<number>(1);
 
   const [cost, setCost] = useState<CostKey>('mild');
 
@@ -112,8 +116,8 @@ export default function WeightCalcPage() {
 
   const area = computeArea(shape, dim1, currentShape?.hasDim2 ? dim2 : 0);
   const density = materialDensities[material]?.density || 0.284;
-  const weight = density * area * lengthIn;
-  const weightKg = weight * 0.453592;
+  const previewWeight = density * area * lengthIn * quantity;
+  const previewWeightKg = previewWeight * 0.453592;
 
   const computeUnitWeight = useCallback((item: TapeItem): number => {
     const a = computeArea(item.shape, item.dim1, item.dim2);
@@ -121,7 +125,7 @@ export default function WeightCalcPage() {
   }, [computeArea]);
 
   const costPerLb = costs[cost] || 0.65;
-  const totalCost = weight * costPerLb;
+  const previewTotalCost = previewWeight * costPerLb;
 
   const getItemTotals = useCallback((item: TapeItem) => {
     const unitWeight = computeUnitWeight(item);
@@ -131,15 +135,21 @@ export default function WeightCalcPage() {
     return { unitWeight, unitCost, totalWeight, totalCost };
   }, [computeUnitWeight]);
 
-  const formattedWeight = (isNaN(weight) || weight === 0 ? 0 : weight).toLocaleString('en-US', {
+  const formattedWeight = (isNaN(previewWeight) || previewWeight === 0 ? 0 : previewWeight).toLocaleString('en-US', {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1
   });
-  const formattedWeightKg = (isNaN(weightKg) ? 0 : weightKg).toLocaleString('en-US', {
+  const formattedWeightKg = (isNaN(previewWeightKg) ? 0 : previewWeightKg).toLocaleString('en-US', {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1
   });
-  const formattedCost = (isNaN(totalCost) || totalCost === 0 ? 0 : totalCost).toLocaleString('en-US', {
+  const formattedCost = (isNaN(previewTotalCost) || previewTotalCost === 0 ? 0 : previewTotalCost).toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD'
+  });
+
+  const estSell = previewTotalCost * 1.3;
+  const formattedEstSell = (isNaN(estSell) || estSell === 0 ? 0 : estSell).toLocaleString('en-US', {
     style: 'currency',
     currency: 'USD'
   });
@@ -149,6 +159,7 @@ export default function WeightCalcPage() {
     const materialInfo = materialDensities[material];
     const newItem: TapeItem = {
       id,
+      notes: '',
       material,
       materialName: materialInfo.name,
       density: materialInfo.density,
@@ -158,10 +169,10 @@ export default function WeightCalcPage() {
       dim2,
       thickness: dim2,
       costPerLb: costs[cost],
-      quantity: 1,
+      quantity,
     };
     setTapeItems((prev) => [...prev, newItem]);
-  }, [material, shape, lengthIn, dim1, dim2, cost]);
+  }, [material, shape, lengthIn, dim1, dim2, cost, quantity]);
 
   const removeFromTape = useCallback((id: string) => {
   setTapeItems((prev) => prev.filter((item) => item.id !== id));
@@ -223,6 +234,15 @@ const sortedTapeItems = useMemo(() => {
     }, 0);
   }, [sortedTapeItems, getItemTotals]);
 
+  const grandTotalEstSell = useMemo(() => grandTotalCost * 1.3, [grandTotalCost]);
+  const formattedGrandEstSell = useMemo(() => {
+    const value = isNaN(grandTotalEstSell) || grandTotalEstSell === 0 ? 0 : grandTotalEstSell;
+    return value.toLocaleString('en-US', {
+      style: 'currency',
+      currency: 'USD'
+    });
+  }, [grandTotalEstSell]);
+
   const formattedGrandWeight = (isNaN(grandTotalWeight) || grandTotalWeight === 0 ? '0.0' : grandTotalWeight).toLocaleString('en-US', {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1
@@ -233,59 +253,143 @@ const sortedTapeItems = useMemo(() => {
     currency: 'USD'
   });
 
+  const generateTapeContent = useCallback(() => {
+    // Define columns: [label, width]
+    const columns = [
+      { label: 'Notes', width: 25 },
+      { label: 'Material', width: 20 },
+      { label: 'Shape', width: 15 },
+      { label: 'Length (in)', width: 12 },
+      { label: 'Dim1 (in)', width: 10 },
+      { label: 'Dim2 (in)', width: 10 },
+      { label: 'Qty', width: 6 },
+      { label: 'Cost/lb', width: 10 },
+      { label: 'Weight (lbs)', width: 12 },
+      { label: 'Total Cost', width: 15 },
+      { label: 'Est. Sell', width: 15 },
+    ];
+
+    const colWidths = columns.map(col => col.width);
+    
+    // New wrapText (lines 243-260ish in file):
+    const wrapText = (text: string, width: number): string[] => {
+      if (!text || text.length <= width) return [text];
+      const lines: string[] = [];
+      let i = 0;
+      while (i < text.length) {
+        let chunk = text.slice(i, i + width);
+        // Prefer word-break: shrink if possible to avoid mid-word
+        while (chunk.length > 0 && chunk.includes(' ') && chunk.lastIndexOf(' ') > width / 2) {
+          chunk = chunk.slice(0, chunk.lastIndexOf(' '));
+        }
+        lines.push(chunk);
+        i += chunk.length;
+      }
+      return lines;
+    };
+
+    // Headers
+    const headerLine = columns.map(col => col.label.padEnd(col.width, ' ').slice(0, col.width)).join('\t');
+    const underlineLine = columns.map(col => '-'.repeat(col.width)).join('\t');
+    let content = headerLine + '\n' + underlineLine + '\n' + '\n';
+
+    // Rows: for each item, generate multi-line if needed
+    sortedTapeItems.forEach((item) => {
+      const shapeLabel = shapes.find((s) => s.value === item.shape)?.label || 'Unknown';
+      const totals = getItemTotals(item);
+      const fields = [
+        item.notes || '',
+        item.materialName,
+        shapeLabel,
+        item.lengthIn.toFixed(2),
+        item.dim1.toFixed(3),
+        item.dim2.toFixed(3),
+        item.quantity.toString(),
+        `$${item.costPerLb.toFixed(2)}`,
+        totals.totalWeight.toFixed(1),
+        `$${totals.totalCost.toFixed(2)}`,
+        `$${(totals.totalCost * 1.3).toFixed(2)}`,
+      ];
+      const fieldLines = fields.map((field, i) => wrapText(field, colWidths[i]));
+      const maxLines = Math.max(1, ...fieldLines.map(lines => lines.length));
+
+      for (let lineIdx = 0; lineIdx < maxLines; lineIdx++) {
+        const rowFields = colWidths.map((width, fieldIdx) => {
+          const lines = fieldLines[fieldIdx];
+          const text = lines[lineIdx] || '';
+          return text.padEnd(width, ' ').slice(0, width);
+        });
+        content += rowFields.join('\t') + '\n';
+      }
+      content += '\n';  // Always blank row between items
+    });
+
+    // Grand totals (pad labels for rough alignment)
+    content += '\n';
+    content += 'Grand Total Weight:'.padEnd(40, ' ').slice(0, 40) + formattedGrandWeight + ' lbs\n';
+    content += 'Grand Total Cost:'.padEnd(40, ' ').slice(0, 40) + formattedGrandCost + '\n';
+    content += 'Grand Total Est. Sell:'.padEnd(40, ' ').slice(0, 40) + formattedGrandEstSell + '\n';
+
+    return content;
+  }, [sortedTapeItems, shapes, getItemTotals, formattedGrandWeight, formattedGrandCost, formattedGrandEstSell]);
+
   const handleExport = useCallback(async () => {
     setExportError('');
     setIsExporting(true);
-
-    if (!selectedJob) {
-      setExportError('Please select a job.');
-      setIsExporting(false);
-      return;
-    }
-
     if (sortedTapeItems.length === 0) {
       setExportError('No items in tape to export.');
       setIsExporting(false);
       return;
     }
-
-    // Generate simplified tab-separated content
-    let content = 'Material\tShape\tLength (in)\tDim1 (in)\tDim2 (in)\tQty\tCost/lb\tWeight (lbs)\tTotal Cost\n';
-
-    sortedTapeItems.forEach((item) => {
-      const shapeLabel = shapes.find((s) => s.value === item.shape)?.label || 'Unknown';
-      const totals = getItemTotals(item);
-      content += `${item.materialName}\t${shapeLabel}\t${item.lengthIn.toFixed(2)}\t${item.dim1.toFixed(3)}\t${item.dim2.toFixed(3)}\t${item.quantity}\t$${item.costPerLb.toFixed(2)}\t${totals.totalWeight.toFixed(1)}\t$${totals.totalCost.toFixed(2)}\n`;
-    });
-
-    content += `\nGrand Total Weight: ${formattedGrandWeight} lbs\nGrand Total Cost: ${formattedGrandCost}`;
-
+    if (exportMethod === 'onedrive' && !selectedJob) {
+      setExportError('Please select a job.');
+      setIsExporting(false);
+      return;
+    }
+    const content = generateTapeContent();
     const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const filename = `Tape_Export_${selectedJob}_${timestamp}.txt`;
-
-    // REPLACE demo download with OneDrive upload
+    const filename = exportMethod === 'download'
+      ? `Tape_Export_${timestamp}.txt`
+      : `Tape_Export_${selectedJob}_${timestamp}.txt`;
+    if (exportMethod === 'download') {
+      // Direct browser download
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      alert(`✅ Downloaded: ${filename}`);
+      setIsExporting(false);
+      setIsExportModalOpen(false);
+      return;
+    }
+    // OneDrive upload (existing logic)
     try {
-      // Fetch FRESH token (handles expiry)
       const freshSessionRes = await fetch('/api/auth/session');
       const freshSession = await freshSessionRes.json();
       const freshToken = freshSession?.accessToken;
       if (!freshToken) {
         throw new Error('No access token. Please sign out and sign back in.');
       }
-
       const selectedProject = projects.find(p => p.project_number === selectedJob);
       if (!selectedProject) {
         throw new Error('Selected project not found in list');
       }
-      const oneDrivePath = await uploadTapeToDocs(freshToken, selectedProject.customer, selectedProject.project_number, selectedProject.project_name, filename, content);
-      
+      const oneDrivePath = await uploadTapeToDocs(
+        freshToken,
+        selectedProject.customer,
+        selectedProject.project_number,
+        selectedProject.project_name,
+        filename,
+        content
+      );
       console.log('✅ Uploaded to OneDrive:', oneDrivePath);
-      console.log('📄 Content preview:', content.slice(0, 500) + (content.length > 500 ? '...' : ''));
-
-      // Success toast (expand to UI toast later)
-      setExportError(''); // Clear any prior
       alert(`✅ Uploaded to ${selectedJob}/${selectedJob}-DOCS/${filename}`);
-
     } catch (err: any) {
       console.error('❌ Upload error:', err);
       setExportError(`Upload failed: ${err.message}`);
@@ -294,17 +398,23 @@ const sortedTapeItems = useMemo(() => {
       setIsExportModalOpen(false);
       setSelectedJob('');
     }
-
-    return; // Exit early since upload handles finally
-    console.log('📄 Content preview:', content.slice(0, 500) + (content.length > 500 ? '...' : ''));
-
-    // Moved to upload try/finally
-  }, [selectedJob, sortedTapeItems, getItemTotals, formattedGrandWeight, formattedGrandCost, uploadTapeToDocs]);
+  }, [
+    exportMethod,
+    selectedJob,
+    sortedTapeItems,
+    projects,
+    generateTapeContent,
+    formattedGrandWeight,
+    formattedGrandCost,
+    formattedGrandEstSell,
+    uploadTapeToDocs
+  ]);
 
   useEffect(() => {
     if (isExportModalOpen) {
       fetchProjects();
       setSelectedJob('');
+      setExportMethod('download');  // Quick access to download by default
     }
   }, [isExportModalOpen, fetchProjects]);
 
@@ -395,10 +505,26 @@ const sortedTapeItems = useMemo(() => {
             </div>
           </div>
             <div className="bg-zinc-900/70 backdrop-blur-xl border border-zinc-700/50 rounded-3xl p-10 shadow-2xl relative">
-            <h2 className="text-3xl font-bold text-white mb-8">Dimensions</h2>
-            <div className="space-y-6">
+            <h2 className="text-3xl font-bold text-white mb-8 flex items-center gap-3">
+              <span>📏</span>Dimensions
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Qnty # - Top Left */}
               <div>
-                <label className="block text-zinc-300 font-medium mb-3 text-lg">Length (inches)</label>
+                <label className="block text-zinc-300 font-medium mb-3 text-lg">Qnty #</label>
+                <input 
+                  type="number" 
+                  step="1" 
+                  min="1"
+                  value={quantity} 
+                  onChange={(e) => setQuantity(+e.target.value || 1)}
+                  className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-blue-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/70 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
+                  placeholder="e.g. 1"
+                />
+              </div>
+              {/* Length (in) - Top Right, above Thickness */}
+              <div>
+                <label className="block text-zinc-300 font-medium mb-3 text-lg">Length (in)</label>
                 <input 
                   type="number" 
                   step="any" 
@@ -409,38 +535,38 @@ const sortedTapeItems = useMemo(() => {
                   placeholder="e.g. 144"
                 />
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Dim1 - Bottom Left */}
+              <div>
+                <label className="block text-zinc-300 font-medium mb-3 text-lg">{currentShape?.dimLabel1 ?? 'Dimension 1 (in)'}</label>
+                <input 
+                  type="number" 
+                  step="0.001" 
+                  min="0"
+                  value={dim1} 
+                  onChange={(e) => setDim1(+e.target.value || 0)}
+                  className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-blue-500/70 focus:border-blue-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
+                  placeholder="e.g. 2.0"
+                />
+              </div>
+              {/* Dim2/Thickness - Bottom Right (conditional) */}
+              {currentShape?.hasDim2 && (
                 <div>
-                  <label className="block text-zinc-300 font-medium mb-3 text-lg">{currentShape?.dimLabel1 ?? 'Dimension 1 (in)'}</label>
+                  <label className="block text-zinc-300 font-medium mb-3 text-lg">{currentShape!.dimLabel2!}</label>
                   <input 
                     type="number" 
                     step="0.001" 
                     min="0"
-                    value={dim1} 
-                    onChange={(e) => setDim1(+e.target.value || 0)}
+                    value={dim2} 
+                    onChange={(e) => setDim2(+e.target.value || 0)}
                     className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-blue-500/70 focus:border-blue-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
-                    placeholder="e.g. 2.0"
+                    placeholder="e.g. 0.125"
                   />
                 </div>
-                {currentShape?.hasDim2 && (
-                  <div>
-                    <label className="block text-zinc-300 font-medium mb-3 text-lg">{currentShape!.dimLabel2!}</label>
-                    <input 
-                      type="number" 
-                      step="0.001" 
-                      min="0"
-                      value={dim2} 
-                      onChange={(e) => setDim2(+e.target.value || 0)}
-                      className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-blue-500/70 focus:border-blue-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
-                      placeholder="e.g. 0.125"
-                    />
-                  </div>
                 )}
               </div>
-            </div>
             <div className="mt-10 pt-10 border-t border-zinc-800">
               <h3 className="text-3xl font-bold text-white mb-6">Weight & Cost</h3>
-              <div className="grid grid-cols-2 gap-12">
+              <div className="grid grid-cols-3 gap-8">
                 <div className="text-center">
                   <div className="text-2xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">Weight (lbs)</div>
                   <div className="text-4xl font-mono font-bold bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-600 bg-clip-text text-transparent mb-2 shadow-2xl">
@@ -452,6 +578,12 @@ const sortedTapeItems = useMemo(() => {
                   <div className="text-2xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">Est. Cost</div>
                   <div className="text-4xl font-mono font-bold bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 bg-clip-text text-transparent mb-2 shadow-2xl">
                     {formattedCost}
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">Est. Sell $$</div>
+                  <div className="text-4xl font-mono font-bold bg-gradient-to-r from-violet-400 via-purple-500 to-pink-500 bg-clip-text text-transparent mb-2 shadow-2xl">
+                    {formattedEstSell}
                   </div>
                 </div>
               </div>
@@ -477,6 +609,7 @@ const sortedTapeItems = useMemo(() => {
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead className="w-64 font-medium">Notes</TableHead>
                           <TableHead className="w-36 font-medium">Material</TableHead>
                           <TableHead className="w-28">Shape</TableHead>
                           <TableHead className="w-20 text-right font-mono">Length</TableHead>
@@ -484,8 +617,9 @@ const sortedTapeItems = useMemo(() => {
                           <TableHead className="w-20 text-right font-mono">Dim2</TableHead>
                           <TableHead className="w-14 text-right">Qty</TableHead>
                           <TableHead className="w-20 text-right font-mono">Cost/lb</TableHead>
-                          <TableHead className="w-28 text-right font-mono">Weight</TableHead>
-                          <TableHead className="w-28 text-right font-mono">Total Cost</TableHead>
+                          <TableHead className="w-24 text-right font-mono">Weight</TableHead>
+                          <TableHead className="w-24 text-right font-mono">Total Cost</TableHead>
+                          <TableHead className="w-32 text-right font-mono">Est. Sell $$</TableHead>
                           <TableHead className="w-16" />
                         </TableRow>
                       </TableHeader>
@@ -494,6 +628,15 @@ const sortedTapeItems = useMemo(() => {
                           const totals = getItemTotals(item);
                           return (
                             <TableRow key={item.id} className="group hover:bg-blue-600/80">
+                              <TableCell>
+                                <input
+                                  type="text"
+                                  value={item.notes ?? ''}
+                                  onChange={(e) => updateItem(item.id, 'notes', e.target.value)}
+                                  className="w-full bg-transparent border-none outline-none text-white/90 group-hover:text-white focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 text-sm placeholder-zinc-500"
+                                  placeholder="Add notes..."
+                                />
+                              </TableCell>
                               <TableCell className="font-medium text-white/90 group-hover:text-white">
                                 <select value={item.material} onChange={(e) => updateItem(item.id, 'material', e.target.value as MaterialKey)} className="w-full bg-transparent border-none outline-none text-white/90 group-hover:text-white focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1">
                                   {Object.entries(materialDensities).map(([key, mat]) => <option key={key} value={key} className="bg-zinc-800 text-white">{mat.name}</option>)}
@@ -519,8 +662,11 @@ const sortedTapeItems = useMemo(() => {
                               <TableCell className="text-right font-mono text-lg">
                                 <input type="number" step="0.01" min="0" value={item.costPerLb} onChange={(e) => updateItem(item.id, 'costPerLb', +e.target.value)} className="w-full text-right bg-transparent border-none outline-none text-lg font-mono focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 accent-zinc-300" />
                               </TableCell>
-                              <TableCell className="text-right font-mono font-semibold text-emerald-400 text-lg">{totals.totalWeight.toLocaleString('en-US', { maximumFractionDigits: 1 })}</TableCell>
-                              <TableCell className="text-right font-mono font-semibold text-amber-400">${totals.totalCost.toLocaleString('en-US', { maximumFractionDigits: 2 })}</TableCell>
+                              <TableCell className="text-right font-mono font-semibold text-emerald-400 text-lg group-hover:text-emerald-300">{totals.totalWeight.toLocaleString('en-US', { maximumFractionDigits: 1 })}</TableCell>
+                              <TableCell className="text-right font-mono font-semibold text-amber-400 group-hover:text-amber-300">${totals.totalCost.toLocaleString('en-US', { maximumFractionDigits: 2 })}</TableCell>
+                              <TableCell className="text-right font-mono font-semibold text-violet-400 group-hover:text-violet-300">
+                                ${(totals.totalCost * 1.3).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                              </TableCell>
                               <TableCell>
                                 <button
                                   onClick={() => removeFromTape(item.id)}
@@ -541,7 +687,7 @@ const sortedTapeItems = useMemo(() => {
                       <div className="flex justify-between items-baseline mb-4">
                         <div className="text-2xl font-bold text-zinc-300">Tape Summary</div>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-10 text-right">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-10 text-right">
                         <div>
                           <div className="text-xl text-zinc-400 mb-2">Total Weight</div>
                           <div className="text-5xl font-mono font-bold bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-600 bg-clip-text text-transparent shadow-2xl">
@@ -552,6 +698,12 @@ const sortedTapeItems = useMemo(() => {
                           <div className="text-xl text-zinc-400 mb-2">Estimated Total Cost</div>
                           <div className="text-5xl font-mono font-bold bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 bg-clip-text text-transparent shadow-2xl tracking-tight">
                             {formattedGrandCost}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-xl text-zinc-400 mb-2">Est. Sell Price</div>
+                          <div className="text-5xl font-mono font-bold bg-gradient-to-r from-violet-400 via-purple-500 to-pink-500 bg-clip-text text-transparent shadow-2xl tracking-tight">
+                            {formattedGrandEstSell}
                           </div>
                         </div>
                       </div>
@@ -582,46 +734,67 @@ const sortedTapeItems = useMemo(() => {
       </div>
 
       {isExportModalOpen && (
-
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-
           <div className="bg-zinc-900 border border-zinc-700 rounded-3xl p-8 shadow-2xl max-w-md w-full mx-4">
-
-            <h3 className="text-2xl font-bold text-white mb-6">Export Tape to Project</h3>
-
-            <div className="mb-6">
-
-              <label className="block text-zinc-300 font-medium mb-3">Select Job</label>
-
-              <select 
-                value={selectedJob}
-                onChange={(e) => setSelectedJob(e.target.value)}
-                disabled={projectsLoading}
-                className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-zinc-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/70 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
+            <h3 className="text-2xl font-bold text-white mb-6">Export Tape</h3>
+            {/* Method toggle */}
+            <div className="grid grid-cols-2 gap-2 mb-6 bg-zinc-800/50 rounded-2xl p-1">
+              <button
+                onClick={() => setExportMethod('download')}
+                className={`px-4 py-3 rounded-xl font-medium transition-all ${
+                  exportMethod === 'download'
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/25'
+                    : 'text-zinc-400 hover:text-white hover:bg-zinc-700/50'
+                }`}
               >
-                {projectsLoading ? (
-                  <option>Loading projects...</option>
-                ) : projects.length === 0 ? (
-                  <option>No active projects available</option>
-                ) : (
-                  projects.map((project) => (
-                    <option key={project.project_number} value={project.project_number}>
-                      {project.project_number} - {project.project_name} ({project.customer})
-                    </option>
-                  ))
-                )}
-              </select>
-
+                💾 Download File
+              </button>
+              <button
+                onClick={() => setExportMethod('onedrive')}
+                className={`px-4 py-3 rounded-xl font-medium transition-all ${
+                  exportMethod === 'onedrive'
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/25'
+                    : 'text-zinc-400 hover:text-white hover:bg-zinc-700/50'
+                }`}
+              >
+                ☁️ Save to Job
+              </button>
             </div>
-
+            {/* Conditional content */}
+            {exportMethod === 'download' ? (
+              <div className="mb-6">
+                <p className="text-zinc-400 mb-4 text-sm">Download as tab-separated .txt file for easy import.</p>
+              </div>
+            ) : (
+              <div className="mb-6">
+                <label className="block text-zinc-300 font-medium mb-3">Select Job</label>
+                <select
+                  value={selectedJob}
+                  onChange={(e) => setSelectedJob(e.target.value)}
+                  disabled={projectsLoading}
+                  className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-zinc-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/70 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
+                >
+                  {projectsLoading ? (
+                    <option>Loading projects...</option>
+                  ) : projects.length === 0 ? (
+                    <option>No active projects available</option>
+                  ) : (
+                    projects.map((project) => (
+                      <option key={project.project_number} value={project.project_number}>
+                        {project.project_number} - {project.project_name} ({project.customer})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            )}
             {exportError && (
               <p className="text-red-400 text-sm mt-2 p-3 bg-red-500/10 border border-red-500/30 rounded-xl animate-pulse">
                 {exportError}
               </p>
             )}
-
+            {/* Buttons */}
             <div className="flex gap-4">
-
               <button
                 onClick={() => {
                   setIsExportModalOpen(false);
@@ -632,21 +805,24 @@ const sortedTapeItems = useMemo(() => {
               >
                 Cancel
               </button>
-
               <button
                 onClick={handleExport}
-                disabled={!selectedJob || sortedTapeItems.length === 0 || isExporting}
-                className={`flex-1 ${!selectedJob || sortedTapeItems.length === 0 || isExporting ? 'bg-zinc-700 cursor-not-allowed border-zinc-600 hover:bg-zinc-700' : 'bg-blue-600 hover:bg-blue-500 border border-blue-500'} rounded-2xl px-6 py-3 font-medium text-white transition-all`}
+                disabled={sortedTapeItems.length === 0 || isExporting || (exportMethod === 'onedrive' && !selectedJob)}
+                className={`flex-1 rounded-2xl px-6 py-3 font-medium text-white transition-all ${
+                  sortedTapeItems.length === 0 || isExporting || (exportMethod === 'onedrive' && !selectedJob)
+                    ? 'bg-zinc-700 cursor-not-allowed border-zinc-600 hover:bg-zinc-700'
+                    : 'bg-blue-600 hover:bg-blue-500 border border-blue-500'
+                }`}
               >
-                {isExporting ? 'Exporting...' : 'Export'}
+                {isExporting
+                  ? 'Exporting...'
+                  : exportMethod === 'download'
+                  ? 'Download Tape'
+                  : 'Export to OneDrive'}
               </button>
-
             </div>
-
           </div>
-
         </div>
-
       )}
 
     </div>
