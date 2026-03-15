@@ -1,3 +1,4 @@
+/** Dashboard: metrics from Supabase projects, nav to projects/weight-calc/remnants, Azure AD sign-in. */
 "use client";
 
 import { useState, useEffect } from "react";
@@ -207,7 +208,7 @@ export default function Dashboard() {
             {/* New Project Orb */}
             <Link
               href="/new-project"
-              className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-full bg-gradient-to-r from-emerald-500/20 to-emerald-600/20 border-4 border-emerald-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(16,185,129,0.5)] hover:shadow-[0_0_60px_rgba(16,185,129,0.8)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-100"
+              className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-xl bg-gradient-to-r from-emerald-500/20 to-emerald-600/20 border-4 border-emerald-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(16,185,129,0.5)] hover:shadow-[0_0_60px_rgba(16,185,129,0.8)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-100"
               title="+ New Project"
             >
               <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-emerald-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-emerald-500/60 group-hover:scale-110 transition-all duration-500">
@@ -218,12 +219,12 @@ export default function Dashboard() {
                 New Project
               </span>
               {/* Neon Ring */}
-              <div className="absolute inset-0 rounded-full border-2 border-emerald-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+              <div className="absolute inset-0 rounded-xl border-2 border-emerald-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
             </Link>
             {/* View All Projects Orb - with dynamic badge */}
             <Link
               href="/projects"
-              className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-full bg-gradient-to-r from-blue-500/20 to-blue-600/20 border-4 border-blue-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(59,130,246,0.5)] hover:shadow-[0_0_60px_rgba(59,130,246,0.8)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-200"
+              className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-xl bg-gradient-to-r from-blue-500/20 to-blue-600/20 border-4 border-blue-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(59,130,246,0.5)] hover:shadow-[0_0_60px_rgba(59,130,246,0.8)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-200"
               title="View All Projects"
             >
               <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-blue-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-blue-500/60 group-hover:scale-110 transition-all duration-500">
@@ -239,12 +240,12 @@ export default function Dashboard() {
               <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">
                 Projects
               </span>
-              <div className="absolute inset-0 rounded-full border-2 border-blue-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+              <div className="absolute inset-0 rounded-xl border-2 border-blue-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
             </Link>
             {/* Combined Nest & Remnants Orb */}
             <Link
               href="/nest-remnants"
-              className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-full bg-gradient-to-r from-purple-500/20 via-cyan-500/20 to-purple-600/20 border-4 border-gradient-to-r from-purple-500/30 to-cyan-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(168,85,247,0.3),0_0_30px_rgba(14,165,233,0.3)] hover:shadow-[0_0_60px_rgba(168,85,247,0.6),0_0_60px_rgba(14,165,233,0.6)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-300"
+              className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-xl bg-gradient-to-r from-purple-500/20 via-cyan-500/20 to-purple-600/20 border-4 border-gradient-to-r from-purple-500/30 to-cyan-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(168,85,247,0.3),0_0_30px_rgba(14,165,233,0.3)] hover:shadow-[0_0_60px_rgba(168,85,247,0.6),0_0_60px_rgba(14,165,233,0.6)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-300"
               title="NestNow"
             >
               <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-gradient-to-r from-purple-500/30 to-cyan-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-[0_0_20px_rgba(168,85,247,0.6),0_0_20px_rgba(14,165,233,0.6)] group-hover:scale-110 transition-all duration-500">
@@ -255,12 +256,12 @@ export default function Dashboard() {
               <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">
                 NestNow
               </span>
-              <div className="absolute inset-0 rounded-full border-2 border-gradient-to-r from-purple-400/50 to-cyan-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+              <div className="absolute inset-0 rounded-xl border-2 border-gradient-to-r from-purple-400/50 to-cyan-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
             </Link>
             {/* Weight Calc Orb */}
             <Link
               href="/weight-calc"
-              className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-full bg-gradient-to-r from-amber-500/20 to-amber-600/20 border-4 border-amber-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(245,158,11,0.5)] hover:shadow-[0_0_60px_rgba(245,158,11,0.8)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-400"
+              className="group relative flex flex-col items-center gap-3 p-3 w-28 h-28 md:w-36 md:h-36 lg:w-44 lg:h-44 rounded-xl bg-gradient-to-r from-amber-500/20 to-amber-600/20 border-4 border-amber-500/30 backdrop-blur-xl shadow-[0_0_30px_rgba(245,158,11,0.5)] hover:shadow-[0_0_60px_rgba(245,158,11,0.8)] hover:scale-110 hover:rotate-12 hover:-translate-y-4 transition-all duration-700 ease-out overflow-hidden animation-delay-400"
               title="Weight Calculator"
             >
               <div className="relative w-16 h-16 md:w-20 md:h-20 lg:w-24 lg:h-24 rounded-full bg-amber-500/30 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover:shadow-amber-500/60 group-hover:scale-110 transition-all duration-500">
@@ -270,7 +271,7 @@ export default function Dashboard() {
               <span className="text-xs md:text-sm font-bold text-white text-center drop-shadow-md uppercase tracking-wider">
                 Weight Calc
               </span>
-              <div className="absolute inset-0 rounded-full border-2 border-amber-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+              <div className="absolute inset-0 rounded-xl border-2 border-amber-400/50 animate-spin-slow opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
             </Link>
           </div>
         </section>

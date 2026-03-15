@@ -1,6 +1,7 @@
 {
   "name": "keystone-pms",
   "version": "0.1.0",
+  "description": "Keystone PMS – project management for fabrication shop: projects, quotes, P&L, weight calculator, OneDrive integration",
   "private": true,
   "scripts": {
     "dev": "next dev",

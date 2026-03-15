@@ -1,7 +1,4 @@
-/*
-keystone-pms/app/projects/[id]/page.tsx
-*/
-
+/** Project detail: P&L, costs, edit and save to Supabase. */
 "use client";
 
 import { useState, useEffect } from "react";

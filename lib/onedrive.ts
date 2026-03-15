@@ -1,3 +1,4 @@
+/** Microsoft Graph: create project folders in OneDrive, upload tape exports to project _DOCS. */
 export async function createProjectFolders(
   accessToken: string,
   customer: string,

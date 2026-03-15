@@ -1,3 +1,4 @@
+/** NextAuth Azure AD provider; stores and refreshes Microsoft Graph token for OneDrive. */
 import NextAuth from "next-auth";
 import AzureADProvider from "next-auth/providers/azure-ad";
 

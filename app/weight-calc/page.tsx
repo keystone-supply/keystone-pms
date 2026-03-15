@@ -1,3 +1,4 @@
+/** Material weight/cost calculator; tape line items; export to file or OneDrive project _DOCS. */
 "use client";
 
 import { useSession } from "next-auth/react";
@@ -16,7 +17,7 @@ import {
 } from "@/components/ui/table";
 import { supabase } from "@/lib/supabaseClient";
 
-type MaterialKey = "al" | "cs" | "ss";
+type MaterialKey = "al" | "cs" | "ar500" | "viking" | "304ss";
 
 type ShapeValue = "round" | "square" | "tube";
 
@@ -47,6 +48,7 @@ interface TapeItem {
   dim2: number;
   thickness: number;
   costPerLb: number;
+  sellPerLb?: number;
   quantity: number;
 }
 
@@ -70,7 +72,9 @@ export default function WeightCalcPage() {
   const materialDensities: Record<MaterialKey, MaterialInfo> = {
     al: { name: "Aluminum 6061", density: 0.098 },
     cs: { name: "Mild A36", density: 0.284 },
-    ss: { name: "AR500-Viking-SS", density: 0.295 },
+    ar500: { name: "AR500", density: 0.295 },
+    viking: { name: "Viking", density: 0.303 },
+    "304ss": { name: "304 SS", density: 0.295 },
   };
 
   const shapes: Shape[] = [
@@ -100,27 +104,51 @@ export default function WeightCalcPage() {
   const costs: Record<CostKey, number> = {
     mild: 0.65,
     ar500: 1.75,
-    viking: 3.1,
+    viking: 3.03,
     aluminum: 6.0,
     "304ss": 3.5,
   };
 
+  const VIKING_SELL_PER_LB = 6;
+  const STANDARD_SELL_MULTIPLIER = 1.3;
+
   const materialOrder: Record<MaterialKey, number> = {
     cs: 0,
-    ss: 1,
-    al: 2,
+    ar500: 1,
+    viking: 2,
+    "304ss": 3,
+    al: 4,
   };
 
-  const [material, setMaterial] = useState<MaterialKey>("cs");
+  const materialCostOptions: {
+    costKey: CostKey;
+    materialKey: MaterialKey;
+    label: string;
+  }[] = [
+      { costKey: "mild", materialKey: "cs", label: "Mild A36" },
+      { costKey: "ar500", materialKey: "ar500", label: "AR500" },
+      { costKey: "viking", materialKey: "viking", label: "Viking" },
+      { costKey: "aluminum", materialKey: "al", label: "Aluminum 6061" },
+      { costKey: "304ss", materialKey: "304ss", label: "304 SS" },
+    ];
+
+  const [materialCostOption, setMaterialCostOption] = useState<CostKey>("mild");
   const [shape, setShape] = useState<ShapeValue>("square");
   const [lengthIn, setLengthIn] = useState<number>(96);
   const [dim1, setDim1] = useState(1);
   const [dim2, setDim2] = useState(0.25);
   const [quantity, setQuantity] = useState<number>(1);
 
-  const [cost, setCost] = useState<CostKey>("mild");
-
   const [tapeItems, setTapeItems] = useState<TapeItem[]>([]);
+
+  const selectedMaterialCost = useMemo(
+    () =>
+      materialCostOptions.find((o) => o.costKey === materialCostOption) ??
+      materialCostOptions[0],
+    [materialCostOption],
+  );
+  const material = selectedMaterialCost.materialKey;
+  const cost = selectedMaterialCost.costKey;
 
   const currentShape = shapes.find((s) => s.value === shape);
 
@@ -168,7 +196,13 @@ export default function WeightCalcPage() {
       const unitCost = unitWeight * item.costPerLb;
       const totalWeight = unitWeight * item.quantity;
       const totalCost = unitCost * item.quantity;
-      return { unitWeight, unitCost, totalWeight, totalCost };
+      const sellPerLb =
+        item.sellPerLb ??
+        (item.costPerLb === costs.viking
+          ? VIKING_SELL_PER_LB
+          : item.costPerLb * STANDARD_SELL_MULTIPLIER);
+      const estSell = totalWeight * sellPerLb;
+      return { unitWeight, unitCost, totalWeight, totalCost, estSell };
     },
     [computeUnitWeight],
   );
@@ -192,7 +226,10 @@ export default function WeightCalcPage() {
     currency: "USD",
   });
 
-  const estSell = previewTotalCost * 1.3;
+  const estSell =
+    cost === "viking"
+      ? previewWeight * VIKING_SELL_PER_LB
+      : previewTotalCost * STANDARD_SELL_MULTIPLIER;
   const formattedEstSell = (
     isNaN(estSell) || estSell === 0 ? 0 : estSell
   ).toLocaleString("en-US", {
@@ -200,25 +237,77 @@ export default function WeightCalcPage() {
     currency: "USD",
   });
 
+  const margin = estSell - previewTotalCost;
+  const formattedMargin = (
+    isNaN(margin) || margin === 0 ? 0 : margin
+  ).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+  });
+
   const saveToTape = useCallback(() => {
     const id = crypto.randomUUID();
-    const materialInfo = materialDensities[material];
+    const opt = selectedMaterialCost;
+    const mat = materialDensities[opt.materialKey];
+    const sellPerLb =
+      opt.costKey === "viking"
+        ? VIKING_SELL_PER_LB
+        : costs[opt.costKey] * STANDARD_SELL_MULTIPLIER;
     const newItem: TapeItem = {
       id,
       notes: "",
-      material,
-      materialName: materialInfo.name,
-      density: materialInfo.density,
+      material: opt.materialKey,
+      materialName: opt.label,
+      density: mat.density,
       shape,
       lengthIn,
       dim1,
       dim2,
       thickness: dim2,
-      costPerLb: costs[cost],
+      costPerLb: costs[opt.costKey],
+      sellPerLb,
       quantity,
     };
     setTapeItems((prev) => [...prev, newItem]);
-  }, [material, shape, lengthIn, dim1, dim2, cost, quantity]);
+  }, [selectedMaterialCost, shape, lengthIn, dim1, dim2, quantity]);
+
+  const getItemMaterialCostKey = useCallback(
+    (item: TapeItem): CostKey => {
+      const match = materialCostOptions.find(
+        (o) =>
+          o.materialKey === item.material &&
+          Math.abs(costs[o.costKey] - item.costPerLb) < 0.01,
+      );
+      return match?.costKey ?? "mild";
+    },
+    [],
+  );
+
+  const updateItemMaterialCost = useCallback(
+    (id: string, costKey: CostKey) => {
+      const opt = materialCostOptions.find((o) => o.costKey === costKey);
+      if (!opt) return;
+      const mat = materialDensities[opt.materialKey];
+      setTapeItems((prev) =>
+        prev.map((item) => {
+          if (item.id !== id) return item;
+          const sellPerLb =
+            opt.costKey === "viking"
+              ? VIKING_SELL_PER_LB
+              : costs[opt.costKey] * STANDARD_SELL_MULTIPLIER;
+          return {
+            ...item,
+            material: opt.materialKey,
+            materialName: opt.label,
+            density: mat.density,
+            costPerLb: costs[opt.costKey],
+            sellPerLb,
+          };
+        }),
+      );
+    },
+    [],
+  );
 
   const removeFromTape = useCallback((id: string) => {
     setTapeItems((prev) => prev.filter((item) => item.id !== id));
@@ -284,10 +373,12 @@ export default function WeightCalcPage() {
     }, 0);
   }, [sortedTapeItems, getItemTotals]);
 
-  const grandTotalEstSell = useMemo(
-    () => grandTotalCost * 1.3,
-    [grandTotalCost],
-  );
+  const grandTotalEstSell = useMemo(() => {
+    return sortedTapeItems.reduce((sum, item) => {
+      const totals = getItemTotals(item);
+      return sum + totals.estSell;
+    }, 0);
+  }, [sortedTapeItems, getItemTotals]);
   const formattedGrandEstSell = useMemo(() => {
     const value =
       isNaN(grandTotalEstSell) || grandTotalEstSell === 0
@@ -313,20 +404,30 @@ export default function WeightCalcPage() {
     currency: "USD",
   });
 
+  const grandTotalMargin = grandTotalEstSell - grandTotalCost;
+  const formattedGrandMargin = (
+    isNaN(grandTotalMargin) || grandTotalMargin === 0 ? 0 : grandTotalMargin
+  ).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+  });
+
   const generateTapeContent = useCallback(() => {
     // Define columns: [label, width]
     const columns = [
       { label: "Notes", width: 25 },
-      { label: "Material", width: 20 },
+      { label: "Material", width: 45 },
       { label: "Shape", width: 15 },
       { label: "Length (in)", width: 12 },
       { label: "Dim1 (in)", width: 10 },
       { label: "Dim2 (in)", width: 10 },
       { label: "Qty", width: 6 },
       { label: "Cost/lb", width: 10 },
+      { label: "Sell/lb", width: 10 },
       { label: "Weight (lbs)", width: 12 },
       { label: "Total Cost", width: 15 },
       { label: "Est. Sell", width: 15 },
+      { label: "Margin", width: 15 },
     ];
 
     const colWidths = columns.map((col) => col.width);
@@ -365,19 +466,36 @@ export default function WeightCalcPage() {
     sortedTapeItems.forEach((item) => {
       const shapeLabel =
         shapes.find((s) => s.value === item.shape)?.label || "Unknown";
+      const hasDim2 =
+        shapes.find((s) => s.value === item.shape)?.hasDim2 ?? false;
+      const materialOpt = materialCostOptions.find(
+        (o) =>
+          o.materialKey === item.material &&
+          Math.abs(costs[o.costKey] - item.costPerLb) < 0.01,
+      );
+      const materialFullName = materialOpt
+        ? `${materialOpt.label} — $${costs[materialOpt.costKey].toFixed(2)}/lb — ${materialDensities[materialOpt.materialKey].density.toFixed(3)} lb/in³`
+        : item.materialName;
       const totals = getItemTotals(item);
+      const sellPerLb =
+        item.sellPerLb ??
+        (item.costPerLb === costs.viking
+          ? VIKING_SELL_PER_LB
+          : item.costPerLb * STANDARD_SELL_MULTIPLIER);
       const fields = [
         item.notes || "",
-        item.materialName,
+        materialFullName,
         shapeLabel,
         item.lengthIn.toFixed(2),
         item.dim1.toFixed(3),
-        item.dim2.toFixed(3),
+        hasDim2 ? item.dim2.toFixed(3) : "",
         item.quantity.toString(),
         `$${item.costPerLb.toFixed(2)}`,
+        `$${sellPerLb.toFixed(2)}`,
         totals.totalWeight.toFixed(1),
         `$${totals.totalCost.toFixed(2)}`,
-        `$${(totals.totalCost * 1.3).toFixed(2)}`,
+        `$${totals.estSell.toFixed(2)}`,
+        `$${(totals.estSell - totals.totalCost).toFixed(2)}`,
       ];
       const fieldLines = fields.map((field, i) =>
         wrapText(field, colWidths[i]),
@@ -409,6 +527,10 @@ export default function WeightCalcPage() {
       "Grand Total Est. Sell:".padEnd(40, " ").slice(0, 40) +
       formattedGrandEstSell +
       "\n";
+    content +=
+      "Grand Total Margin:".padEnd(40, " ").slice(0, 40) +
+      formattedGrandMargin +
+      "\n";
 
     return content;
   }, [
@@ -418,6 +540,7 @@ export default function WeightCalcPage() {
     formattedGrandWeight,
     formattedGrandCost,
     formattedGrandEstSell,
+    formattedGrandMargin,
   ]);
 
   const handleExport = useCallback(async () => {
@@ -562,52 +685,58 @@ export default function WeightCalcPage() {
             <div className="space-y-8">
               <div>
                 <label className="block text-zinc-300 font-medium mb-3 text-lg">
-                  Material Type
+                  Materials
                 </label>
-                <select
-                  value={material}
-                  onChange={(e) => setMaterial(e.target.value as MaterialKey)}
-                  className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-blue-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/70 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
-                >
-                  {Object.entries(materialDensities).map(([key, mat]) => (
-                    <option key={key} value={key}>
-                      {mat.name} ({mat.density.toFixed(3)} lb/in³)
-                    </option>
-                  ))}
-                </select>
+                <div className="flex flex-wrap gap-3">
+                  {materialCostOptions.map((opt) => {
+                    const mat = materialDensities[opt.materialKey];
+                    const costVal = costs[opt.costKey];
+                    const sellPerLb =
+                      opt.costKey === "viking"
+                        ? VIKING_SELL_PER_LB
+                        : costVal * STANDARD_SELL_MULTIPLIER;
+                    const isSelected = materialCostOption === opt.costKey;
+                    return (
+                      <button
+                        key={opt.costKey}
+                        type="button"
+                        onClick={() => setMaterialCostOption(opt.costKey)}
+                        className={`rounded-2xl px-4 py-3 text-left text-sm font-medium transition-all duration-300 ${isSelected
+                          ? "bg-blue-600 text-white border-2 border-blue-500 shadow-lg shadow-blue-500/25"
+                          : "bg-zinc-800/50 text-zinc-300 border-2 border-zinc-600/50 hover:border-blue-500/50 hover:text-white"
+                          }`}
+                      >
+                        <span className="block font-semibold">
+                          {opt.label} — ${sellPerLb.toFixed(2)}/lb
+                        </span>
+                        <span className="block opacity-90">
+                          Cost ${costVal.toFixed(2)}/lb · {mat.density.toFixed(3)}{" "}
+                          lb/in³
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <div>
                 <label className="block text-zinc-300 font-medium mb-3 text-lg">
                   Shape
                 </label>
-                <select
-                  value={shape}
-                  onChange={(e) => setShape(e.target.value as ShapeValue)}
-                  className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-blue-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/70 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
-                >
+                <div className="flex flex-wrap gap-3">
                   {shapes.map((s) => (
-                    <option key={s.value} value={s.value}>
+                    <button
+                      key={s.value}
+                      type="button"
+                      onClick={() => setShape(s.value)}
+                      className={`rounded-2xl px-5 py-3 text-lg font-medium transition-all duration-300 ${shape === s.value
+                        ? "bg-blue-600 text-white border-2 border-blue-500 shadow-lg shadow-blue-500/25"
+                        : "bg-zinc-800/50 text-zinc-300 border-2 border-zinc-600/50 hover:border-blue-500/50 hover:text-white"
+                        }`}
+                    >
                       {s.label}
-                    </option>
+                    </button>
                   ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-zinc-300 font-medium mb-3 text-lg">
-                  Cost per Pound
-                </label>
-                <select
-                  value={cost}
-                  onChange={(e) => setCost(e.target.value as CostKey)}
-                  className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-blue-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/70 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
-                >
-                  <option value="mild">Mild - $0.65</option>
-                  <option value="ar500">AR500 - $1.75</option>
-                  <option value="viking">Viking - $3.10</option>
-                  <option value="aluminum">Aluminum - $6.00</option>
-                  <option value="304ss">304ss - $3.50</option>
-                </select>
+                </div>
               </div>
             </div>
           </div>
@@ -680,34 +809,44 @@ export default function WeightCalcPage() {
               )}
             </div>
             <div className="mt-10 pt-10 border-t border-zinc-800">
-              <h3 className="text-3xl font-bold text-white mb-6">
-                Weight & Cost
-              </h3>
-              <div className="grid grid-cols-3 gap-8">
+              <div className="flex flex-wrap items-baseline justify-between gap-4 mb-6">
+                <h3 className="text-3xl font-bold text-white">
+                  Weight & Cost
+                </h3>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xl font-mono font-bold text-zinc-400">
+                    Margin
+                  </span>
+                  <span className="text-2xl font-mono font-bold bg-gradient-to-r from-cyan-400 via-teal-500 to-emerald-600 bg-clip-text text-transparent">
+                    {formattedMargin}
+                  </span>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 <div className="text-center">
-                  <div className="text-2xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">
+                  <div className="text-xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">
                     Weight (lbs)
                   </div>
-                  <div className="text-4xl font-mono font-bold bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-600 bg-clip-text text-transparent mb-2 shadow-2xl">
+                  <div className="text-3xl font-mono font-bold bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-600 bg-clip-text text-transparent mb-2 shadow-2xl">
                     {formattedWeight}
                   </div>
-                  <p className="text-zinc-400 text-lg">
+                  <p className="text-zinc-400 text-sm">
                     ({formattedWeightKg} kg)
                   </p>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">
+                  <div className="text-xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">
                     Est. Cost
                   </div>
-                  <div className="text-4xl font-mono font-bold bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 bg-clip-text text-transparent mb-2 shadow-2xl">
+                  <div className="text-3xl font-mono font-bold bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 bg-clip-text text-transparent mb-2 shadow-2xl">
                     {formattedCost}
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">
+                  <div className="text-xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">
                     Est. Sell $$
                   </div>
-                  <div className="text-4xl font-mono font-bold bg-gradient-to-r from-violet-400 via-purple-500 to-pink-500 bg-clip-text text-transparent mb-2 shadow-2xl">
+                  <div className="text-3xl font-mono font-bold bg-gradient-to-r from-violet-400 via-purple-500 to-pink-500 bg-clip-text text-transparent mb-2 shadow-2xl">
                     {formattedEstSell}
                   </div>
                 </div>
@@ -737,10 +876,10 @@ export default function WeightCalcPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-64 font-medium">
+                        <TableHead className="w-32 font-medium">
                           Notes
                         </TableHead>
-                        <TableHead className="w-36 font-medium">
+                        <TableHead className="w-72 font-medium">
                           Material
                         </TableHead>
                         <TableHead className="w-28">Shape</TableHead>
@@ -757,6 +896,9 @@ export default function WeightCalcPage() {
                         <TableHead className="w-20 text-right font-mono">
                           Cost/lb
                         </TableHead>
+                        <TableHead className="w-20 text-right font-mono">
+                          Sell/lb
+                        </TableHead>
                         <TableHead className="w-24 text-right font-mono">
                           Weight
                         </TableHead>
@@ -765,6 +907,9 @@ export default function WeightCalcPage() {
                         </TableHead>
                         <TableHead className="w-32 text-right font-mono">
                           Est. Sell $$
+                        </TableHead>
+                        <TableHead className="w-24 text-right font-mono">
+                          Margin
                         </TableHead>
                         <TableHead className="w-16" />
                       </TableRow>
@@ -790,27 +935,30 @@ export default function WeightCalcPage() {
                             </TableCell>
                             <TableCell className="font-medium text-white/90 group-hover:text-white">
                               <select
-                                value={item.material}
+                                value={getItemMaterialCostKey(item)}
                                 onChange={(e) =>
-                                  updateItem(
+                                  updateItemMaterialCost(
                                     item.id,
-                                    "material",
-                                    e.target.value as MaterialKey,
+                                    e.target.value as CostKey,
                                   )
                                 }
                                 className="w-full bg-transparent border-none outline-none text-white/90 group-hover:text-white focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1"
                               >
-                                {Object.entries(materialDensities).map(
-                                  ([key, mat]) => (
+                                {materialCostOptions.map((opt) => {
+                                  const mat = materialDensities[opt.materialKey];
+                                  const costVal = costs[opt.costKey];
+                                  return (
                                     <option
-                                      key={key}
-                                      value={key}
+                                      key={opt.costKey}
+                                      value={opt.costKey}
                                       className="bg-zinc-800 text-white"
                                     >
-                                      {mat.name}
+                                      {opt.label} — $
+                                      {costVal.toFixed(2)}/lb —{" "}
+                                      {mat.density.toFixed(3)} lb/in³
                                     </option>
-                                  ),
-                                )}
+                                  );
+                                })}
                               </select>
                             </TableCell>
                             <TableCell>
@@ -869,20 +1017,25 @@ export default function WeightCalcPage() {
                               />
                             </TableCell>
                             <TableCell className="text-right font-mono text-sm opacity-90">
-                              <input
-                                type="number"
-                                step="0.001"
-                                min="0"
-                                value={item.dim2}
-                                onChange={(e) =>
-                                  updateItem(
-                                    item.id,
-                                    "dim2",
-                                    +e.target.value || 0,
-                                  )
-                                }
-                                className="w-full text-right bg-transparent border-none outline-none font-mono text-sm opacity-90 focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 accent-zinc-300"
-                              />
+                              {shapes.find((s) => s.value === item.shape)
+                                ?.hasDim2 ? (
+                                <input
+                                  type="number"
+                                  step="0.001"
+                                  min="0"
+                                  value={item.dim2}
+                                  onChange={(e) =>
+                                    updateItem(
+                                      item.id,
+                                      "dim2",
+                                      +e.target.value || 0,
+                                    )
+                                  }
+                                  className="w-full text-right bg-transparent border-none outline-none font-mono text-sm opacity-90 focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 accent-zinc-300"
+                                />
+                              ) : (
+                                <span>&nbsp;</span>
+                              )}
                             </TableCell>
                             <TableCell className="text-right font-mono text-lg">
                               <input
@@ -904,7 +1057,7 @@ export default function WeightCalcPage() {
                                 type="number"
                                 step="0.01"
                                 min="0"
-                                value={item.costPerLb}
+                                value={item.costPerLb.toFixed(2)}
                                 onChange={(e) =>
                                   updateItem(
                                     item.id,
@@ -915,9 +1068,32 @@ export default function WeightCalcPage() {
                                 className="w-full text-right bg-transparent border-none outline-none text-lg font-mono focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 accent-zinc-300"
                               />
                             </TableCell>
+                            <TableCell className="text-right font-mono text-lg">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={(
+                                  item.sellPerLb ??
+                                  (item.costPerLb === costs.viking
+                                    ? VIKING_SELL_PER_LB
+                                    : item.costPerLb *
+                                      STANDARD_SELL_MULTIPLIER)
+                                ).toFixed(2)}
+                                onChange={(e) =>
+                                  updateItem(
+                                    item.id,
+                                    "sellPerLb",
+                                    +e.target.value,
+                                  )
+                                }
+                                className="w-full text-right bg-transparent border-none outline-none text-lg font-mono focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 accent-zinc-300"
+                              />
+                            </TableCell>
                             <TableCell className="text-right font-mono font-semibold text-emerald-400 text-lg group-hover:text-emerald-300">
                               {totals.totalWeight.toLocaleString("en-US", {
-                                maximumFractionDigits: 1,
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
                               })}
                             </TableCell>
                             <TableCell className="text-right font-mono font-semibold text-amber-400 group-hover:text-amber-300">
@@ -928,7 +1104,13 @@ export default function WeightCalcPage() {
                             </TableCell>
                             <TableCell className="text-right font-mono font-semibold text-violet-400 group-hover:text-violet-300">
                               $
-                              {(totals.totalCost * 1.3).toLocaleString(
+                              {totals.estSell.toLocaleString("en-US", {
+                                maximumFractionDigits: 2,
+                              })}
+                            </TableCell>
+                            <TableCell className="text-right font-mono font-semibold text-cyan-400 group-hover:text-cyan-300">
+                              $
+                              {(totals.estSell - totals.totalCost).toLocaleString(
                                 "en-US",
                                 { maximumFractionDigits: 2 },
                               )}
@@ -955,7 +1137,7 @@ export default function WeightCalcPage() {
                         Tape Summary
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-10 text-right">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10 text-right">
                       <div>
                         <div className="text-xl text-zinc-400 mb-2">
                           Total Weight
@@ -978,6 +1160,14 @@ export default function WeightCalcPage() {
                         </div>
                         <div className="text-5xl font-mono font-bold bg-gradient-to-r from-violet-400 via-purple-500 to-pink-500 bg-clip-text text-transparent shadow-2xl tracking-tight">
                           {formattedGrandEstSell}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xl text-zinc-400 mb-2">
+                          Margin
+                        </div>
+                        <div className="text-5xl font-mono font-bold bg-gradient-to-r from-cyan-400 via-teal-500 to-emerald-600 bg-clip-text text-transparent shadow-2xl tracking-tight">
+                          {formattedGrandMargin}
                         </div>
                       </div>
                     </div>
@@ -1006,21 +1196,19 @@ export default function WeightCalcPage() {
             <div className="grid grid-cols-2 gap-2 mb-6 bg-zinc-800/50 rounded-2xl p-1">
               <button
                 onClick={() => setExportMethod("download")}
-                className={`px-4 py-3 rounded-xl font-medium transition-all ${
-                  exportMethod === "download"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-500/25"
-                    : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
-                }`}
+                className={`px-4 py-3 rounded-xl font-medium transition-all ${exportMethod === "download"
+                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/25"
+                  : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+                  }`}
               >
                 💾 Download File
               </button>
               <button
                 onClick={() => setExportMethod("onedrive")}
-                className={`px-4 py-3 rounded-xl font-medium transition-all ${
-                  exportMethod === "onedrive"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-500/25"
-                    : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
-                }`}
+                className={`px-4 py-3 rounded-xl font-medium transition-all ${exportMethod === "onedrive"
+                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/25"
+                  : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+                  }`}
               >
                 ☁️ Save to Job
               </button>
@@ -1085,13 +1273,12 @@ export default function WeightCalcPage() {
                   isExporting ||
                   (exportMethod === "onedrive" && !selectedJob)
                 }
-                className={`flex-1 rounded-2xl px-6 py-3 font-medium text-white transition-all ${
-                  sortedTapeItems.length === 0 ||
+                className={`flex-1 rounded-2xl px-6 py-3 font-medium text-white transition-all ${sortedTapeItems.length === 0 ||
                   isExporting ||
                   (exportMethod === "onedrive" && !selectedJob)
-                    ? "bg-zinc-700 cursor-not-allowed border-zinc-600 hover:bg-zinc-700"
-                    : "bg-blue-600 hover:bg-blue-500 border border-blue-500"
-                }`}
+                  ? "bg-zinc-700 cursor-not-allowed border-zinc-600 hover:bg-zinc-700"
+                  : "bg-blue-600 hover:bg-blue-500 border border-blue-500"
+                  }`}
               >
                 {isExporting
                   ? "Exporting..."

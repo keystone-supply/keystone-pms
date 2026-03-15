@@ -1,8 +1,4 @@
-/*
-keystone-pms/app/projects/page.tsx
-All Projects List Page – ENHANCED WITH INSTANT GLOBAL SEARCH
-*/
-
+/** Projects list with Supabase realtime and global search. */
 "use client";
 
 import { useState, useEffect } from "react";
