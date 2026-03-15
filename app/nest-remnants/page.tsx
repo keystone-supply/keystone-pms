@@ -277,7 +277,7 @@ export default function NestRemnantsPage() {
                         className="w-full flex items-center gap-3 p-3 bg-purple-500/20 hover:bg-purple-400/30 border border-purple-500/30 rounded-xl text-purple-200 text-sm font-medium transition-all hover:scale-[1.02]"
                       >
                         <div className="w-12 h-12 bg-gradient-to-br from-purple-500/30 to-purple-600/30 rounded-lg flex items-center justify-center shadow-md">
-                          {r.dims.split("x")[0]}x{r.dims.split("x")[1]}
+                          {r.dims ? `${r.dims.split("x")[0]}x${r.dims.split("x")[1]}` : 'N/A'}
                         </div>
                         <span className="truncate">
                           {r.material} {r.thickness_in.toFixed(3)}"
