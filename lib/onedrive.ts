@@ -1,6 +1,17 @@
-export async function createProjectFolders(accessToken: string, customer: string, projectNumber: string, projectName: string) {
-  const customerUpper = customer.toUpperCase().trim().replace(/[^A-Z0-9 ]/g, '');
-  const projectUpper = projectName.toUpperCase().trim().replace(/[^A-Z0-9 ]/g, '');
+export async function createProjectFolders(
+  accessToken: string,
+  customer: string,
+  projectNumber: string,
+  projectName: string,
+) {
+  const customerUpper = customer
+    .toUpperCase()
+    .trim()
+    .replace(/[^A-Z0-9 ]/g, "");
+  const projectUpper = projectName
+    .toUpperCase()
+    .trim()
+    .replace(/[^A-Z0-9 ]/g, "");
   const folderName = `${projectNumber} - ${projectUpper}`;
 
   const headers = {
@@ -25,7 +36,7 @@ export async function createProjectFolders(accessToken: string, customer: string
     `${projectNumber}_PICS`,
     `${projectNumber}_DOCS`,
     `${projectNumber}_MACHINING`,
-    `${projectNumber}_G-CODE`
+    `${projectNumber}_G-CODE`,
   ];
 
   for (const sub of subfolders) {
@@ -37,8 +48,8 @@ export async function createProjectFolders(accessToken: string, customer: string
 }
 
 export async function ensureFolder(headers: any, fullPath: string) {
-  const parts = fullPath.split('/');
-  const parentPath = parts.slice(0, -1).join('/') || "";
+  const parts = fullPath.split("/");
+  const parentPath = parts.slice(0, -1).join("/") || "";
   const name = parts[parts.length - 1];
 
   let url;
@@ -62,12 +73,12 @@ export async function ensureFolder(headers: any, fullPath: string) {
 // Upload tape exports to Documents/0 PROJECT FOLDERS/{customerUpper}/{projectFolder}/{projectNumber}_DOCS/{filename}
 // Matches createProjectFolders structure
 export async function uploadTapeToDocs(
-  accessToken: string, 
+  accessToken: string,
   customer: string,
   projectNumber: string,
   projectName: string,
-  filename: string, 
-  content: string
+  filename: string,
+  content: string,
 ) {
   const headers = {
     Authorization: `Bearer ${accessToken}`,
@@ -77,11 +88,19 @@ export async function uploadTapeToDocs(
     Authorization: `Bearer ${accessToken}`,
   };
 
-  console.log(`📁 Ensuring project folders for ${projectNumber} (${customer})...`);
+  console.log(
+    `📁 Ensuring project folders for ${projectNumber} (${customer})...`,
+  );
 
   // Replicate createProjectFolders base path
-  const customerUpper = customer.toUpperCase().trim().replace(/[^A-Z0-9 ]/g, '');
-  const projectUpper = projectName.toUpperCase().trim().replace(/[^A-Z0-9 ]/g, '');
+  const customerUpper = customer
+    .toUpperCase()
+    .trim()
+    .replace(/[^A-Z0-9 ]/g, "");
+  const projectUpper = projectName
+    .toUpperCase()
+    .trim()
+    .replace(/[^A-Z0-9 ]/g, "");
   const folderName = `${projectNumber} - ${projectUpper}`;
 
   const baseSegments = ["0 PROJECT FOLDERS", customerUpper, folderName];
@@ -95,18 +114,22 @@ export async function uploadTapeToDocs(
   const docsFolderPath = `${currentPath}/${projectNumber}_DOCS`;
   await ensureFolder(headers, docsFolderPath);
 
-    // Version control: Check if plain filename exists or find highest version to avoid overwrite
-  const normalizedFilename = filename.replace(/ \(v\d+\)\.txt$/, '.txt');
-  if (!normalizedFilename.toLowerCase().endsWith('.txt')) {
-    throw new Error('Filename must end with .txt');
+  // Version control: Check if plain filename exists or find highest version to avoid overwrite
+  const normalizedFilename = filename.replace(/ \(v\d+\)\.txt$/, ".txt");
+  if (!normalizedFilename.toLowerCase().endsWith(".txt")) {
+    throw new Error("Filename must end with .txt");
   }
   const baseNoExt = normalizedFilename.slice(0, -4);
   const plainFilename = normalizedFilename;
   const listUrl = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(docsFolderPath)}:/children`;
-  const listRes = await fetch(listUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const listRes = await fetch(listUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
   if (!listRes.ok) {
     const listText = await listRes.text();
-    throw new Error(`Failed to list ${docsFolderPath}: ${listRes.status} ${listText}`);
+    throw new Error(
+      `Failed to list ${docsFolderPath}: ${listRes.status} ${listText}`,
+    );
   }
   const listData = await listRes.json();
   let highestVersion = 0;
@@ -115,8 +138,8 @@ export async function uploadTapeToDocs(
     for (const item of listData.value) {
       if (item.name === plainFilename) {
         plainExists = true;
-      } else if (item.name.toLowerCase().endsWith('.txt')) {
-        const escapedBase = baseNoExt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      } else if (item.name.toLowerCase().endsWith(".txt")) {
+        const escapedBase = baseNoExt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const regex = new RegExp(`^${escapedBase} \\(v(\\d+)\\)\\.txt$`);
         const match = item.name.match(regex);
         if (match) {
@@ -125,17 +148,20 @@ export async function uploadTapeToDocs(
       }
     }
   }
-  const version = (plainExists || highestVersion > 0) ? highestVersion + 1 : 0;
-  const finalFilename = version === 0 ? plainFilename : `${baseNoExt} (v${version}).txt`;
+  const version = plainExists || highestVersion > 0 ? highestVersion + 1 : 0;
+  const finalFilename =
+    version === 0 ? plainFilename : `${baseNoExt} (v${version}).txt`;
   const fullPath = `${docsFolderPath}/${finalFilename}`;
   const url = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(fullPath)}:/content`;
 
-  console.log(`📤 Uploading to: ${fullPath} ${version > 1 ? `(v${version})` : ''}`);
+  console.log(
+    `📤 Uploading to: ${fullPath} ${version > 1 ? `(v${version})` : ""}`,
+  );
 
-  const res = await fetch(url, { 
-    method: 'PUT', 
-    headers: uploadHeaders, 
-    body: content 
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: uploadHeaders,
+    body: content,
   });
 
   console.log(`Upload response: status=${res.status}, ok=${res.ok}`);
