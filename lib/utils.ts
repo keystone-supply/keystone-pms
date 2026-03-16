@@ -47,6 +47,26 @@ export function calcWeight(
   return +(areaIn2 * thicknessIn * density).toFixed(1);
 }
 
+/**
+ * Parse remnant dims string (e.g. '96x48"', '120x60"') to width and height in numeric form.
+ * Returns fallback { width: 96, height: 48 } if parsing fails.
+ */
+export function parseRemnantDims(
+  dims: string | undefined,
+  fallback = { width: 96, height: 48 },
+): { width: number; height: number } {
+  if (!dims || typeof dims !== "string") return fallback;
+  const cleaned = dims.replace(/"/g, "").trim();
+  const parts = cleaned.split(/x/i);
+  if (parts.length !== 2) return fallback;
+  const width = parseFloat(parts[0].trim());
+  const height = parseFloat(parts[1].trim());
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return fallback;
+  }
+  return { width, height };
+}
+
 // Mock for demo: Random polygon SVG path
 export function genMockSVG(width = 100, height = 50): string {
   const points = [
@@ -56,4 +76,34 @@ export function genMockSVG(width = 100, height = 50): string {
     [width * 0.2, height],
   ];
   return `M${points.map(([x, y]) => `${x},${y}`).join(" L")} Z`;
+}
+
+export type OutlinePoint = { x: number; y: number };
+
+/**
+ * Rotate outline by degrees CCW around origin (0,0). Same formula as NestNow.
+ */
+export function rotateOutline(
+  outline: OutlinePoint[],
+  degrees: number,
+): OutlinePoint[] {
+  if (!outline?.length) return [];
+  const angle = (degrees * Math.PI) / 180;
+  return outline.map((p) => ({
+    x: p.x * Math.cos(angle) - p.y * Math.sin(angle),
+    y: p.x * Math.sin(angle) + p.y * Math.cos(angle),
+  }));
+}
+
+/**
+ * Place outline: rotate by degrees then translate by (x, y). Matches NestNow placement.
+ */
+export function placeOutline(
+  outline: OutlinePoint[],
+  degrees: number,
+  x: number,
+  y: number,
+): OutlinePoint[] {
+  const rotated = rotateOutline(outline, degrees);
+  return rotated.map((p) => ({ x: p.x + x, y: p.y + y }));
 }

@@ -39,6 +39,15 @@ Azure AD app must request scope `Files.ReadWrite.All` for OneDrive folder creati
 - `lib/` – `supabaseClient.ts` (Supabase client), `onedrive.ts` (Microsoft Graph: project folders + tape upload), `utils.ts` (shared helpers).
 - `components/ui/` – shadcn UI components (button, table, badge, etc.).
 
+## NestNow integration
+
+Nesting logic comes from [NestingNow/NestNow](https://github.com/NestingNow/NestNow) (a fork of deepnest-next). NestNow is developed in a **separate repo**. For local integration work:
+
+1. Clone NestNow as a **sibling folder** to this repo (e.g. `../NestNow`).
+2. Build and run it per NestNow’s [BUILD.md](https://github.com/NestingNow/NestNow/blob/main/BUILD.md) (`npm install`, `npm run build`, `npm run start`).
+3. The **nesting UI** will live in Keystone PMS (in this repo); NestNow is the engine, to be called via CLI, local server, or npm package as integration progresses.
+4. With the NestNow **server** running (`npm run start:server` in NestNow), use the **Nest Tool** tab on the nest-remnants page to run a nest and view the result. Optional: set `NESTNOW_URL` in `.env.local` (default `http://127.0.0.1:3001`).
+
 ## Deploy
 
 Build: `npm run build`. Start: `npm start`. For production, set `NEXTAUTH_URL` to your deployed URL. See [Next.js deployment docs](https://nextjs.org/docs/app/building-your-application/deploying) for platforms like Vercel.
