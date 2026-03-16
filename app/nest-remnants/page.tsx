@@ -18,6 +18,7 @@ import {
   Zap,
   Loader2,
   AlertCircle,
+  X,
 } from "lucide-react";
 
 import { type Remnant, genMockSVG, parseRemnantDims, placeOutline } from "@/lib/utils";
@@ -111,6 +112,7 @@ export default function NestRemnantsPage() {
 
   const [remnants, setRemnants] = useState<Remnant[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [addStockMode, setAddStockMode] = useState<"sheet" | "remnant" | null>(null);
   const [nestResult, setNestResult] = useState<NestResult | null>(null);
   const [nestError, setNestError] = useState<string | null>(null);
   const [nestLoading, setNestLoading] = useState(false);
@@ -252,7 +254,7 @@ export default function NestRemnantsPage() {
                 }`}
             >
               <Package className="inline w-6 h-6 mr-2" />
-              Remnants ({remnants.length})
+              Sheets/Remnants ({remnants.length})
             </button>
           </div>
 
@@ -274,9 +276,15 @@ export default function NestRemnantsPage() {
                       <Filter className="w-4 h-4" />
                       <span className="text-sm">Filter</span>
                     </div>
-                    <button className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 border border-purple-500/50 rounded-xl font-medium text-white shadow-lg hover:shadow-purple-500/25 hover:-translate-y-0.5 transition-all duration-300">
+                    <button
+                      onClick={() => {
+                        setAddStockMode(null);
+                        setIsModalOpen(true);
+                      }}
+                      className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 border border-purple-500/50 rounded-xl font-medium text-white shadow-lg hover:shadow-purple-500/25 hover:-translate-y-0.5 transition-all duration-300"
+                    >
                       <Plus className="w-4 h-4" />
-                      Add Remnant
+                      Add Stock
                     </button>
                   </div>
                 </div>
@@ -339,8 +347,14 @@ export default function NestRemnantsPage() {
                   <Package className="w-20 h-20 mx-auto mb-4 text-zinc-600" />
                   <p>
                     No remnants yet.{" "}
-                    <button className="text-purple-400 hover:text-purple-300 font-medium">
-                      Add your first remnant
+                    <button
+                      onClick={() => {
+                        setAddStockMode(null);
+                        setIsModalOpen(true);
+                      }}
+                      className="text-purple-400 hover:text-purple-300 font-medium"
+                    >
+                      Add your first stock
                     </button>
                   </p>
                 </div>
@@ -515,6 +529,133 @@ export default function NestRemnantsPage() {
           </div>
         </div>
       </div>
+
+      {/* Add Stock modal */}
+      {isModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60"
+          onClick={() => {
+            setIsModalOpen(false);
+            setAddStockMode(null);
+          }}
+        >
+          <div
+            className="bg-zinc-900 border border-zinc-700 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-6 border-b border-zinc-700">
+              <h3 className="text-xl font-bold text-white">Add Stock</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsModalOpen(false);
+                  setAddStockMode(null);
+                }}
+                className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+                aria-label="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-6">
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAddStockMode("sheet")}
+                  className={`flex-1 py-3 px-4 rounded-xl font-medium transition-all ${
+                    addStockMode === "sheet"
+                      ? "bg-cyan-600 text-white border border-cyan-500 shadow-lg"
+                      : "bg-zinc-800 text-zinc-400 border border-zinc-600 hover:border-cyan-600 hover:text-cyan-200"
+                  }`}
+                >
+                  Sheet
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAddStockMode("remnant")}
+                  className={`flex-1 py-3 px-4 rounded-xl font-medium transition-all ${
+                    addStockMode === "remnant"
+                      ? "bg-purple-600 text-white border border-purple-500 shadow-lg"
+                      : "bg-zinc-800 text-zinc-400 border border-zinc-600 hover:border-purple-600 hover:text-purple-200"
+                  }`}
+                >
+                  Remnant
+                </button>
+              </div>
+
+              {addStockMode === "remnant" && (
+                <div className="rounded-xl bg-zinc-800/50 border border-zinc-700 p-4 text-center text-zinc-500 text-sm">
+                  Remnant entry coming soon.
+                </div>
+              )}
+
+              <div
+                className={`rounded-xl border p-4 space-y-4 transition-all ${
+                  addStockMode === "sheet"
+                    ? "border-cyan-700/50 bg-zinc-800/30"
+                    : "border-zinc-700 bg-zinc-800/50 opacity-50 pointer-events-none"
+                }`}
+              >
+                <label className="block text-sm font-medium text-zinc-300">
+                  Length
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  placeholder="e.g. 96"
+                  disabled={addStockMode !== "sheet"}
+                  className="w-full px-4 py-2 rounded-xl bg-zinc-800 border border-zinc-600 text-white placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-70"
+                />
+                <label className="block text-sm font-medium text-zinc-300">
+                  Width
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  placeholder="e.g. 48"
+                  disabled={addStockMode !== "sheet"}
+                  className="w-full px-4 py-2 rounded-xl bg-zinc-800 border border-zinc-600 text-white placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-70"
+                />
+                <label className="block text-sm font-medium text-zinc-300">
+                  Thickness
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.001}
+                  placeholder="e.g. 0.25"
+                  disabled={addStockMode !== "sheet"}
+                  className="w-full px-4 py-2 rounded-xl bg-zinc-800 border border-zinc-600 text-white placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-70"
+                />
+                <label className="block text-sm font-medium text-zinc-300">
+                  Material Type
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. A36 Steel, 304 SS"
+                  disabled={addStockMode !== "sheet"}
+                  className="w-full px-4 py-2 rounded-xl bg-zinc-800 border border-zinc-600 text-white placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-70"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setAddStockMode(null);
+                  }}
+                  className="px-4 py-2 rounded-xl font-medium text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
