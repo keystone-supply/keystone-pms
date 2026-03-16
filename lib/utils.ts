@@ -7,13 +7,36 @@ export function cn(...inputs: ClassValue[]) {
 
 export interface Remnant {
   id: string;
+  // Optional backing Supabase sheet_stock row id and label
+  db_id?: string;
+  label?: string | null;
   img_url?: string;
   svg_path?: string; // e.g., "M10 10 L20 30 ... Z"
   dims?: string;
+  // Normalised numeric dimensions for sheet/remnant rectangles (inches)
+  length_in?: number;
+  width_in?: number;
   material: string;
   thickness_in: number;
   est_weight_lbs: number;
-  status: "Available" | "Allocated";
+  status: "Available" | "Allocated" | "Consumed" | "Scrap" | "Archived";
+}
+
+export type OutlinePoint = { x: number; y: number };
+
+export type PartShapeKind = "rect" | "round" | "round_hole" | "polygon";
+
+export interface PartShape {
+  id: string;
+  name: string;
+  kind: PartShapeKind;
+  outline: OutlinePoint[];
+  quantity: number;
+  canRotate: boolean;
+  meta?: {
+    source?: "ui" | "dxf";
+    originalParams?: unknown;
+  };
 }
 
 const DENSITIES = {
@@ -78,7 +101,49 @@ export function genMockSVG(width = 100, height = 50): string {
   return `M${points.map(([x, y]) => `${x},${y}`).join(" L")} Z`;
 }
 
-export type OutlinePoint = { x: number; y: number };
+export function rectOutline(
+  width: number,
+  height: number,
+): OutlinePoint[] {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return [];
+  }
+  return [
+    { x: 0, y: 0 },
+    { x: width, y: 0 },
+    { x: width, y: height },
+    { x: 0, y: height },
+  ];
+}
+
+export function circleOutline(
+  diameter: number,
+  segments = 48,
+): OutlinePoint[] {
+  if (!Number.isFinite(diameter) || diameter <= 0 || !Number.isFinite(segments) || segments < 3) {
+    return [];
+  }
+  const radius = diameter / 2;
+  const pts: OutlinePoint[] = [];
+  for (let i = 0; i < segments; i += 1) {
+    const theta = (2 * Math.PI * i) / segments;
+    pts.push({
+      x: radius + radius * Math.cos(theta),
+      y: radius + radius * Math.sin(theta),
+    });
+  }
+  return pts;
+}
+
+export function ringOutline(
+  od: number,
+  id: number,
+  segments = 48,
+): { outer: OutlinePoint[]; inner: OutlinePoint[] } {
+  const outer = circleOutline(od, segments);
+  const inner = circleOutline(id, segments).slice().reverse();
+  return { outer, inner };
+}
 
 /**
  * Rotate outline by degrees CCW around origin (0,0). Same formula as NestNow.
