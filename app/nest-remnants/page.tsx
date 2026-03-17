@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Image from "next/image";
@@ -32,7 +33,10 @@ import {
   rectOutline,
   circleOutline,
   ringOutline,
+  getPartDims,
+  formatPartDims,
 } from "@/lib/utils";
+import { MATERIAL_NAMES } from "@/lib/materials";
 
 type SheetPlacement = {
   filename?: string;
@@ -102,7 +106,7 @@ function NestPreviewSVG({
           strokeWidth={SHEET_STROKE_WIDTH}
         />
         {sheetplacements.map((p, idx) => {
-          if (!p) return null;
+          if (!p || typeof p.source !== "number") return null;
           const part = parts[p.source];
           const outline = part?.outline;
           if (!outline || !Array.isArray(outline) || outline.length < 3) return null;
@@ -159,7 +163,7 @@ function SheetWireframe({
     <div className="mt-1 mb-2 flex items-center justify-start">
       <svg
         viewBox="0 0 100 60"
-        className="w-24 h-14 text-zinc-500"
+        className="w-24 h-15 text-zinc-500"
         aria-hidden="true"
       >
         <rect
@@ -203,6 +207,13 @@ export default function NestRemnantsPage() {
   const [nestLoading, setNestLoading] = useState(false);
   const [lastNestPayload, setLastNestPayload] = useState<LastNestPayload | null>(null);
   const nestInFlightRef = useRef(false);
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
+  const [filterDropdownPosition, setFilterDropdownPosition] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
   const [pendingDeleteRemnant, setPendingDeleteRemnant] = useState<Remnant | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
@@ -218,6 +229,123 @@ export default function NestRemnantsPage() {
   const [shapeQty, setShapeQty] = useState<string>("1");
   const [addShapeError, setAddShapeError] = useState<string | null>(null);
   const [parts, setParts] = useState<PartShape[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterMaterial, setFilterMaterial] = useState<string>("");
+  const [filterThickness, setFilterThickness] = useState<string>("");
+  const [filterOpen, setFilterOpen] = useState(false);
+
+  const uniqueMaterials = useMemo(
+    () =>
+      [...new Set(remnants.map((r) => r.material).filter(Boolean))].sort(
+        (a, b) => a.localeCompare(b),
+      ),
+    [remnants],
+  );
+  const uniqueThicknesses = useMemo(
+    () =>
+      [
+        ...new Set(
+          remnants
+            .map((r) =>
+              r.thickness_in != null ? r.thickness_in.toFixed(3) : "",
+            )
+            .filter(Boolean),
+        ),
+      ].sort((a, b) => parseFloat(a) - parseFloat(b)),
+    [remnants],
+  );
+
+  function filterRemnants(list: Remnant[], query: string): Remnant[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((r) => {
+      const id = (r.id ?? "").toLowerCase();
+      const label = (r.label ?? "").toLowerCase();
+      const material = (r.material ?? "").toLowerCase();
+      const dims = (r.dims ?? "").toLowerCase();
+      const status = (r.status ?? "").toLowerCase();
+      const notes = (r.notes ?? "").toLowerCase();
+      const thickness = r.thickness_in != null ? r.thickness_in.toFixed(3) : "";
+      return (
+        id.includes(q) ||
+        label.includes(q) ||
+        material.includes(q) ||
+        dims.includes(q) ||
+        status.includes(q) ||
+        notes.includes(q) ||
+        thickness.includes(q)
+      );
+    });
+  }
+
+  const searchFiltered = filterRemnants(remnants, searchQuery);
+  const filteredRemnants = useMemo(() => {
+    return searchFiltered.filter((r) => {
+      if (
+        filterMaterial &&
+        (r.material ?? "") !== filterMaterial
+      )
+        return false;
+      if (
+        filterThickness &&
+        (r.thickness_in == null ||
+          r.thickness_in.toFixed(3) !== filterThickness)
+      )
+        return false;
+      return true;
+    });
+  }, [searchFiltered, filterMaterial, filterThickness]);
+
+  useLayoutEffect(() => {
+    if (!filterOpen) {
+      setFilterDropdownPosition(null);
+      return;
+    }
+    const el = filterButtonRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const width = 256;
+    setFilterDropdownPosition({
+      top: rect.bottom + 8,
+      left: rect.right - width,
+    });
+  }, [filterOpen]);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    function updatePosition() {
+      const el = filterButtonRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const width = 256;
+      setFilterDropdownPosition({
+        top: rect.bottom + 8,
+        left: rect.right - width,
+      });
+    }
+    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [filterOpen]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (!filterOpen) return;
+      const target = event.target as Node;
+      const inButton = filterPanelRef.current?.contains(target);
+      const inDropdown = filterDropdownRef.current?.contains(target);
+      if (!inButton && !inDropdown) setFilterOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [filterOpen]);
+
+  const selectedForNest = remnants.filter(
+    (r) => r.db_id && selectedSheetIds.includes(r.db_id),
+  );
 
   function mapRowToRemnant(row: any): Remnant {
     const length_in = Number(row.length_in) || 0;
@@ -260,6 +388,7 @@ export default function NestRemnantsPage() {
       thickness_in,
       est_weight_lbs,
       status,
+      notes: row.notes ?? null,
     };
   }
 
@@ -556,8 +685,7 @@ export default function NestRemnantsPage() {
     );
     setSheetMaterial(remnant.material ?? "");
     setSheetLabel(remnant.label ?? "");
-    // notes are not currently on Remnant; they will be preserved via DB on save
-    setSheetNotes("");
+    setSheetNotes(remnant.notes ?? "");
     setSheetStatus(
       remnant.status === "Allocated"
         ? "allocated"
@@ -649,8 +777,71 @@ export default function NestRemnantsPage() {
     setIsModalOpen(false);
   };
 
+  const filterDropdownEl =
+    filterOpen &&
+    filterDropdownPosition &&
+    createPortal(
+      <div
+        ref={filterDropdownRef}
+        className="w-64 rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl p-4"
+        style={{
+          position: "fixed",
+          top: filterDropdownPosition.top,
+          left: filterDropdownPosition.left,
+          zIndex: 9999,
+        }}
+      >
+        <div className="space-y-3">
+          <label className="block text-xs font-medium text-zinc-400 uppercase tracking-wider">
+            Material
+          </label>
+          <select
+            value={filterMaterial}
+            onChange={(e) => setFilterMaterial(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-white text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
+          >
+            <option value="">All materials</option>
+            {uniqueMaterials.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          <label className="block text-xs font-medium text-zinc-400 uppercase tracking-wider">
+            Thickness (in.)
+          </label>
+          <select
+            value={filterThickness}
+            onChange={(e) => setFilterThickness(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-white text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
+          >
+            <option value="">All thicknesses</option>
+            {uniqueThicknesses.map((t) => (
+              <option key={t} value={t}>
+                {t}&quot;
+              </option>
+            ))}
+          </select>
+          <div className="flex gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setFilterMaterial("");
+                setFilterThickness("");
+              }}
+              className="flex-1 px-3 py-2 rounded-lg bg-zinc-700/50 hover:bg-zinc-600 text-zinc-300 text-sm font-medium"
+            >
+              Clear filters
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    );
+
   return (
-    <div className="min-h-screen bg-zinc-950 p-8">
+    <>
+      <div className="min-h-screen bg-zinc-950 p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
@@ -708,7 +899,7 @@ export default function NestRemnantsPage() {
                 }`}
             >
               <Package className="inline w-6 h-6 mr-2" />
-              Sheets/Remnants ({remnants.length})
+              Sheets/Remnants ({searchQuery.trim() || filterMaterial || filterThickness ? `${filteredRemnants.length}/${remnants.length}` : remnants.length})
             </button>
           </div>
 
@@ -721,14 +912,30 @@ export default function NestRemnantsPage() {
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 w-5 h-5" />
                     <input
                       type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search remnants, materials, jobs..."
                       className="w-full pl-12 pr-4 py-3 bg-zinc-800/50 border border-zinc-700 rounded-xl text-white placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 transition-all"
                     />
                   </div>
                   <div className="flex gap-3">
-                    <div className="flex items-center gap-2 px-4 py-2 bg-zinc-800/50 border border-zinc-700 rounded-xl text-zinc-400 hover:text-white hover:border-purple-500 transition-colors">
-                      <Filter className="w-4 h-4" />
-                      <span className="text-sm">Filter</span>
+                    <div className="relative" ref={filterPanelRef}>
+                      <button
+                        ref={filterButtonRef}
+                        type="button"
+                        onClick={() => setFilterOpen((o) => !o)}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-colors ${
+                          filterMaterial || filterThickness
+                            ? "bg-purple-500/20 border-purple-500/50 text-purple-200"
+                            : "bg-zinc-800/50 border-zinc-700 text-zinc-400 hover:text-white hover:border-purple-500"
+                        }`}
+                      >
+                        <Filter className="w-4 h-4" />
+                        <span className="text-sm">Filter</span>
+                        {(filterMaterial || filterThickness) && (
+                          <span className="ml-1 size-2 rounded-full bg-purple-500" />
+                        )}
+                      </button>
                     </div>
                     <button
                       onClick={() => {
@@ -737,7 +944,7 @@ export default function NestRemnantsPage() {
                       }}
                       className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 border border-purple-500/50 rounded-xl font-medium text-white shadow-lg hover:shadow-purple-500/25 hover:-translate-y-0.5 transition-all duration-300"
                     >
-                      <Plus className="w-4 h-4" />
+                      <Plus className="w-6 h-6" />
                       Add Stock
                     </button>
                   </div>
@@ -762,8 +969,41 @@ export default function NestRemnantsPage() {
               )}
               {!remnantsLoading && (
                 <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-10">
-                    {remnants.map((remnant, i) => (
+                  {filteredRemnants.length === 0 && remnants.length > 0 &&
+                    (searchQuery.trim() !== "" || filterMaterial || filterThickness) ? (
+                    <div className="mb-10 rounded-2xl border border-zinc-700 bg-zinc-800/30 p-8 text-center">
+                      <p className="text-zinc-400 mb-3">
+                        {searchQuery.trim()
+                          ? `No matches for "${searchQuery.trim()}".`
+                          : "No sheets match the current filters."}
+                      </p>
+                      <div className="flex flex-wrap items-center justify-center gap-3">
+                        {searchQuery.trim() && (
+                          <button
+                            type="button"
+                            onClick={() => setSearchQuery("")}
+                            className="text-purple-400 hover:text-purple-300 font-medium"
+                          >
+                            Clear search
+                          </button>
+                        )}
+                        {(filterMaterial || filterThickness) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFilterMaterial("");
+                              setFilterThickness("");
+                            }}
+                            className="text-purple-400 hover:text-purple-300 font-medium"
+                          >
+                            Clear filters
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mb-10 transition-all duration-200">
+                    {filteredRemnants.map((remnant, i) => (
                       <div
                         key={remnant.db_id ?? i}
                         className="group relative bg-gradient-to-b from-zinc-800 to-zinc-900/50 border border-purple-800/50 rounded-2xl p-6 shadow-xl hover:shadow-2xl hover:shadow-purple-500/25 hover:-translate-y-2 hover:border-purple-600/70 transition-all duration-500 overflow-hidden will-change-transform"
@@ -795,7 +1035,7 @@ export default function NestRemnantsPage() {
                               Use in Nest
                             </label>
                           </div>
-                          <p className="text-purple-400 font-mono text-sm mb-3">
+                          <p className="text-blue-200 font-mono text-xl mb-5">
                             {remnant.dims}
                           </p>
                           <div className="space-y-1 text-sm mb-4">
@@ -831,24 +1071,33 @@ export default function NestRemnantsPage() {
                           >
                             {remnant.status}
                           </span>
-                          <div className="flex gap-2 mt-6 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                          {remnant.notes?.trim() && (
+                            <p
+                              className="mt-4 text-lg text-zinc-400 line-clamp-2"
+                              title={remnant.notes.trim()}
+                            >
+                              {remnant.notes.trim()}
+                            </p>
+                          )}
+                          <div className="flex gap-2 mt-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                             <button
-                              className="flex-1 p-2 bg-purple-600/30 hover:bg-purple-500/50 border border-purple-500/40 rounded-xl text-purple-200 text-sm font-medium transition-all hover:scale-105"
+                              className="flex-1 p-1 bg-purple-600/30 hover:bg-purple-500/50 border border-purple-500/40 rounded-xl text-purple-200 text-sm font-medium transition-all hover:scale-105"
                               onClick={() => handleOpenEditSheet(remnant)}
                             >
-                              <Edit className="w-4 h-4 mr-1" /> Edit
+                              <Edit className="w-4 h-4 mr-3" /> Edit
                             </button>
                             <button
-                              className="flex-1 p-2 bg-zinc-700/50 hover:bg-zinc-600 border border-zinc-600 rounded-xl text-zinc-300 text-sm font-medium transition-all hover:scale-105"
+                              className="flex-1 p-1 bg-zinc-700/50 hover:bg-zinc-600 border border-zinc-600 rounded-xl text-zinc-300 text-sm font-medium transition-all hover:scale-105"
                               onClick={() => handleRequestDeleteSheet(remnant)}
                             >
-                              <Trash2 className="w-4 h-4 mr-1" /> Delete
+                              <Trash2 className="w-4 h-4 mr-3" /> Delete
                             </button>
                           </div>
                         </div>
                       </div>
                     ))}
                   </div>
+                  )}
                   {/* Compact table view similar to projects */}
                   <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl overflow-hidden shadow-xl">
                     <table className="w-full text-sm">
@@ -876,7 +1125,7 @@ export default function NestRemnantsPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-800">
-                        {remnants.map((r) => (
+                        {filteredRemnants.map((r) => (
                           <tr key={r.db_id ?? r.id} className="hover:bg-purple-800/30 transition-colors">
                             <td className="px-6 py-3 text-white font-mono">
                               {r.id}
@@ -931,13 +1180,46 @@ export default function NestRemnantsPage() {
                             </td>
                           </tr>
                         ))}
-                        {remnants.length === 0 && (
+                        {filteredRemnants.length === 0 && (
                           <tr>
                             <td
                               colSpan={7}
                               className="px-6 py-10 text-center text-zinc-500"
                             >
-                              No sheets/remnants yet – add stock above.
+                              {remnants.length === 0
+                                ? "No sheets/remnants yet – add stock above."
+                                : (
+                                  <>
+                                    {searchQuery.trim()
+                                      ? `No matches for "${searchQuery.trim()}". `
+                                      : "No sheets match the current filters. "}
+                                    {searchQuery.trim() && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setSearchQuery("")}
+                                        className="text-purple-400 hover:text-purple-300 font-medium"
+                                      >
+                                        Clear search
+                                      </button>
+                                    )}
+                                    {(filterMaterial || filterThickness) && (
+                                      <>
+                                        {searchQuery.trim() && " "}
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setFilterMaterial("");
+                                            setFilterThickness("");
+                                          }}
+                                          className="text-purple-400 hover:text-purple-300 font-medium"
+                                        >
+                                          Clear filters
+                                        </button>
+                                      </>
+                                    )}
+                                    {" "}to see all sheets.
+                                  </>
+                                )}
                             </td>
                           </tr>
                         )}
@@ -1124,12 +1406,12 @@ export default function NestRemnantsPage() {
                 </div>
               </div>
 
-              {/* Parts list + Available Remnants - full width below canvas */}
+              {/* Parts list + Selected for Nesting - full width below canvas */}
               <div className="w-full bg-gradient-to-r from-purple-600/20 to-purple-700/20 border border-purple-500/30 rounded-3xl p-6 shadow-xl">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div>
                     <h4 className="font-bold text-xl text-purple-100 mb-3">
-                      Parts in this nest
+                      Parts in this Nest
                     </h4>
                     {parts.length === 0 ? (
                       <p className="text-sm text-purple-200/70">
@@ -1143,6 +1425,9 @@ export default function NestRemnantsPage() {
                               <th className="px-3 py-2 text-left">Name</th>
                               <th className="px-3 py-2 text-left hidden sm:table-cell">
                                 Type
+                              </th>
+                              <th className="px-3 py-2 text-left hidden sm:table-cell">
+                                Dims
                               </th>
                               <th className="px-3 py-2 text-right">Qty</th>
                               <th className="px-3 py-2 text-right"></th>
@@ -1165,6 +1450,37 @@ export default function NestRemnantsPage() {
                                       : p.kind === "round_hole"
                                         ? "Round w/ hole"
                                         : "Polygon"}
+                                </td>
+                                <td className="px-3 py-2 text-xs text-purple-200/80 hidden sm:table-cell">
+                                  {(() => {
+                                    // Prefer explicit OD/ID labels for round shapes created via UI
+                                    if (p.kind === "round" && p.meta?.source === "ui") {
+                                      const params = p.meta.originalParams as
+                                        | { od_in?: number }
+                                        | undefined;
+                                      const od = params?.od_in;
+                                      if (typeof od === "number" && od > 0) {
+                                        return `${od.toFixed(2)}" OD`;
+                                      }
+                                    }
+                                    if (p.kind === "round_hole" && p.meta?.source === "ui") {
+                                      const params = p.meta.originalParams as
+                                        | { od_in?: number; id_in?: number }
+                                        | undefined;
+                                      const od = params?.od_in;
+                                      const id = params?.id_in;
+                                      if (
+                                        typeof od === "number" &&
+                                        od > 0 &&
+                                        typeof id === "number" &&
+                                        id > 0
+                                      ) {
+                                        return `${od.toFixed(2)}" OD x ${id.toFixed(2)}" ID`;
+                                      }
+                                    }
+                                    // Fallback: generic bounding-box based dims (for polygons / DXF, or if params missing)
+                                    return formatPartDims(getPartDims(p));
+                                  })()}
                                 </td>
                                 <td className="px-3 py-2 text-right font-mono">
                                   {p.quantity}
@@ -1191,22 +1507,47 @@ export default function NestRemnantsPage() {
                   </div>
                   <div>
                     <h4 className="font-bold text-xl text-purple-100 mb-3">
-                      Available Remnants
+                      Selected for Nesting
                     </h4>
                     <div className="max-h-64 overflow-y-auto space-y-2">
-                      {remnants.slice(0, 3).map((r, i) => (
-                        <button
-                          key={i}
-                          className="w-full flex items-center gap-3 p-3 bg-purple-500/20 hover:bg-purple-400/30 border border-purple-500/30 rounded-xl text-purple-200 text-sm font-medium transition-all hover:scale-[1.02]"
-                        >
-                          <div className="w-12 h-12 bg-gradient-to-br from-purple-500/30 to-purple-600/30 rounded-lg flex items-center justify-center shadow-md">
-                            {r.dims ? `${r.dims.split("x")[0]}x${r.dims.split("x")[1]}` : "N/A"}
+                      {selectedForNest.length > 0 ? (
+                        selectedForNest.map((r) => (
+                          <div
+                            key={r.db_id}
+                            className="w-full flex items-center gap-3 p-3 bg-purple-500/20 border border-purple-500/30 rounded-xl text-purple-200 text-sm"
+                          >
+                            <div className="flex-shrink-0">
+                              <SheetWireframe
+                                lengthIn={r.length_in}
+                                widthIn={r.width_in}
+                                dims={r.dims}
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-medium truncate">{r.id}</p>
+                              <p className="text-xs text-purple-200/80">
+                                {r.material} {r.thickness_in.toFixed(3)}" · {r.dims ?? "—"}
+                              </p>
+                              {typeof r.est_weight_lbs === "number" && (
+                                <p className="text-xs text-emerald-400/90 mt-0.5">
+                                  {r.est_weight_lbs} lbs
+                                </p>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleSelectedSheet(r.db_id)}
+                              className="flex-shrink-0 text-xs text-purple-200/80 hover:text-red-300"
+                            >
+                              Remove from nest
+                            </button>
                           </div>
-                          <span className="truncate">
-                            {r.material} {r.thickness_in.toFixed(3)}"
-                          </span>
-                        </button>
-                      ))}
+                        ))
+                      ) : (
+                        <p className="text-sm text-purple-200/70 py-2">
+                          No sheets selected. Open the <span className="font-semibold">Sheets/Remnants</span> tab and check <span className="font-semibold">Use in Nest</span> on the sheets you want to use.
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1347,14 +1688,21 @@ export default function NestRemnantsPage() {
                 <label className="block text-sm font-medium text-zinc-300">
                   Material Type
                 </label>
-                <input
-                  type="text"
-                  placeholder="e.g. A36 Steel, 304 SS"
+                <select
                   disabled={addStockMode !== "sheet"}
                   value={sheetMaterial}
                   onChange={(e) => setSheetMaterial(e.target.value)}
-                  className="w-full px-4 py-2 rounded-xl bg-zinc-800 border border-zinc-600 text-white placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-70"
-                />
+                  className="w-full px-4 py-2 rounded-xl bg-zinc-800 border border-zinc-600 text-white focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-70"
+                >
+                  <option value="" disabled>
+                    Select material
+                  </option>
+                  {MATERIAL_NAMES.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
                 <label className="block text-sm font-medium text-zinc-300">
                   Label (optional)
                 </label>
@@ -1696,5 +2044,7 @@ export default function NestRemnantsPage() {
         </div>
       )}
     </div>
+      {filterDropdownEl}
+    </>
   );
 }

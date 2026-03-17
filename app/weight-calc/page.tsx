@@ -17,11 +17,11 @@ import {
 } from "@/components/ui/table";
 import { supabase } from "@/lib/supabaseClient";
 
-type MaterialKey = "al" | "cs" | "ar500" | "viking" | "304ss";
+type MaterialKey = "al" | "cs" | "ar500" | "viking" | "304ss" | "hiace";
 
 type ShapeValue = "round" | "square" | "tube";
 
-type CostKey = "mild" | "ar500" | "viking" | "aluminum" | "304ss";
+type CostKey = "mild" | "ar500" | "viking" | "aluminum" | "304ss" | "hiace";
 
 interface MaterialInfo {
   name: string;
@@ -75,6 +75,7 @@ export default function WeightCalcPage() {
     ar500: { name: "AR500", density: 0.295 },
     viking: { name: "Viking", density: 0.303 },
     "304ss": { name: "304 SS", density: 0.295 },
+    hiace: { name: "HiAce", density: 0.295 },
   };
 
   const shapes: Shape[] = [
@@ -107,17 +108,20 @@ export default function WeightCalcPage() {
     viking: 3.03,
     aluminum: 6.0,
     "304ss": 3.5,
+    hiace: 2.1,
   };
 
   const VIKING_SELL_PER_LB = 6;
+  const HIACE_SELL_PER_LB = 3.25;
   const STANDARD_SELL_MULTIPLIER = 1.3;
 
   const materialOrder: Record<MaterialKey, number> = {
     cs: 0,
     ar500: 1,
     viking: 2,
-    "304ss": 3,
-    al: 4,
+    hiace: 3,
+    "304ss": 4,
+    al: 5,
   };
 
   const materialCostOptions: {
@@ -128,6 +132,7 @@ export default function WeightCalcPage() {
       { costKey: "mild", materialKey: "cs", label: "Mild A36" },
       { costKey: "ar500", materialKey: "ar500", label: "AR500" },
       { costKey: "viking", materialKey: "viking", label: "Viking" },
+      { costKey: "hiace", materialKey: "hiace", label: "HiAce" },
       { costKey: "aluminum", materialKey: "al", label: "Aluminum 6061" },
       { costKey: "304ss", materialKey: "304ss", label: "304 SS" },
     ];
@@ -200,7 +205,9 @@ export default function WeightCalcPage() {
         item.sellPerLb ??
         (item.costPerLb === costs.viking
           ? VIKING_SELL_PER_LB
-          : item.costPerLb * STANDARD_SELL_MULTIPLIER);
+          : item.costPerLb === costs.hiace
+            ? HIACE_SELL_PER_LB
+            : item.costPerLb * STANDARD_SELL_MULTIPLIER);
       const estSell = totalWeight * sellPerLb;
       return { unitWeight, unitCost, totalWeight, totalCost, estSell };
     },
@@ -229,7 +236,9 @@ export default function WeightCalcPage() {
   const estSell =
     cost === "viking"
       ? previewWeight * VIKING_SELL_PER_LB
-      : previewTotalCost * STANDARD_SELL_MULTIPLIER;
+      : cost === "hiace"
+        ? previewWeight * HIACE_SELL_PER_LB
+        : previewTotalCost * STANDARD_SELL_MULTIPLIER;
   const formattedEstSell = (
     isNaN(estSell) || estSell === 0 ? 0 : estSell
   ).toLocaleString("en-US", {
@@ -252,7 +261,9 @@ export default function WeightCalcPage() {
     const sellPerLb =
       opt.costKey === "viking"
         ? VIKING_SELL_PER_LB
-        : costs[opt.costKey] * STANDARD_SELL_MULTIPLIER;
+        : opt.costKey === "hiace"
+          ? HIACE_SELL_PER_LB
+          : costs[opt.costKey] * STANDARD_SELL_MULTIPLIER;
     const newItem: TapeItem = {
       id,
       notes: "",
@@ -294,7 +305,9 @@ export default function WeightCalcPage() {
           const sellPerLb =
             opt.costKey === "viking"
               ? VIKING_SELL_PER_LB
-              : costs[opt.costKey] * STANDARD_SELL_MULTIPLIER;
+              : opt.costKey === "hiace"
+                ? HIACE_SELL_PER_LB
+                : costs[opt.costKey] * STANDARD_SELL_MULTIPLIER;
           return {
             ...item,
             material: opt.materialKey,
@@ -481,7 +494,9 @@ export default function WeightCalcPage() {
         item.sellPerLb ??
         (item.costPerLb === costs.viking
           ? VIKING_SELL_PER_LB
-          : item.costPerLb * STANDARD_SELL_MULTIPLIER);
+          : item.costPerLb === costs.hiace
+            ? HIACE_SELL_PER_LB
+            : item.costPerLb * STANDARD_SELL_MULTIPLIER);
       const fields = [
         item.notes || "",
         materialFullName,
@@ -685,7 +700,7 @@ export default function WeightCalcPage() {
             <div className="space-y-8">
               <div>
                 <label className="block text-zinc-300 font-medium mb-3 text-lg">
-                  Materials
+                  Material
                 </label>
                 <div className="flex flex-wrap gap-3">
                   {materialCostOptions.map((opt) => {
@@ -694,7 +709,9 @@ export default function WeightCalcPage() {
                     const sellPerLb =
                       opt.costKey === "viking"
                         ? VIKING_SELL_PER_LB
-                        : costVal * STANDARD_SELL_MULTIPLIER;
+                        : opt.costKey === "hiace"
+                          ? HIACE_SELL_PER_LB
+                          : costVal * STANDARD_SELL_MULTIPLIER;
                     const isSelected = materialCostOption === opt.costKey;
                     return (
                       <button
@@ -811,16 +828,8 @@ export default function WeightCalcPage() {
             <div className="mt-10 pt-10 border-t border-zinc-800">
               <div className="flex flex-wrap items-baseline justify-between gap-4 mb-6">
                 <h3 className="text-3xl font-bold text-white">
-                  Weight & Cost
+                  Weight & Budget
                 </h3>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-xl font-mono font-bold text-zinc-400">
-                    Margin
-                  </span>
-                  <span className="text-2xl font-mono font-bold bg-gradient-to-r from-cyan-400 via-teal-500 to-emerald-600 bg-clip-text text-transparent">
-                    {formattedMargin}
-                  </span>
-                </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 <div className="text-center">
@@ -836,7 +845,7 @@ export default function WeightCalcPage() {
                 </div>
                 <div className="text-center">
                   <div className="text-xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">
-                    Est. Cost
+                    Cost $$
                   </div>
                   <div className="text-3xl font-mono font-bold bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 bg-clip-text text-transparent mb-2 shadow-2xl">
                     {formattedCost}
@@ -844,10 +853,18 @@ export default function WeightCalcPage() {
                 </div>
                 <div className="text-center">
                   <div className="text-xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">
-                    Est. Sell $$
+                    Sell $$
                   </div>
                   <div className="text-3xl font-mono font-bold bg-gradient-to-r from-violet-400 via-purple-500 to-pink-500 bg-clip-text text-transparent mb-2 shadow-2xl">
                     {formattedEstSell}
+                  </div>
+                  <div className="flex items-baseline justify-center gap-2 mt-2">
+                    <span className="text-sm font-mono font-bold text-zinc-400">
+                      Margin
+                    </span>
+                    <span className="text-lg font-mono font-bold bg-gradient-to-r from-cyan-400 via-teal-500 to-emerald-600 bg-clip-text text-transparent">
+                      {formattedMargin}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -892,11 +909,11 @@ export default function WeightCalcPage() {
                         <TableHead className="w-20 text-right font-mono">
                           Dim2
                         </TableHead>
-                        <TableHead className="w-14 text-right">Qty</TableHead>
-                        <TableHead className="w-20 text-right font-mono">
+                        <TableHead className="w-20 text-right">Qty</TableHead>
+                        <TableHead className="w-22 text-right font-mono">
                           Cost/lb
                         </TableHead>
-                        <TableHead className="w-20 text-right font-mono">
+                        <TableHead className="w-22 text-right font-mono">
                           Sell/lb
                         </TableHead>
                         <TableHead className="w-24 text-right font-mono">
@@ -906,10 +923,10 @@ export default function WeightCalcPage() {
                           Total Cost
                         </TableHead>
                         <TableHead className="w-32 text-right font-mono">
-                          Est. Sell $$
+                          Sell $$
                         </TableHead>
                         <TableHead className="w-24 text-right font-mono">
-                          Margin
+                          Margin $$
                         </TableHead>
                         <TableHead className="w-16" />
                       </TableRow>
@@ -1037,7 +1054,7 @@ export default function WeightCalcPage() {
                                 <span>&nbsp;</span>
                               )}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-lg">
+                            <TableCell className="text-right font-mono text-sm opacity-90">
                               <input
                                 type="number"
                                 min="1"
@@ -1049,10 +1066,10 @@ export default function WeightCalcPage() {
                                     +e.target.value || 1,
                                   )
                                 }
-                                className="w-full text-right bg-transparent border-none outline-none text-lg font-mono focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 accent-zinc-300"
+                                className="w-full text-right bg-transparent border-none outline-none font-mono text-sm opacity-90 focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 accent-zinc-300"
                               />
                             </TableCell>
-                            <TableCell className="text-right font-mono text-lg">
+                            <TableCell className="text-right font-mono text-sm opacity-90">
                               <input
                                 type="number"
                                 step="0.01"
@@ -1065,10 +1082,10 @@ export default function WeightCalcPage() {
                                     +e.target.value,
                                   )
                                 }
-                                className="w-full text-right bg-transparent border-none outline-none text-lg font-mono focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 accent-zinc-300"
+                                className="w-full text-right bg-transparent border-none outline-none font-mono text-sm opacity-90 focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 accent-zinc-300"
                               />
                             </TableCell>
-                            <TableCell className="text-right font-mono text-lg">
+                            <TableCell className="text-right font-mono text-sm opacity-90">
                               <input
                                 type="number"
                                 step="0.01"
@@ -1077,8 +1094,10 @@ export default function WeightCalcPage() {
                                   item.sellPerLb ??
                                   (item.costPerLb === costs.viking
                                     ? VIKING_SELL_PER_LB
-                                    : item.costPerLb *
-                                      STANDARD_SELL_MULTIPLIER)
+                                    : item.costPerLb === costs.hiace
+                                      ? HIACE_SELL_PER_LB
+                                      : item.costPerLb *
+                                        STANDARD_SELL_MULTIPLIER)
                                 ).toFixed(2)}
                                 onChange={(e) =>
                                   updateItem(
@@ -1087,10 +1106,10 @@ export default function WeightCalcPage() {
                                     +e.target.value,
                                   )
                                 }
-                                className="w-full text-right bg-transparent border-none outline-none text-lg font-mono focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 accent-zinc-300"
+                                className="w-full text-right bg-transparent border-none outline-none font-mono text-sm opacity-90 focus:bg-zinc-800/50 focus:outline-none focus:ring-0 rounded px-1 accent-zinc-300"
                               />
                             </TableCell>
-                            <TableCell className="text-right font-mono font-semibold text-emerald-400 text-lg group-hover:text-emerald-300">
+                            <TableCell className="text-right font-mono font-semibold text-emerald-400 text-sm group-hover:text-emerald-300">
                               {totals.totalWeight.toLocaleString("en-US", {
                                 minimumFractionDigits: 2,
                                 maximumFractionDigits: 2,
@@ -1148,7 +1167,7 @@ export default function WeightCalcPage() {
                       </div>
                       <div>
                         <div className="text-xl text-zinc-400 mb-2">
-                          Estimated Total Cost
+                          Total Cost
                         </div>
                         <div className="text-5xl font-mono font-bold bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 bg-clip-text text-transparent shadow-2xl tracking-tight">
                           {formattedGrandCost}
@@ -1156,7 +1175,7 @@ export default function WeightCalcPage() {
                       </div>
                       <div>
                         <div className="text-xl text-zinc-400 mb-2">
-                          Est. Sell Price
+                          Sell Price
                         </div>
                         <div className="text-5xl font-mono font-bold bg-gradient-to-r from-violet-400 via-purple-500 to-pink-500 bg-clip-text text-transparent shadow-2xl tracking-tight">
                           {formattedGrandEstSell}

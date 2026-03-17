@@ -20,6 +20,7 @@ export interface Remnant {
   thickness_in: number;
   est_weight_lbs: number;
   status: "Available" | "Allocated" | "Consumed" | "Scrap" | "Archived";
+  notes?: string | null;
 }
 
 export type OutlinePoint = { x: number; y: number };
@@ -39,10 +40,16 @@ export interface PartShape {
   };
 }
 
+export interface PartDims {
+  width: number;
+  height: number;
+}
+
 const DENSITIES = {
   // lb/in³
   "A36 Steel": 0.283,
   "304 SS": 0.289,
+  HiAce: 0.295,
   // ...
 };
 
@@ -143,6 +150,91 @@ export function ringOutline(
   const outer = circleOutline(od, segments);
   const inner = circleOutline(id, segments).slice().reverse();
   return { outer, inner };
+}
+
+function getOutlineBoundingBox(outline: OutlinePoint[]): PartDims | null {
+  if (!outline?.length) return null;
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  for (const p of outline) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+
+  if (
+    !Number.isFinite(minX) ||
+    !Number.isFinite(maxX) ||
+    !Number.isFinite(minY) ||
+    !Number.isFinite(maxY)
+  ) {
+    return null;
+  }
+
+  const width = maxX - minX;
+  const height = maxY - minY;
+
+  if (width <= 0 || height <= 0) return null;
+  return { width, height };
+}
+
+export function getPartDims(part: PartShape): PartDims | null {
+  if (!part) return null;
+
+  const source = part.meta?.source;
+
+  if (part.kind === "rect" && source === "ui") {
+    const params = part.meta?.originalParams as
+      | { width_in?: number; height_in?: number }
+      | undefined;
+    const width = params?.width_in;
+    const height = params?.height_in;
+    if (
+      typeof width === "number" &&
+      typeof height === "number" &&
+      width > 0 &&
+      height > 0
+    ) {
+      return { width, height };
+    }
+  }
+
+  if ((part.kind === "round" || part.kind === "round_hole") && source === "ui") {
+    const params = part.meta?.originalParams as
+      | { od_in?: number; id_in?: number }
+      | undefined;
+    const od = params?.od_in;
+    if (typeof od === "number" && od > 0) {
+      return { width: od, height: od };
+    }
+  }
+
+  const bbox = getOutlineBoundingBox(part.outline ?? []);
+  if (!bbox) return null;
+  return bbox;
+}
+
+export function formatPartDims(
+  dims: PartDims | null | undefined,
+): string {
+  if (!dims) return "—";
+  const { width, height } = dims;
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return "—";
+  }
+  const w = width.toFixed(2);
+  const h = height.toFixed(2);
+  return `${w}" x ${h}"`;
 }
 
 /**
