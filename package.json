@@ -7,7 +7,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:push": "npx supabase db push",
+    "import:book1": "npx tsx scripts/import-book1.ts"
   },
   "dependencies": {
     "@azure/identity": "^4.13.0",
@@ -31,10 +33,13 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "csv-parse": "^6.2.0",
+    "dotenv": "^17.3.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "supabase": "^2.77.1",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }

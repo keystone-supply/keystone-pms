@@ -82,25 +82,32 @@ const handler = NextAuth({
         token.refreshToken = account.refresh_token;
         token.accessTokenExpires = account.expires_at
           ? account.expires_at * 1000
-          : Date.now() + (account.expires_in || 3600) * 1000;
+          : Date.now() + (Number(account.expires_in) || 3600) * 1000;
+        const expiresMs = Number(token.accessTokenExpires);
         console.log(
           "✅ Graph access token SAVED to JWT + expires:",
-          new Date(token.accessTokenExpires).toISOString(),
+          Number.isFinite(expiresMs)
+            ? new Date(expiresMs).toISOString()
+            : "(invalid)",
         );
       }
 
       // If the access token has expired, try to refresh it
-      if (Date.now() > (token.accessTokenExpires ?? 0)) {
+      if (Date.now() > Number(token.accessTokenExpires ?? 0)) {
         console.log("🔄 Access token expired, refreshing...");
         const refreshedTokens = await refreshAccessToken(token);
         if (refreshedTokens.access_token) {
           token.accessToken = refreshedTokens.access_token;
-          token.accessTokenExpires = refreshedTokens.expires_at * 1000;
+          token.accessTokenExpires =
+            Number(refreshedTokens.expires_at) * 1000;
           token.refreshToken =
             refreshedTokens.refresh_token ?? token.refreshToken;
+          const refreshedMs = Number(token.accessTokenExpires);
           console.log(
             "✅ Token refreshed successfully, new expiry:",
-            new Date(token.accessTokenExpires).toISOString(),
+            Number.isFinite(refreshedMs)
+              ? new Date(refreshedMs).toISOString()
+              : "(invalid)",
           );
         } else {
           console.log(
@@ -117,7 +124,7 @@ const handler = NextAuth({
       (session as any).accessToken = token.accessToken as string;
       console.log(
         "✅ Session updated with Graph token (length:",
-        token.accessToken ? token.accessToken.length : 0,
+        typeof token.accessToken === "string" ? token.accessToken.length : 0,
         ")",
       );
       return session;

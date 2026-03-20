@@ -1,16 +1,20 @@
 /** New project form; saves to Supabase and creates OneDrive folder structure via lib/onedrive. */
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { createProjectFolders } from "@/lib/onedrive";
-import { useRouter } from "next/navigation";
+import { nextSequentialJobNumber } from "@/lib/projectNumber";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Save } from "lucide-react";
 
-export default function NewProject() {
+import { ProjectBasicsFields } from "@/components/projects/project-basics-fields";
+import type { ProjectBasicsField } from "@/lib/projectTypes";
+import { safeReturnToPath } from "@/lib/safeReturnTo";
+
+function NewProjectForm({ backHref }: { backHref: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [accessToken, setAccessToken] = useState("");
   const [form, setForm] = useState({
     customer: "",
     project_name: "",
@@ -22,20 +26,16 @@ export default function NewProject() {
 
   useEffect(() => {
     const getNextJob = async () => {
-      const { data } = await supabase
-        .from("projects")
-        .select("project_number")
-        .order("project_number", { ascending: false })
-        .limit(1);
-      const last = data?.[0]?.project_number
-        ? parseInt(data[0].project_number)
-        : 101350;
-      setNextJob((last + 1).toString());
+      const { data } = await supabase.from("projects").select("project_number");
+      const nums = (data ?? []).map((r) => r.project_number);
+      setNextJob(nextSequentialJobNumber(nums));
     };
     getNextJob();
   }, []);
 
-  // Token fetched fresh at submit time (handles expiry)
+  const setBasics = (field: ProjectBasicsField, value: string) => {
+    setForm((f) => ({ ...f, [field]: value }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,6 +49,7 @@ export default function NewProject() {
         supply_industrial: form.supply_industrial,
         customer_approval: "PENDING",
         project_complete: false,
+        project_status: "in_process",
         material_cost: 0,
         labor_cost: 0,
         engineering_cost: 0,
@@ -64,7 +65,6 @@ export default function NewProject() {
         .single();
       if (error) throw error;
 
-      // Fetch FRESH token right before folder creation (triggers server-side refresh)
       const freshSessionRes = await fetch("/api/auth/session");
       const freshSession = await freshSessionRes.json();
       const freshToken = freshSession?.accessToken;
@@ -84,8 +84,9 @@ export default function NewProject() {
         `✅ Job ${nextJob} created! Folders in Documents/0 PROJECT FOLDERS`,
       );
       router.push(`/projects/${saved.id}`);
-    } catch (err: any) {
-      alert("Error: " + err.message);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      alert("Error: " + message);
     } finally {
       setLoading(false);
     }
@@ -95,13 +96,18 @@ export default function NewProject() {
     <div className="p-8 max-w-2xl mx-auto">
       <div className="flex items-center gap-4 mb-10">
         <button
-          onClick={() => router.push("/")}
+          type="button"
+          onClick={() => router.push(backHref)}
           className="flex items-center gap-2 text-zinc-400 hover:text-white"
         >
           <ArrowLeft className="w-5 h-5" /> Back
         </button>
         <h1 className="text-4xl font-bold tracking-tight">New Project</h1>
       </div>
+      <p className="text-zinc-500 text-sm mb-6 -mt-4">
+        Enter job identity here. Quotes, costs, and P&amp;L are filled in on the
+        project page after the job is created.
+      </p>
       <form
         onSubmit={handleSubmit}
         className="bg-zinc-900 border border-zinc-800 rounded-3xl p-10 space-y-8"
@@ -114,61 +120,7 @@ export default function NewProject() {
             {nextJob}
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-6">
-          <div>
-            <label className="text-xs text-zinc-500 block mb-2">CUSTOMER</label>
-            <input
-              required
-              value={form.customer}
-              onChange={(e) => setForm({ ...form, customer: e.target.value })}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4 text-lg uppercase"
-              placeholder="TEST INC"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-zinc-500 block mb-2">
-              PROJECT NAME
-            </label>
-            <input
-              required
-              value={form.project_name}
-              onChange={(e) =>
-                setForm({ ...form, project_name: e.target.value })
-              }
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4 text-lg uppercase"
-              placeholder="TEST JOB"
-            />
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-6">
-          <div>
-            <label className="text-xs text-zinc-500 block mb-2">
-              CUSTOMER PO #
-            </label>
-            <input
-              value={form.customer_po}
-              onChange={(e) =>
-                setForm({ ...form, customer_po: e.target.value })
-              }
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-zinc-500 block mb-2">
-              SUPPLY / INDUSTRIAL
-            </label>
-            <select
-              value={form.supply_industrial}
-              onChange={(e) =>
-                setForm({ ...form, supply_industrial: e.target.value })
-              }
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4"
-            >
-              <option value="SUPPLY">SUPPLY</option>
-              <option value="INDUSTRIAL">INDUSTRIAL</option>
-            </select>
-          </div>
-        </div>
+        <ProjectBasicsFields mode="create" value={form} onChange={setBasics} />
         <button
           type="submit"
           disabled={loading}
@@ -179,5 +131,25 @@ export default function NewProject() {
         </button>
       </form>
     </div>
+  );
+}
+
+function NewProjectWithReturnTo() {
+  const searchParams = useSearchParams();
+  const backHref = safeReturnToPath(searchParams.get("returnTo"));
+  return <NewProjectForm backHref={backHref} />;
+}
+
+export default function NewProject() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center text-zinc-400">
+          Loading…
+        </div>
+      }
+    >
+      <NewProjectWithReturnTo />
+    </Suspense>
   );
 }

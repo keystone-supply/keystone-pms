@@ -32,6 +32,8 @@ export interface PartShape {
   name: string;
   kind: PartShapeKind;
   outline: OutlinePoint[];
+  /** Closed paths (e.g. washer ID); same coordinate space as outline — consumed by NestNow/DeepNest */
+  holes?: OutlinePoint[][];
   quantity: number;
   canRotate: boolean;
   meta?: {

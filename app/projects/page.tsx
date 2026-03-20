@@ -1,185 +1,189 @@
-/** Projects list with Supabase realtime and global search. */
+/** Projects list: dashboard-aligned shell, KPIs, TanStack table with search & filters. */
 "use client";
 
-import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabaseClient";
-import { Plus, Eye, ArrowLeft, Users } from "lucide-react";
-import { useSession } from "next-auth/react";
-import Link from "next/link";
-import Image from "next/image";
+import { useCallback, useEffect, useState } from "react";
+import { signIn, signOut, useSession } from "next-auth/react";
+import {
+  Activity,
+  DollarSign,
+  FolderKanban,
+  Percent,
+  TrendingUp,
+} from "lucide-react";
 
-type Project = any;
+import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import { KpiCard } from "@/components/dashboard/kpi-card";
+import { QuickLinksBar } from "@/components/dashboard/quick-links-bar";
+import { ProjectsDataTable } from "@/components/projects/projects-data-table";
+import { supabase } from "@/lib/supabaseClient";
+import {
+  aggregateDashboardMetrics,
+  type DashboardMetrics,
+  type DashboardProjectRow,
+} from "@/lib/dashboardMetrics";
+import { PROJECT_SELECT } from "@/lib/projectQueries";
+
+function formatUsd(n: number): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(n);
+}
 
 export default function ProjectsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [rows, setRows] = useState<DashboardProjectRow[]>([]);
+  const [metrics, setMetrics] = useState<DashboardMetrics>(() =>
+    aggregateDashboardMetrics([]),
+  );
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
 
-  const fetchProjects = async () => {
-    const { data } = await supabase
+  const fetchProjects = useCallback(async () => {
+    const { data, error } = await supabase
       .from("projects")
-      .select("*")
+      .select(PROJECT_SELECT)
       .order("project_number", { ascending: false });
-    setProjects(data || []);
+
+    if (!error && data) {
+      const list = data as DashboardProjectRow[];
+      setRows(list);
+      setMetrics(aggregateDashboardMetrics(list));
+      setLastUpdated(new Date());
+    }
     setLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
+    if (status !== "authenticated") return;
+    setLoading(true);
     fetchProjects();
+
     const channel = supabase
       .channel("projects-realtime")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "projects" },
-        fetchProjects,
+        () => {
+          fetchProjects();
+        },
       )
       .subscribe();
-    return () => {
-      channel.unsubscribe();
-    };
-  }, []);
 
-  if (loading)
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [status, fetchProjects]);
+
+  if (status === "loading") {
     return (
-      <div className="p-10 text-center text-xl text-white">
+      <div className="flex h-screen items-center justify-center bg-zinc-950 text-white">
+        Loading…
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
+        <p className="mb-6 text-lg text-zinc-300">Sign in to view all projects.</p>
+        <button
+          type="button"
+          onClick={() => signIn("azure-ad")}
+          className="rounded-2xl bg-blue-600 px-8 py-3 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Sign in with Microsoft
+        </button>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-10 text-center text-lg text-white">
         Loading projects…
       </div>
     );
+  }
+
+  const marginDisplay =
+    metrics.avgMarginPct === null ? "—" : `${metrics.avgMarginPct}%`;
 
   return (
-    <div className="min-h-screen bg-zinc-950 p-8">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-          <div className="flex items-center gap-6">
-            <Link
-              href="/"
-              className="flex items-center gap-2 group relative bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-900 border border-blue-900/50 rounded-2xl px-6 py-3 font-medium text-white shadow-[0_20px_40px_-10px_rgba(30,58,138,0.3)] shadow-blue-950/60 hover:shadow-[0_30px_50px_-12px_rgba(30,58,138,0.4)] hover:shadow-blue-900/80 hover:-translate-y-1 hover:scale-[1.05] hover:border-blue-800/70 transition-all duration-500 ease-out overflow-hidden"
-            >
-              <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-              Dashboard
-            </Link>
-            <Image
-              src="/logo.png"
-              alt="Keystone Supply"
-              width={250}
-              height={123}
-              priority
-              className="opacity-85 hover:opacity-95 backdrop-blur-sm max-h-28 rounded-3xl shadow-[0_10px_20px_-6px_rgba(30,58,138,0.3)] shadow-blue-950/60 hover:shadow-[0_15px_25px_-8px_rgba(30,58,138,0.4)] hover:shadow-blue-900/80 hover:-translate-y-0.5 transition-all duration-500 ease-out"
-            />
-            <div className="flex flex-col items-center gap-2">
-              <h1 className="text-4xl font-bold text-white tracking-tight mb-3">
-                All Projects
-              </h1>
-              <div className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-2xl text-sm font-medium min-w-0">
-                <Users size={18} />
-                <span className="truncate max-w-48">
-                  {session?.user?.name ?? "User"}
-                </span>
-              </div>
-              <p className="text-zinc-600 text-lg text-center">
-                Realtime across all 4 users • {projects.length} total
-              </p>
-            </div>
-          </div>
-          <Link
-            href="/new-project"
-            className="flex items-center gap-2 group relative bg-gradient-to-r from-emerald-600/95 to-emerald-700/95 backdrop-blur-sm hover:from-emerald-600 hover:to-emerald-700 px-6 py-3 rounded-2xl font-medium text-white shadow-[0_15px_35px_-10px_rgba(16,185,129,0.4)] shadow-emerald-500/40 hover:shadow-[0_25px_50px_-12px_rgba(16,185,129,0.5)] hover:shadow-emerald-500/60 hover:-translate-y-1 hover:scale-[1.05] hover:border-emerald-500/50 border-emerald-500/30 transition-all duration-500 ease-out overflow-hidden"
-          >
-            <Plus className="w-5 h-5" /> New Project
-          </Link>
+    <div className="min-h-screen bg-zinc-950 text-white">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
+        <DashboardHeader
+          userName={session?.user?.name}
+          lastUpdated={lastUpdated}
+          onSignOut={() => signOut({ callbackUrl: "/" })}
+          title="All projects"
+          subtitle="Search, filter, and open any job — financial columns match dashboard and project detail formulas."
+          backHref="/"
+          backLabel="Dashboard"
+        />
+
+        <div className="mt-8">
+          <QuickLinksBar
+            openQuotesCount={metrics.openQuotes}
+            activeHref="/projects"
+            newProjectHref="/new-project?returnTo=%2Fprojects"
+          />
         </div>
 
-        <div className="bg-zinc-900 border border-zinc-600 rounded-3xl overflow-hidden shadow-2xl">
-          <table className="w-full">
-            <thead className="bg-zinc-950 border-b border-zinc-800">
-              <tr>
-                <th className="px-8 py-5 text-left text-xs font-medium text-zinc-400 uppercase tracking-widest">
-                  PROJECT #
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-medium text-zinc-400 uppercase tracking-widest">
-                  CUSTOMER
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-medium text-zinc-400 uppercase tracking-widest">
-                  PROJECT NAME
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-medium text-zinc-400 uppercase tracking-widest">
-                  APPROVAL
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-medium text-zinc-400 uppercase tracking-widest">
-                  COMPLETE
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-medium text-zinc-400 uppercase tracking-widest">
-                  INVOICED
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-medium text-zinc-400 uppercase tracking-widest">
-                  P&amp;L MARGIN
-                </th>
-                <th className="px-8 py-5"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-700">
-              {projects.map((p) => (
-                <tr
-                  key={p.id}
-                  className="hover:bg-blue-600/80 transition-colors group"
-                >
-                  <td className="px-8 py-6 font-mono text-lg font-semibold text-white">
-                    {p.project_number}
-                  </td>
-                  <td className="px-8 py-6 uppercase font-medium text-white">
-                    {p.customer}
-                  </td>
-                  <td className="px-8 py-6 uppercase text-white">
-                    {p.project_name}
-                  </td>
-                  <td className="px-8 py-6">
-                    {p.customer_approval && (
-                      <span
-                        className={`inline-flex items-center px-4 py-1 rounded-full text-xs font-semibold ring-1 ring-inset
-                        ${p.customer_approval === "ACCEPTED" ? "bg-emerald-500/10 text-emerald-400 ring-emerald-500/30" : ""}
-                        ${p.customer_approval === "REJECTED" ? "bg-red-500/10 text-red-400 ring-red-500/30" : ""}
-                        ${p.customer_approval === "PENDING" ? "bg-amber-500/10 text-amber-400 ring-amber-500/30" : ""}
-                      `}
-                      >
-                        {p.customer_approval}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-8 py-6 text-white font-medium">
-                    {p.project_complete ? "✅ YES" : "NO"}
-                  </td>
-                  <td className="px-8 py-6 text-white font-medium">
-                    {p.invoiced_amount
-                      ? `$${p.invoiced_amount.toLocaleString()}`
-                      : "—"}
-                  </td>
-                  <td className="px-8 py-6 text-white font-medium">
-                    {p.pl_margin ? `${p.pl_margin}%` : "—"}
-                  </td>
-                  <td className="px-8 py-6">
-                    <Link
-                      href={`/projects/${p.id}`}
-                      className="flex items-center gap-2 text-blue-400 hover:text-blue-300 group-hover:text-blue-400 transition-colors"
-                    >
-                      <Eye className="w-4 h-4" /> View
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-              {projects.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={8}
-                    className="px-8 py-20 text-center text-zinc-500"
-                  >
-                    No projects yet – create one above
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <section
+          aria-label="Project portfolio KPIs"
+          className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+        >
+          <KpiCard
+            label="Pipeline (incomplete)"
+            value={formatUsd(metrics.pipelineDollars)}
+            hint="Sum of quoted $ on open jobs"
+            icon={TrendingUp}
+          />
+          <KpiCard
+            label="YTD invoiced"
+            value={formatUsd(metrics.ytdInvoiced)}
+            hint="Invoiced this calendar year"
+            icon={DollarSign}
+          />
+          <KpiCard
+            label="Open quotes"
+            value={metrics.openQuotes}
+            hint="Awaiting customer approval"
+            icon={FolderKanban}
+          />
+          <KpiCard
+            label="Active jobs"
+            value={metrics.activeProjects}
+            hint={`${metrics.completedProjects} completed (lifetime)`}
+            icon={Activity}
+          />
+        </section>
+
+        <section
+          aria-label="Profitability snapshot"
+          className="mt-4 grid gap-4 sm:grid-cols-2"
+        >
+          <KpiCard
+            label="Total P&L (realized)"
+            value={formatUsd(metrics.totalPl)}
+            icon={TrendingUp}
+            valueClassName={
+              metrics.totalPl >= 0 ? "text-emerald-400" : "text-red-400"
+            }
+          />
+          <KpiCard
+            label="Avg margin (invoiced jobs)"
+            value={marginDisplay}
+            icon={Percent}
+          />
+        </section>
+
+        <section className="mt-10" aria-label="Project list">
+          <ProjectsDataTable data={rows} />
+        </section>
       </div>
     </div>
   );

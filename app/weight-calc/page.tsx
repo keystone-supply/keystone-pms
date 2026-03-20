@@ -331,8 +331,10 @@ export default function WeightCalcPage() {
 
     const { data, error } = await supabase
       .from("projects")
-      .select("project_number, project_name, customer")
+      .select("project_number, project_name, customer, project_status, customer_approval")
       .eq("project_complete", false)
+      .or("customer_approval.is.null,customer_approval.neq.CANCELLED")
+      .or("project_status.is.null,project_status.neq.cancelled")
       .order("project_number", { ascending: false });
 
     if (error) {

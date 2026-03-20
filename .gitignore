@@ -40,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local imports / business data (do not commit)
+Book1.csv
+
+# Supabase CLI local cache
+supabase/.temp/
