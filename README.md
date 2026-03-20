@@ -8,7 +8,7 @@ Project management system for a fabrication/CNC shop: projects, quotes, P&L trac
 - **Tailwind CSS 4**, **shadcn/ui** (Radix), **Lucide** icons
 - **Supabase** – Postgres database and realtime subscriptions for projects
 - **NextAuth** – Azure AD (Microsoft work/school) sign-in; JWT stores Microsoft Graph access token with refresh
-- **Microsoft Graph** – OneDrive: create project folder structures and upload files (e.g. weight-calc exports)
+- **Microsoft Graph** – OneDrive: create project folder structures and upload files (e.g. shop calculator tape exports from `/weight-calc`)
 
 ## Getting started
 

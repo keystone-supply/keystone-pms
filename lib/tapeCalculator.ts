@@ -1,5 +1,8 @@
 import { create, all } from "mathjs";
 
+import type { UnifiedTapeLine } from "@/lib/unifiedTapeTypes";
+import { getTapeItemTotals } from "@/lib/weightCalcMath";
+
 const math = create(all, { number: "number" });
 
 export type TapeLineEval = {
@@ -55,8 +58,8 @@ function formatValue(value: unknown): string {
 }
 
 /**
- * Evaluate a PiPad-style tape top-to-bottom: assignments and variables persist;
- * `ans` is updated only when the result is a finite real number (PiPad-like).
+ * Evaluate a multi-line tape top-to-bottom: assignments and variables persist;
+ * `ans` is updated only when the result is a finite real number.
  * A leading `#` plus an optional one-word label and whitespace is stripped
  * (e.g. `#qty 3*3` evaluates as `3*3`).
  * `@N` inserts line N's finite numeric result (only lines above the current one).
@@ -70,6 +73,64 @@ export function evaluateTapeLineExpressions(rawLines: string[]): TapeLineEval[] 
     lineNumericResults[i] = undefined;
     const raw = rawLines[i];
     let expr = raw.trim();
+    if (expr.startsWith("#")) {
+      expr = expr.replace(/^\s*#\s*\S*\s*/, "").trim();
+    }
+    if (!expr) {
+      results.push({ display: "" });
+      continue;
+    }
+
+    try {
+      expr = expandAtLineRefs(expr, i, lineNumericResults);
+      const value = math.evaluate(expr, scope) as unknown;
+
+      if (typeof value === "number" && Number.isFinite(value)) {
+        scope.ans = value;
+        lineNumericResults[i] = value;
+      }
+
+      results.push({ display: formatValue(value) });
+    } catch (err) {
+      results.push({
+        display: "",
+        error: err instanceof Error ? err.message : "Could not evaluate",
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Mixed math + material rows: math lines use math.js; weight lines contribute
+ * line sell total (USD) to `ans`, `@N`, and line numeric refs.
+ */
+export function evaluateUnifiedTape(lines: UnifiedTapeLine[]): TapeLineEval[] {
+  const scope: Record<string, unknown> = {};
+  const results: TapeLineEval[] = [];
+  const lineNumericResults: (number | undefined)[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    lineNumericResults[i] = undefined;
+    const line = lines[i];
+
+    if (line.kind === "weight") {
+      const { estSell } = getTapeItemTotals(line.item);
+      if (Number.isFinite(estSell)) {
+        scope.ans = estSell;
+        lineNumericResults[i] = estSell;
+      }
+      results.push({
+        display: estSell.toLocaleString("en-US", {
+          style: "currency",
+          currency: "USD",
+        }),
+      });
+      continue;
+    }
+
+    let expr = line.expr.trim();
     if (expr.startsWith("#")) {
       expr = expr.replace(/^\s*#\s*\S*\s*/, "").trim();
     }

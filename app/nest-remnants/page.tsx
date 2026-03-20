@@ -1235,8 +1235,6 @@ export default function NestRemnantsPage() {
             onSignOut={() => signOut({ callbackUrl: "/" })}
             title="Nest & remnants"
             subtitle="Select sheet stock, add parts, and run nests — without leaving Keystone PMS."
-            backHref="/"
-            backLabel="Dashboard"
           />
 
           <div className="mt-8">

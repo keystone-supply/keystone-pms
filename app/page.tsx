@@ -143,7 +143,10 @@ export default function Dashboard() {
         />
 
         <div className="mt-8">
-          <QuickLinksBar openQuotesCount={metrics.openQuotes} />
+          <QuickLinksBar
+            openQuotesCount={metrics.openQuotes}
+            activeHref="/"
+          />
         </div>
 
         <section

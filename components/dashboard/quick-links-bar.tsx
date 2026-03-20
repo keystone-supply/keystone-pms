@@ -1,7 +1,7 @@
 import Link from "next/link";
 import {
-  Calculator,
   FolderOpen,
+  LayoutDashboard,
   Layers,
   Package,
   Plus,
@@ -12,30 +12,58 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+/** Active nav: blue border glow + KPI-style bottom accent (via-blue ~ metric cards). */
+const quickLinkActiveClassName = cn(
+  "relative z-[1] overflow-hidden border-blue-400/90 bg-blue-500/15 text-blue-50",
+  "shadow-[inset_0_1px_0_0_rgba(191,219,254,0.22),0_0_0_1px_rgba(96,165,250,0.5),0_6px_22px_-6px_rgba(59,130,246,0.48)]",
+  "after:pointer-events-none after:absolute after:inset-x-2 after:bottom-0 after:z-[2] after:h-px after:bg-gradient-to-r after:from-transparent after:via-blue-400/70 after:to-transparent",
+);
+
 export function QuickLinksBar({
   openQuotesCount,
   activeHref,
   newProjectHref = "/new-project",
 }: {
   openQuotesCount: number;
-  /** Highlights the matching nav link (e.g. `/projects`). */
+  /** Highlights the matching nav link. Use `"/"` on the home dashboard (Dashboard control refreshes the page). */
   activeHref?: string;
   /** e.g. `/new-project?returnTo=%2Fprojects` so Back returns to jobs list. */
   newProjectHref?: string;
 }) {
+  const onDashboard = activeHref === "/";
+
   return (
     <nav
       aria-label="Quick actions"
       className="flex flex-wrap items-center gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-3"
     >
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+        {onDashboard ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn("gap-2", quickLinkActiveClassName)}
+            aria-current="page"
+            onClick={() => window.location.reload()}
+          >
+            <LayoutDashboard className="size-4" />
+            Dashboard
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/" className="gap-2">
+              <LayoutDashboard className="size-4" />
+              Dashboard
+            </Link>
+          </Button>
+        )}
         <Button variant="outline" size="sm" asChild>
           <Link
             href="/projects"
             className={cn(
-              "relative gap-2",
-              activeHref === "/projects" &&
-                "border-blue-500/50 bg-blue-500/10 text-blue-200",
+              "gap-2",
+              activeHref === "/projects" && quickLinkActiveClassName,
             )}
             aria-current={activeHref === "/projects" ? "page" : undefined}
           >
@@ -56,8 +84,7 @@ export function QuickLinksBar({
             href="/nest-remnants"
             className={cn(
               "gap-2",
-              activeHref === "/nest-remnants" &&
-                "border-blue-500/50 bg-blue-500/10 text-blue-200",
+              activeHref === "/nest-remnants" && quickLinkActiveClassName,
             )}
             aria-current={activeHref === "/nest-remnants" ? "page" : undefined}
           >
@@ -73,27 +100,17 @@ export function QuickLinksBar({
             href="/weight-calc"
             className={cn(
               "gap-2",
-              activeHref === "/weight-calc" &&
-                "border-blue-500/50 bg-blue-500/10 text-blue-200",
+              (activeHref === "/weight-calc" || activeHref === "/pipad-calc") &&
+                quickLinkActiveClassName,
             )}
-            aria-current={activeHref === "/weight-calc" ? "page" : undefined}
+            aria-current={
+              activeHref === "/weight-calc" || activeHref === "/pipad-calc"
+                ? "page"
+                : undefined
+            }
           >
             <Scale className="size-4" />
-            Weight calc
-          </Link>
-        </Button>
-        <Button variant="outline" size="sm" asChild>
-          <Link
-            href="/pipad-calc"
-            className={cn(
-              "gap-2",
-              activeHref === "/pipad-calc" &&
-                "border-blue-500/50 bg-blue-500/10 text-blue-200",
-            )}
-            aria-current={activeHref === "/pipad-calc" ? "page" : undefined}
-          >
-            <Calculator className="size-4" />
-            Tape calc
+            Shop calc
           </Link>
         </Button>
       </div>

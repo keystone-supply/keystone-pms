@@ -120,8 +120,6 @@ export default function ProjectsPage() {
           onSignOut={() => signOut({ callbackUrl: "/" })}
           title="All projects"
           subtitle="Search, filter, and open any job — financial columns match dashboard and project detail formulas."
-          backHref="/"
-          backLabel="Dashboard"
         />
 
         <div className="mt-8">

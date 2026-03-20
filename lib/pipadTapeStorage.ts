@@ -8,7 +8,8 @@ export type SavedTapeRecord = {
   lines: SavedTapeLine[];
 };
 
-const STORAGE_KEY = "keystone-pipad-calc-saved-tapes";
+export const LEGACY_PIPAD_STORAGE_KEY = "keystone-pipad-calc-saved-tapes";
+const STORAGE_KEY = LEGACY_PIPAD_STORAGE_KEY;
 
 function isSavedTapeRecord(x: unknown): x is SavedTapeRecord {
   if (x === null || typeof x !== "object") return false;
