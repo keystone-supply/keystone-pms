@@ -47,6 +47,7 @@ import {
   genMockSVG,
   parseRemnantDims,
   placeOutline,
+  placeHoles,
   calcWeight,
   rectOutline,
   circleOutline,
@@ -61,7 +62,9 @@ import {
   loadNestUiSettings,
   saveNestUiSettings,
   buildApiNestConfig,
-  shufflePartsOrder,
+  clampNestRequestTimeoutSec,
+  NEST_REQUEST_TIMEOUT_SEC_MAX,
+  NEST_REQUEST_TIMEOUT_SEC_MIN,
   NEST_ROTATION_OPTIONS,
 } from "@/lib/nestPayload";
 
@@ -112,8 +115,16 @@ const SHEET_STROKE = "rgb(255, 255, 255)"; // zinc-500
 const SHEET_STROKE_WIDTH = 0.03;
 const VIEW_PADDING = 3; // space between viewBox edge and remnant
 
-/** Mini schematics for placement fitness: gravity (width-heavy), box AABB, convex hull. */
-function PlacementTypeVisuals({ active }: { active: NestPlacementType }) {
+/** Selectable mini schematics for layout goal: gravity (width-heavy), box AABB, convex hull. */
+function PlacementTypeVisuals({
+  active,
+  onSelect,
+  disabled = false,
+}: {
+  active: NestPlacementType;
+  onSelect: (t: NestPlacementType) => void;
+  disabled?: boolean;
+}) {
   const wrap = (
     id: NestPlacementType,
     caption: string,
@@ -121,28 +132,32 @@ function PlacementTypeVisuals({ active }: { active: NestPlacementType }) {
   ) => {
     const on = active === id;
     return (
-      <div
-        className={`flex flex-col items-stretch gap-1.5 rounded-lg p-2 border transition-colors ${
+      <button
+        type="button"
+        disabled={disabled}
+        aria-pressed={on}
+        onClick={() => onSelect(id)}
+        className={`flex w-full flex-col items-stretch gap-1.5 rounded-lg p-2 border text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 disabled:pointer-events-none disabled:opacity-50 ${
           on
             ? "border-cyan-500/60 bg-cyan-950/35 shadow-[0_0_0_1px_rgba(34,211,238,0.15)]"
-            : "border-zinc-800/90 bg-zinc-900/25 opacity-90"
+            : "border-zinc-800/90 bg-zinc-900/25 opacity-90 hover:border-zinc-600/80 hover:bg-zinc-900/40"
         }`}
       >
         <svg
           viewBox="0 0 72 52"
-          className="w-full h-[3.25rem] shrink-0 text-cyan-300/90"
+          className="h-[3.25rem] w-full shrink-0 text-cyan-300/90"
           aria-hidden
         >
           {svg}
         </svg>
         <p
-          className={`text-[10px] leading-snug text-center ${
+          className={`text-center text-[10px] leading-snug ${
             on ? "text-cyan-100/95" : "text-zinc-500"
           }`}
         >
           {caption}
         </p>
-      </div>
+      </button>
     );
   };
 
@@ -155,7 +170,7 @@ function PlacementTypeVisuals({ active }: { active: NestPlacementType }) {
     <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 max-w-xl sm:max-w-none">
       {wrap(
         "gravity",
-        "Gravity: fitness uses 5× width + height of the pack — favors using less horizontal span.",
+        "Prioritize using less width side‑to‑side (helpful on wide sheets).",
         <>
           <rect x={2} y={2} width={68} height={48} rx={3} fill="none" stroke={mute} strokeWidth={0.6} />
           {/* two parts */}
@@ -182,7 +197,7 @@ function PlacementTypeVisuals({ active }: { active: NestPlacementType }) {
       )}
       {wrap(
         "box",
-        "Box: penalizes axis-aligned bounding rectangle area around all placed parts.",
+        "Prioritize the smallest upright rectangle that fits all parts.",
         <>
           <rect x={2} y={2} width={68} height={48} rx={3} fill="none" stroke={mute} strokeWidth={0.6} />
           <rect x={12} y={14} width={12} height={9} fill={partFill} stroke={partStroke} strokeWidth={0.8} />
@@ -202,7 +217,7 @@ function PlacementTypeVisuals({ active }: { active: NestPlacementType }) {
       )}
       {wrap(
         "convexhull",
-        "Convex hull: penalizes hull area — ignores concave “bites” between parts, often tighter than the box.",
+        "Prioritize a tight band around the whole group; can tuck into corners better than a plain box.",
         <>
           <rect x={2} y={2} width={68} height={48} rx={3} fill="none" stroke={mute} strokeWidth={0.6} />
           {/* L-shaped pair — hull follows outer outline; dashed box is the same AABB */}
@@ -243,21 +258,24 @@ function NestPreviewSVG({
   parts: { outline: { x: number; y: number }[]; holes?: { x: number; y: number }[][]; filename?: string }[];
   sheetplacements: SheetPlacement[];
 }) {
-  const vbW = sheetWidth + 2 * VIEW_PADDING;
-  const vbH = sheetHeight + 2 * VIEW_PADDING;
+  /** Display-only: show stock length (nest Y / payload height) left–right; nesting math unchanged. */
+  const previewW = sheetHeight + 2 * VIEW_PADDING;
+  const previewH = sheetWidth + 2 * VIEW_PADDING;
+  const innerTf = `translate(${VIEW_PADDING}, ${VIEW_PADDING}) scale(1, -1) translate(0, -${sheetWidth})`;
+  const mapPt = (x: number, y: number) => `${y},${x}`;
   return (
     <svg
-      viewBox={`0 0 ${vbW} ${vbH}`}
+      viewBox={`0 0 ${previewW} ${previewH}`}
       className="w-full h-full min-h-0"
       preserveAspectRatio="xMidYMid meet"
       style={{ overflow: "visible" }}
     >
-      <g transform={`translate(${VIEW_PADDING}, ${VIEW_PADDING}) scale(1, -1) translate(0, -${sheetHeight})`}>
+      <g transform={innerTf}>
         <rect
           x={0}
           y={0}
-          width={sheetWidth}
-          height={sheetHeight}
+          width={sheetHeight}
+          height={sheetWidth}
           fill="none"
           stroke={SHEET_STROKE}
           strokeWidth={SHEET_STROKE_WIDTH}
@@ -267,14 +285,34 @@ function NestPreviewSVG({
           const part = parts[p.source];
           const outline = part?.outline;
           if (!outline || !Array.isArray(outline) || outline.length < 3) return null;
-          const points = placeOutline(outline, p.rotation ?? 0, p.x ?? 0, p.y ?? 0);
-          const pointsStr = points.map((pt) => `${pt.x},${pt.y}`).join(" ");
+          const rot = p.rotation ?? 0;
+          const px = p.x ?? 0;
+          const py = p.y ?? 0;
+          const outerPlaced = placeOutline(outline, rot, px, py);
+          const holesPlaced = placeHoles(part.holes, rot, px, py);
+          const toSubpath = (
+            loop: { x: number; y: number }[],
+          ): string | null => {
+            if (loop.length < 3) return null;
+            const [p0, ...rest] = loop;
+            return [
+              `M ${mapPt(p0.x, p0.y)}`,
+              ...rest.map((pt) => `L ${mapPt(pt.x, pt.y)}`),
+              "Z",
+            ].join(" ");
+          };
+          const d = [outerPlaced, ...holesPlaced]
+            .map(toSubpath)
+            .filter((s): s is string => Boolean(s))
+            .join(" ");
+          if (!d) return null;
           const fill = PART_FILLS[idx % PART_FILLS.length];
           const stroke = PART_STROKES[idx % PART_STROKES.length];
           return (
-            <polygon
+            <path
               key={`${p.source}-${p.id}`}
-              points={pointsStr}
+              d={d}
+              fillRule="evenodd"
               fill={fill}
               stroke={stroke}
               strokeWidth={0.07}
@@ -830,12 +868,17 @@ export default function NestRemnantsPage() {
       Math.max(1, Math.floor(nestUiSettings.attempts) || 1),
     );
     const apiConfig = buildApiNestConfig(nestUiSettings);
+    const requestTimeoutSec = clampNestRequestTimeoutSec(
+      nestUiSettings.requestTimeoutSec,
+    );
+    const requestTimeoutMs = requestTimeoutSec * 1000;
 
     let bestResult: NestResult | null = null;
     let bestPayloadBody: {
       sheets: typeof sheets;
       parts: NestApiPartPayload[];
       config: typeof apiConfig;
+      requestTimeoutMs: number;
     } | null = null;
     let lastAttemptError: string | null = null;
 
@@ -849,12 +892,11 @@ export default function NestRemnantsPage() {
           setNestProgressLabel(`Attempt ${attempt} / ${attempts}`);
         }
 
-        const orderedParts =
-          attempts > 1 ? shufflePartsOrder(parts) : parts;
         const payload = {
           sheets,
-          parts: mapPartsToApiPayload(orderedParts),
+          parts: mapPartsToApiPayload(parts),
           config: apiConfig,
+          requestTimeoutMs,
         };
 
         try {
@@ -907,7 +949,13 @@ export default function NestRemnantsPage() {
           curveTolerance: apiConfig.curveTolerance,
           simplify: apiConfig.simplify,
           clipperScale: apiConfig.clipperScale,
+          populationSize: apiConfig.populationSize,
+          mutationRate: apiConfig.mutationRate,
+          gaGenerations: apiConfig.gaGenerations,
+          timeRatio: apiConfig.timeRatio,
+          scale: apiConfig.scale,
           attempts,
+          requestTimeoutSec,
         };
         setNestResult(bestResult);
         setLastNestPayload({
@@ -1782,8 +1830,8 @@ export default function NestRemnantsPage() {
                     </div>
                   </div>
                   <div className="flex flex-wrap items-end gap-4 text-sm">
-                    <label className="flex min-w-[8rem] flex-col gap-1 text-zinc-400">
-                      <span>Part spacing (in)</span>
+                    <label className="flex min-w-[10rem] max-w-[14rem] flex-col gap-1 text-zinc-400">
+                      <span>Part &amp; sheet edge gap (in)</span>
                       <input
                         type="number"
                         min={0}
@@ -1801,9 +1849,14 @@ export default function NestRemnantsPage() {
                         disabled={nestLoading}
                         className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
                       />
+                      <span className="text-[10px] leading-tight text-zinc-500">
+                        Same as DeepNest &ldquo;space between parts&rdquo;: minimum
+                        clearance between parts and from nested geometry to the sheet
+                        edge.
+                      </span>
                     </label>
                     <label className="flex min-w-[10rem] flex-col gap-1 text-zinc-400">
-                      <span>Rotation attempts</span>
+                      <span>How many rotations to try</span>
                       <select
                         value={nestUiSettings.rotations}
                         onChange={(e) =>
@@ -1817,7 +1870,7 @@ export default function NestRemnantsPage() {
                       >
                         {NEST_ROTATION_OPTIONS.map((n) => (
                           <option key={n} value={n}>
-                            {n} (every {(360 / n).toFixed(1)}°)
+                            {n} orientations (every {(360 / n).toFixed(1)}°)
                           </option>
                         ))}
                       </select>
@@ -1842,60 +1895,234 @@ export default function NestRemnantsPage() {
                     <div className="mt-3 space-y-4 text-sm">
                       <div className="rounded-xl border border-zinc-800/70 bg-zinc-900/20 px-3 py-2.5">
                         <span className="mb-1.5 block text-[11px] font-medium text-zinc-400">
-                          Placement strategy (fitness)
+                          What should “a good nest” optimize for?
                         </span>
+                        <p className="mb-2 text-[10px] leading-tight text-zinc-500">
+                          Click a card to set the layout goal (same as DeepNest
+                          optimization type).
+                        </p>
                         <PlacementTypeVisuals
                           active={nestUiSettings.placementType}
+                          disabled={nestLoading}
+                          onSelect={(placementType) =>
+                            setNestUiSettings((s) => ({ ...s, placementType }))
+                          }
                         />
                       </div>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <label className="flex flex-col gap-1 text-zinc-400">
-                          <span>Placement</span>
-                          <select
-                            value={nestUiSettings.placementType}
-                            onChange={(e) =>
-                              setNestUiSettings((s) => ({
-                                ...s,
-                                placementType: e.target
-                                  .value as NestUiSettings["placementType"],
-                              }))
-                            }
-                            disabled={nestLoading}
-                            className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                          >
-                            <option value="gravity">Gravity (width-heavy)</option>
-                            <option value="box">Bounding box</option>
-                            <option value="convexhull">Convex hull</option>
-                          </select>
-                        </label>
-                        <label className="flex flex-col gap-1 text-zinc-400">
-                          <span>Multi-try (shuffle order)</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={10}
-                            step={1}
-                            value={nestUiSettings.attempts}
-                            onChange={(e) =>
-                              setNestUiSettings((s) => ({
-                                ...s,
-                                attempts: Math.min(
-                                  10,
-                                  Math.max(
-                                    1,
-                                    parseInt(e.target.value, 10) || 1,
-                                  ),
+                      <label className="flex max-w-md flex-col gap-1 text-zinc-400">
+                        <span>Separate full attempts</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={10}
+                          step={1}
+                          value={nestUiSettings.attempts}
+                          onChange={(e) =>
+                            setNestUiSettings((s) => ({
+                              ...s,
+                              attempts: Math.min(
+                                10,
+                                Math.max(
+                                  1,
+                                  parseInt(e.target.value, 10) || 1,
                                 ),
-                              }))
-                            }
-                            disabled={nestLoading}
-                            className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                          />
-                          <span className="text-[10px] leading-tight text-zinc-500">
-                            Up to 10 API runs; keeps best utilisation (slower
-                            if &gt; 1).
-                          </span>
-                        </label>
+                              ),
+                            }))
+                          }
+                          disabled={nestLoading}
+                          className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                        />
+                        <span className="text-[10px] leading-tight text-zinc-500">
+                          Run the whole search more than once and keep the best
+                          layout. Turn this up if you want another roll of the
+                          dice (each run takes the same time as the first).
+                        </span>
+                      </label>
+                      <label className="flex max-w-md flex-col gap-1 text-zinc-400">
+                        <span>Max time per attempt (seconds)</span>
+                        <input
+                          type="number"
+                          min={NEST_REQUEST_TIMEOUT_SEC_MIN}
+                          max={NEST_REQUEST_TIMEOUT_SEC_MAX}
+                          step={30}
+                          value={nestUiSettings.requestTimeoutSec}
+                          onChange={(e) =>
+                            setNestUiSettings((s) => ({
+                              ...s,
+                              requestTimeoutSec: clampNestRequestTimeoutSec(
+                                parseInt(e.target.value, 10),
+                              ),
+                            }))
+                          }
+                          disabled={nestLoading}
+                          className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                        />
+                        <span className="text-[10px] leading-tight text-zinc-500">
+                          NestNow stops one attempt after this limit — raise it when
+                          nesting many parts. Range {NEST_REQUEST_TIMEOUT_SEC_MIN}–
+                          {NEST_REQUEST_TIMEOUT_SEC_MAX}s (NestNow max 1 hr). Env{" "}
+                          <code className="text-zinc-400">NESTNOW_REQUEST_TIMEOUT_MS</code>{" "}
+                          applies only if a request omits this field.
+                        </span>
+                      </label>
+                      <div className="rounded-xl border border-zinc-800/70 bg-zinc-900/20 px-3 py-2.5">
+                        <span className="mb-2 block text-[11px] font-medium text-zinc-400">
+                          Automatic layout search (NestNow)
+                        </span>
+                        <p className="mb-2 text-[10px] leading-tight text-zinc-500">
+                          NestNow tries many orderings and rotations, keeps the
+                          best fit. Larger numbers below usually mean better
+                          results and longer waits. Use at least{" "}
+                          <strong className="text-zinc-400 font-medium">2</strong>{" "}
+                          layouts-at-once for this search to run;{" "}
+                          <strong className="text-zinc-400 font-medium">1</strong>{" "}
+                          runs a single quick pass.
+                        </p>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          <label className="flex flex-col gap-1 text-zinc-400">
+                            <span>Layouts tried at once</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={50}
+                              step={1}
+                              value={nestUiSettings.populationSize}
+                              onChange={(e) =>
+                                setNestUiSettings((s) => ({
+                                  ...s,
+                                  populationSize: Math.min(
+                                    50,
+                                    Math.max(
+                                      1,
+                                      parseInt(e.target.value, 10) || 10,
+                                    ),
+                                  ),
+                                }))
+                              }
+                              disabled={nestLoading}
+                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                            />
+                            <span className="text-[10px] leading-tight text-zinc-500">
+                              More parallel ideas per round — often improves
+                              quality, always costs more time.
+                            </span>
+                          </label>
+                          <label className="flex flex-col gap-1 text-zinc-400">
+                            <span>How experimental each round is</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={nestUiSettings.mutationRate}
+                              onChange={(e) =>
+                                setNestUiSettings((s) => ({
+                                  ...s,
+                                  mutationRate: Math.min(
+                                    100,
+                                    Math.max(
+                                      0,
+                                      parseInt(e.target.value, 10) || 10,
+                                    ),
+                                  ),
+                                }))
+                              }
+                              disabled={nestLoading}
+                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                            />
+                            <span className="text-[10px] leading-tight text-zinc-500">
+                              Higher = more random swaps and rotations between
+                              rounds (explores farther, less predictable).
+                            </span>
+                          </label>
+                          <label className="flex flex-col gap-1 text-zinc-400">
+                            <span>How many improvement rounds</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={20}
+                              step={1}
+                              value={nestUiSettings.gaGenerations}
+                              onChange={(e) =>
+                                setNestUiSettings((s) => ({
+                                  ...s,
+                                  gaGenerations: Math.min(
+                                    20,
+                                    Math.max(
+                                      1,
+                                      parseInt(e.target.value, 10) || 3,
+                                    ),
+                                  ),
+                                }))
+                              }
+                              disabled={nestLoading}
+                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                            />
+                            <span className="text-[10px] leading-tight text-zinc-500">
+                              Each round refines the best layouts from the last
+                              one. More rounds → longer runs, sometimes nicer nests.
+                            </span>
+                          </label>
+                          <label className="flex flex-col gap-1 text-zinc-400">
+                            <span>Shared cuts vs saving material</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={2}
+                              step={0.05}
+                              value={nestUiSettings.timeRatio}
+                              onChange={(e) =>
+                                setNestUiSettings((s) => ({
+                                  ...s,
+                                  timeRatio: Math.max(
+                                    0,
+                                    parseFloat(e.target.value) || 0,
+                                  ),
+                                }))
+                              }
+                              disabled={nestLoading}
+                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                            />
+                            <span className="text-[10px] leading-tight text-zinc-500">
+                              Only matters when “Reward lining up edges” is on.
+                              Turn this up to favor one long shared cut; turn it
+                              down to care mostly about using less sheet.
+                            </span>
+                          </label>
+                          <label className="flex flex-col gap-1 text-zinc-400">
+                            <span>Drawing scale for edge detection</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={200}
+                              step={1}
+                              value={nestUiSettings.scale}
+                              onChange={(e) =>
+                                setNestUiSettings((s) => ({
+                                  ...s,
+                                  scale: Math.max(
+                                    1,
+                                    parseFloat(e.target.value) || 72,
+                                  ),
+                                }))
+                              }
+                              disabled={nestLoading}
+                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                            />
+                            <span className="text-[10px] leading-tight text-zinc-500">
+                              Should match typical SVG / drawing units. Leave at
+                              72 unless you know your files use a different base
+                              scale.
+                            </span>
+                          </label>
+                        </div>
+                        <p className="mt-2 text-[10px] leading-tight text-zinc-500">
+                          <span className="text-zinc-400">Server / IT:</span>{" "}
+                          <code className="text-zinc-400">NESTNOW_DISABLE_GA=1</code>{" "}
+                          forces one fast layout instead of multi-layout search.{" "}
+                          <code className="text-zinc-400">NESTNOW_GA_MAX_EVALS</code>{" "}
+                          limits total tries so runs cannot run forever.
+                        </p>
                       </div>
                       <label className="flex cursor-pointer select-none items-center gap-2 text-zinc-300">
                         <input
@@ -1910,14 +2137,15 @@ export default function NestRemnantsPage() {
                           disabled={nestLoading}
                           className="rounded border-cyan-700 text-cyan-500"
                         />
-                        Merge lines (edge-merging heuristic)
+                        Reward lining up edges (shared cuts)
                       </label>
-                      <p className="text-[10px] text-zinc-500">
-                        Spacing may not expand geometry in NestNow yet.
+                      <p className="text-[10px] leading-tight text-zinc-500 pl-6 -mt-2">
+                        When on, the solver can prefer arrangements where two
+                        parts share one cut line, which often saves machine time.
                       </p>
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                         <label className="flex flex-col gap-1 text-zinc-400">
-                          <span>Curve tolerance</span>
+                          <span>Curve smoothing</span>
                           <input
                             type="number"
                             min={0}
@@ -1935,8 +2163,12 @@ export default function NestRemnantsPage() {
                             disabled={nestLoading}
                             className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
                           />
+                          <span className="text-[10px] leading-tight text-zinc-500">
+                            Larger values allow more simplification of curved
+                            edges (can run faster, less exact).
+                          </span>
                         </label>
-                        <label className="flex cursor-pointer select-none items-end gap-2 pb-2 text-zinc-300">
+                        <label className="flex cursor-pointer select-none items-start gap-2 pt-1 text-zinc-300">
                           <input
                             type="checkbox"
                             checked={nestUiSettings.simplify}
@@ -1947,12 +2179,18 @@ export default function NestRemnantsPage() {
                               }))
                             }
                             disabled={nestLoading}
-                            className="rounded border-cyan-700 text-cyan-500"
+                            className="rounded border-cyan-700 text-cyan-500 mt-0.5"
                           />
-                          Simplify geometry
+                          <span>
+                            <span className="block">Use rough outline shapes</span>
+                            <span className="block text-[10px] font-normal text-zinc-500 mt-0.5">
+                              Good for speed; outlines may not match every bend
+                              in the original drawing.
+                            </span>
+                          </span>
                         </label>
                         <label className="flex flex-col gap-1 text-zinc-400">
-                          <span>Clipper scale</span>
+                          <span>Shape math precision</span>
                           <input
                             type="number"
                             min={1000}
@@ -1970,6 +2208,10 @@ export default function NestRemnantsPage() {
                             disabled={nestLoading}
                             className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
                           />
+                          <span className="text-[10px] leading-tight text-zinc-500">
+                            Internal multiplier for coordinates. Leave the
+                            default unless NestNow support asks you to change it.
+                          </span>
                         </label>
                       </div>
                     </div>
@@ -1983,9 +2225,22 @@ export default function NestRemnantsPage() {
                         <Loader2 className="w-12 h-12 animate-spin mr-3" />
                         <span>{nestProgressLabel ?? "Nesting…"}</span>
                       </div>
-                      {nestProgressLabel && (
+                      {nestProgressLabel ? (
                         <p className="text-xs text-zinc-500">
-                          Stop cancels remaining attempts.
+                          Stop cancels any further full attempts. Each attempt
+                          may try many layouts inside NestNow before it returns.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-zinc-500">
+                          Big search settings can take several minutes. Raise{" "}
+                          <strong className="font-medium text-zinc-400">
+                            Max time per attempt
+                          </strong>{" "}
+                          under Advanced nest options, or set{" "}
+                          <code className="text-zinc-400">
+                            NESTNOW_REQUEST_TIMEOUT_MS
+                          </code>{" "}
+                          on NestNow for non-Keystone clients.
                         </p>
                       )}
                     </div>
@@ -2038,13 +2293,21 @@ export default function NestRemnantsPage() {
                           <div className="text-2xl font-bold text-white">{(nestResult.placements ?? []).reduce((n, p) => n + (p.sheetplacements?.length ?? 0), 0)}</div>
                           <div className="text-xs text-zinc-500">Parts placed</div>
                         </div>
-                        <div className="bg-zinc-800/50 rounded-xl p-3 border border-cyan-700/30">
+                        <div
+                          className="bg-zinc-800/50 rounded-xl p-3 border border-cyan-700/30"
+                          title="Lower is better. Combined cost from NestNow’s search: sheet use, your layout goal, unplaced penalties, and merge-line bonuses when enabled."
+                        >
                           <div className="text-lg font-bold text-zinc-300 tabular-nums">
                             {typeof nestResult.fitness === "number"
                               ? nestResult.fitness.toFixed(4)
                               : "—"}
                           </div>
-                          <div className="text-xs text-zinc-500">Fitness</div>
+                          <div className="text-xs text-zinc-500">
+                            Search cost (fitness)
+                          </div>
+                          <div className="mt-1 text-[10px] leading-tight text-zinc-600">
+                            Lower is better
+                          </div>
                         </div>
                       </div>
                       {lastNestPayload && (
@@ -2053,8 +2316,8 @@ export default function NestRemnantsPage() {
                             Last run parameters
                           </div>
                           <div className="flex flex-wrap gap-x-4 gap-y-1">
-                            <span>
-                              spacing {String(lastNestPayload.config.spacing)}
+                            <span title="Minimum clearance part-to-part and to sheet edge (DeepNest spacing).">
+                              part/sheet gap {String(lastNestPayload.config.spacing)}
                               ″
                             </span>
                             <span>
@@ -2071,6 +2334,13 @@ export default function NestRemnantsPage() {
                             <span>
                               attempts {lastNestPayload.attemptsUsed}
                             </span>
+                            {typeof lastNestPayload.config.requestTimeoutSec ===
+                              "number" && (
+                              <span>
+                                timeout{" "}
+                                {String(lastNestPayload.config.requestTimeoutSec)}s
+                              </span>
+                            )}
                           </div>
                           <div className="flex flex-wrap gap-x-4 gap-y-1 text-zinc-500">
                             <span>

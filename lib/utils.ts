@@ -150,7 +150,11 @@ export function ringOutline(
   segments = 48,
 ): { outer: OutlinePoint[]; inner: OutlinePoint[] } {
   const outer = circleOutline(od, segments);
-  const inner = circleOutline(id, segments).slice().reverse();
+  const oxy = (od - id) / 2;
+  const inner = circleOutline(id, segments)
+    .slice()
+    .reverse()
+    .map((p) => ({ x: p.x + oxy, y: p.y + oxy }));
   return { outer, inner };
 }
 
@@ -265,4 +269,15 @@ export function placeOutline(
 ): OutlinePoint[] {
   const rotated = rotateOutline(outline, degrees);
   return rotated.map((p) => ({ x: p.x + x, y: p.y + y }));
+}
+
+/** Apply the same placement transform to each hole loop as the outer outline. */
+export function placeHoles(
+  holes: OutlinePoint[][] | undefined,
+  degrees: number,
+  x: number,
+  y: number,
+): OutlinePoint[][] {
+  if (!holes?.length) return [];
+  return holes.map((h) => placeOutline(h, degrees, x, y));
 }

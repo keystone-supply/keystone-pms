@@ -1,10 +1,20 @@
 /** Material weight/cost calculator; tape line items; export to file or OneDrive project _DOCS. */
 "use client";
 
-import { useSession } from "next-auth/react";
-import Link from "next/link";
-import Image from "next/image";
-import { ArrowLeft, Trash2, Users, Download, ArrowDown } from "lucide-react";
+import { signIn, signOut, useSession } from "next-auth/react";
+import {
+  ArrowDown,
+  ClipboardList,
+  CloudUpload,
+  DollarSign,
+  Download,
+  HardDriveDownload,
+  ListOrdered,
+  Ruler,
+  Scale,
+  Trash2,
+  Weight,
+} from "lucide-react";
 import { uploadTapeToDocs } from "@/lib/onedrive";
 import { useState, useCallback, useMemo, useEffect } from "react";
 import {
@@ -15,7 +25,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import { KpiCard } from "@/components/dashboard/kpi-card";
+import { QuickLinksBar } from "@/components/dashboard/quick-links-bar";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  aggregateDashboardMetrics,
+  type DashboardProjectRow,
+} from "@/lib/dashboardMetrics";
+import { PROJECT_SELECT } from "@/lib/projectQueries";
 
 type MaterialKey = "al" | "cs" | "ar500" | "viking" | "304ss" | "hiace";
 
@@ -53,8 +72,9 @@ interface TapeItem {
 }
 
 export default function WeightCalcPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
 
+  const [openQuotesCount, setOpenQuotesCount] = useState(0);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   const [projects, setProjects] = useState<
@@ -344,6 +364,21 @@ export default function WeightCalcPage() {
     setProjects(data || []);
     setProjectsLoading(false);
   }, []);
+
+  const fetchOpenQuotesCount = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("projects")
+      .select(PROJECT_SELECT);
+    if (error || !data) return;
+    setOpenQuotesCount(
+      aggregateDashboardMetrics(data as DashboardProjectRow[]).openQuotes,
+    );
+  }, []);
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    fetchOpenQuotesCount();
+  }, [status, fetchOpenQuotesCount]);
 
   const updateItem = useCallback(
     (id: string, field: keyof TapeItem, value: any) => {
@@ -648,63 +683,108 @@ export default function WeightCalcPage() {
     }
   }, [isExportModalOpen, fetchProjects]);
 
+  if (status === "loading") {
+    return (
+      <div className="flex h-screen items-center justify-center bg-zinc-950 text-white">
+        Loading…
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
+        <p className="mb-6 text-lg text-zinc-300">
+          Sign in to use the weight calculator.
+        </p>
+        <button
+          type="button"
+          onClick={() => signIn("azure-ad")}
+          className="rounded-2xl bg-blue-600 px-8 py-3 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Sign in with Microsoft
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-zinc-950 p-8">
-      <div className="max-w-screen-2xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-3 items-center gap-8 lg:gap-12 mb-8">
-          {/* Left col: back + logo grouped (lg: flex-row to keep logo "where it is" next to back) */}
-          <div className="flex flex-col lg:flex-row lg:items-start items-center gap-4 lg:gap-8">
-            <div className="flex flex-col items-center lg:items-start gap-4 flex-shrink-0">
-              <Link
-                href="/"
-                className="flex items-center gap-2 group relative bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-900 border border-blue-900/50 rounded-2xl px-6 py-3 font-medium text-white shadow-[0_20px_40px_-10px_rgba(30,58,138,0.3)] shadow-blue-950/60 hover:shadow-[0_30px_50px_-12px_rgba(30,58,138,0.4)] hover:shadow-blue-900/80 hover:-translate-y-1 hover:scale-[1.05] hover:border-blue-800/70 transition-all duration-500 ease-out overflow-hidden"
-              >
-                <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-                Dashboard
-              </Link>
-              <small className="text-zinc-400 text-sm">
-                Tape RESETS on REFRESH!
-              </small>
-            </div>
-            <Image
-              src="/logo.png"
-              alt="Keystone Supply"
-              width={250}
-              height={123}
-              priority
-              className="opacity-85 hover:opacity-95 backdrop-blur-sm max-h-28 rounded-3xl shadow-[0_10px_20px_-6px_rgba(30,58,138,0.3)] shadow-blue-950/60 hover:shadow-[0_15px_25px_-8px_rgba(30,58,138,0.4)] hover:shadow-blue-900/80 hover:-translate-y-0.5 transition-all duration-500 ease-out flex-shrink-0 lg:max-h-28"
-            />
-          </div>
-          {/* Center col: Title/pill/subtitle perfectly centered with panels */}
-          <div className="flex flex-col items-center gap-3">
-            <h1 className="text-4xl font-bold text-white tracking-tight mb-3">
-              Weight Calculator
-            </h1>
-            <div className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-2xl text-sm font-medium min-w-0">
-              <Users size={18} />
-              <span className="truncate max-w-48">
-                {session?.user?.name ?? "User"}
-              </span>
-            </div>
-            <p className="text-zinc-600 text-lg text-center">
-              Advanced material weight calculations
-            </p>
-          </div>
-          {/* Right col empty */}
+    <div className="min-h-screen bg-zinc-950 text-white">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
+        <DashboardHeader
+          userName={session?.user?.name}
+          lastUpdated={null}
+          onSignOut={() => signOut({ callbackUrl: "/" })}
+          title="Weight calculator"
+          subtitle="Estimate part weight and cost, build a tape, and export to a file or a job’s _DOCS folder."
+          showLastUpdated={false}
+          backHref="/"
+          backLabel="Dashboard"
+        />
+
+        <div className="mt-6 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-200/90">
+          Tape is held in memory only — it resets when you refresh the page.
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
-          <div className="bg-zinc-900/70 backdrop-blur-xl border border-zinc-700/50 rounded-3xl p-10 shadow-2xl">
-            <h2 className="text-3xl font-bold text-white mb-8 flex items-center gap-3">
-              <span>⚖️</span>
-              Material & Shape
+        <div className="mt-8">
+          <QuickLinksBar
+            openQuotesCount={openQuotesCount}
+            activeHref="/weight-calc"
+            newProjectHref="/new-project?returnTo=%2Fweight-calc"
+          />
+        </div>
+
+        <section
+          aria-label="Calculator snapshot"
+          className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+        >
+          <KpiCard
+            label="Items on tape"
+            value={tapeItems.length}
+            hint="Lines in the tape below"
+            icon={ListOrdered}
+          />
+          <KpiCard
+            label="Preview weight"
+            value={`${formattedWeight} lbs`}
+            hint={`${formattedWeightKg} kg · current line`}
+            icon={Weight}
+          />
+          <KpiCard
+            label="Tape total weight"
+            value={
+              tapeItems.length === 0 ? "—" : `${formattedGrandWeight} lbs`
+            }
+            hint="Sum of all tape lines"
+            icon={Scale}
+          />
+          <KpiCard
+            label="Tape margin"
+            value={tapeItems.length === 0 ? "—" : formattedGrandMargin}
+            hint="Est. sell minus cost on tape"
+            icon={DollarSign}
+            valueClassName={
+              tapeItems.length === 0
+                ? undefined
+                : grandTotalMargin >= 0
+                  ? "text-emerald-400"
+                  : "text-red-400"
+            }
+          />
+        </section>
+
+        <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
+          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-6 shadow-xl">
+            <h2 className="mb-6 flex items-center gap-3 text-xl font-semibold tracking-tight text-white">
+              <Scale className="size-6 shrink-0 text-zinc-500" aria-hidden />
+              Material &amp; shape
             </h2>
             <div className="space-y-8">
               <div>
-                <label className="block text-zinc-300 font-medium mb-3 text-lg">
+                <label className="mb-3 block text-sm font-medium text-zinc-400">
                   Material
                 </label>
-                <div className="flex flex-wrap gap-3">
+                <div className="flex flex-wrap gap-2">
                   {materialCostOptions.map((opt) => {
                     const mat = materialDensities[opt.materialKey];
                     const costVal = costs[opt.costKey];
@@ -720,9 +800,9 @@ export default function WeightCalcPage() {
                         key={opt.costKey}
                         type="button"
                         onClick={() => setMaterialCostOption(opt.costKey)}
-                        className={`rounded-2xl px-4 py-3 text-left text-sm font-medium transition-all duration-300 ${isSelected
-                          ? "bg-blue-600 text-white border-2 border-blue-500 shadow-lg shadow-blue-500/25"
-                          : "bg-zinc-800/50 text-zinc-300 border-2 border-zinc-600/50 hover:border-blue-500/50 hover:text-white"
+                        className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition-colors ${isSelected
+                          ? "border-blue-500/50 bg-blue-500/15 text-blue-100 ring-1 ring-blue-500/30"
+                          : "border-zinc-700 bg-zinc-900/50 text-zinc-300 hover:border-zinc-600 hover:text-white"
                           }`}
                       >
                         <span className="block font-semibold">
@@ -738,18 +818,18 @@ export default function WeightCalcPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-zinc-300 font-medium mb-3 text-lg">
+                <label className="mb-3 block text-sm font-medium text-zinc-400">
                   Shape
                 </label>
-                <div className="flex flex-wrap gap-3">
+                <div className="flex flex-wrap gap-2">
                   {shapes.map((s) => (
                     <button
                       key={s.value}
                       type="button"
                       onClick={() => setShape(s.value)}
-                      className={`rounded-2xl px-5 py-3 text-lg font-medium transition-all duration-300 ${shape === s.value
-                        ? "bg-blue-600 text-white border-2 border-blue-500 shadow-lg shadow-blue-500/25"
-                        : "bg-zinc-800/50 text-zinc-300 border-2 border-zinc-600/50 hover:border-blue-500/50 hover:text-white"
+                      className={`rounded-xl border px-4 py-3 text-sm font-medium transition-colors ${shape === s.value
+                        ? "border-blue-500/50 bg-blue-500/15 text-blue-100 ring-1 ring-blue-500/30"
+                        : "border-zinc-700 bg-zinc-900/50 text-zinc-300 hover:border-zinc-600 hover:text-white"
                         }`}
                     >
                       {s.label}
@@ -759,14 +839,15 @@ export default function WeightCalcPage() {
               </div>
             </div>
           </div>
-          <div className="bg-zinc-900/70 backdrop-blur-xl border border-zinc-700/50 rounded-3xl p-10 shadow-2xl relative">
-            <h2 className="text-3xl font-bold text-white mb-8 flex items-center gap-3">
-              <span>📏</span>Dimensions
+          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-6 shadow-xl">
+            <h2 className="mb-6 flex items-center gap-3 text-xl font-semibold tracking-tight text-white">
+              <Ruler className="size-6 shrink-0 text-zinc-500" aria-hidden />
+              Dimensions
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
               {/* Qnty # - Top Left */}
               <div>
-                <label className="block text-zinc-300 font-medium mb-3 text-lg">
+                <label className="mb-2 block text-sm font-medium text-zinc-400">
                   Qnty #
                 </label>
                 <input
@@ -775,13 +856,12 @@ export default function WeightCalcPage() {
                   min="1"
                   value={quantity}
                   onChange={(e) => setQuantity(+e.target.value || 1)}
-                  className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-blue-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/70 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950/50 px-4 py-3 text-base font-medium text-white placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   placeholder="e.g. 1"
                 />
               </div>
-              {/* Length (in) - Top Right, above Thickness */}
               <div>
-                <label className="block text-zinc-300 font-medium mb-3 text-lg">
+                <label className="mb-2 block text-sm font-medium text-zinc-400">
                   Length (in)
                 </label>
                 <input
@@ -790,13 +870,12 @@ export default function WeightCalcPage() {
                   min="0"
                   value={lengthIn}
                   onChange={(e) => setLengthIn(+e.target.value || 0)}
-                  className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-blue-500/70 focus:border-blue-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950/50 px-4 py-3 text-base font-medium text-white placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   placeholder="e.g. 144"
                 />
               </div>
-              {/* Dim1 - Bottom Left */}
               <div>
-                <label className="block text-zinc-300 font-medium mb-3 text-lg">
+                <label className="mb-2 block text-sm font-medium text-zinc-400">
                   {currentShape?.dimLabel1 ?? "Dimension 1 (in)"}
                 </label>
                 <input
@@ -805,14 +884,13 @@ export default function WeightCalcPage() {
                   min="0"
                   value={dim1}
                   onChange={(e) => setDim1(+e.target.value || 0)}
-                  className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-blue-500/70 focus:border-blue-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950/50 px-4 py-3 text-base font-medium text-white placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   placeholder="e.g. 2.0"
                 />
               </div>
-              {/* Dim2/Thickness - Bottom Right (conditional) */}
               {currentShape?.hasDim2 && (
                 <div>
-                  <label className="block text-zinc-300 font-medium mb-3 text-lg">
+                  <label className="mb-2 block text-sm font-medium text-zinc-400">
                     {currentShape!.dimLabel2!}
                   </label>
                   <input
@@ -821,18 +899,16 @@ export default function WeightCalcPage() {
                     min="0"
                     value={dim2}
                     onChange={(e) => setDim2(+e.target.value || 0)}
-                    className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-blue-500/70 focus:border-blue-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-950/50 px-4 py-3 text-base font-medium text-white placeholder:text-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     placeholder="e.g. 0.125"
                   />
                 </div>
               )}
             </div>
-            <div className="mt-10 pt-10 border-t border-zinc-800">
-              <div className="flex flex-wrap items-baseline justify-between gap-4 mb-6">
-                <h3 className="text-3xl font-bold text-white">
-                  Weight & Budget
-                </h3>
-              </div>
+            <div className="mt-8 border-t border-zinc-800/80 pt-8">
+              <h3 className="mb-4 text-lg font-semibold text-white">
+                Preview · weight &amp; budget
+              </h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 <div className="text-center">
                   <div className="text-xl font-mono font-bold text-zinc-400 mb-1 tracking-tight">
@@ -872,26 +948,34 @@ export default function WeightCalcPage() {
               </div>
             </div>
 
-            <button
-              onClick={saveToTape}
-              className="group absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-900 border border-blue-900/50 rounded-2xl px-6 py-3 font-medium text-white text-sm shadow-[0_20px_40px_-10px_rgba(30,58,138,0.3)] shadow-blue-950/60 hover:shadow-[0_30px_50px_-12px_rgba(30,58,138,0.4)] hover:shadow-blue-900/80 hover:-translate-y-1 hover:scale-[1.05] hover:border-blue-800/70 transition-all duration-500 ease-out overflow-hidden"
-            >
-              <ArrowDown className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-              Save to Tape
-            </button>
+            <div className="mt-6 flex justify-end">
+              <Button
+                type="button"
+                onClick={saveToTape}
+                className="gap-2"
+              >
+                <ArrowDown className="size-4" aria-hidden />
+                Save to tape
+              </Button>
+            </div>
           </div>
 
-          <div className="lg:col-span-2 relative bg-zinc-900/70 backdrop-blur-xl border border-zinc-700/50 rounded-3xl p-15 shadow-2xl">
-            <h2 className="text-3xl font-bold text-white mb-8 flex items-center gap-3">
-              <span>📋</span>Tape
+          <div className="lg:col-span-2 rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-6 shadow-xl">
+            <h2 className="mb-6 flex items-center gap-3 text-xl font-semibold tracking-tight text-white">
+              <ClipboardList
+                className="size-6 shrink-0 text-zinc-500"
+                aria-hidden
+              />
+              Tape
             </h2>
             {tapeItems.length === 0 ? (
-              <p className="text-zinc-400 text-xl text-center py-20">
-                No items in tape yet. Use &quot;Save to Tape&quot; to add items.
+              <p className="rounded-xl border border-dashed border-zinc-700/80 bg-zinc-950/30 py-16 text-center text-sm text-zinc-500">
+                No items on tape yet. Configure material and dimensions, then use
+                &quot;Save to tape&quot;.
               </p>
             ) : (
               <>
-                <div className="rounded-2xl border border-zinc-700/50 overflow-hidden shadow-lg">
+                <div className="overflow-hidden rounded-xl border border-zinc-800/80 shadow-lg">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1152,13 +1236,11 @@ export default function WeightCalcPage() {
                   </Table>
                 </div>
                 {sortedTapeItems.length > 0 && (
-                  <div className="mt-8 pt-8 border-t border-zinc-300/50 bg-gradient-to-r from-blue-700/80 to-zinc-900/40 backdrop-blur-sm rounded-3xl p-8 shadow-2xl">
-                    <div className="flex justify-between items-baseline mb-4">
-                      <div className="text-2xl font-bold text-zinc-300">
-                        Tape Summary
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10 text-right">
+                  <div className="mt-6 rounded-2xl border border-zinc-800/80 bg-zinc-950/30 p-6">
+                    <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-500">
+                      Tape summary
+                    </h3>
+                    <div className="grid grid-cols-1 gap-8 text-right md:grid-cols-2 lg:grid-cols-4">
                       <div>
                         <div className="text-xl text-zinc-400 mb-2">
                           Total Weight
@@ -1196,12 +1278,17 @@ export default function WeightCalcPage() {
                 )}
 
                 {sortedTapeItems.length > 0 && (
-                  <button
-                    onClick={() => setIsExportModalOpen(true)}
-                    className="group absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-zinc-900/95 backdrop-blur-sm hover:bg-zinc-900 border border-blue-900/50 rounded-2xl px-6 py-3 font-medium text-white text-sm shadow-[0_20px_40px_-10px_rgba(30,58,138,0.3)] shadow-blue-950/60 hover:shadow-[0_30px_50px_-12px_rgba(30,58,138,0.4)] hover:shadow-blue-900/80 hover:-translate-y-1 hover:scale-[1.05] hover:border-blue-800/70 transition-all duration-500 ease-out overflow-hidden"
-                  >
-                    <Download size={18} /> Export Tape
-                  </button>
+                  <div className="mt-6 flex justify-end">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setIsExportModalOpen(true)}
+                      className="gap-2"
+                    >
+                      <Download className="size-4" aria-hidden />
+                      Export tape
+                    </Button>
+                  </div>
                 )}
               </>
             )}
@@ -1210,31 +1297,33 @@ export default function WeightCalcPage() {
       </div>
 
       {isExportModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-3xl p-8 shadow-2xl max-w-md w-full mx-4">
-            <h3 className="text-2xl font-bold text-white mb-6">Export Tape</h3>
-            {/* Method toggle */}
-            <div className="grid grid-cols-2 gap-2 mb-6 bg-zinc-800/50 rounded-2xl p-1">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-md rounded-2xl border border-zinc-800/80 bg-zinc-900/95 p-6 shadow-2xl">
+            <h3 className="mb-5 text-lg font-semibold text-white">Export tape</h3>
+            <div className="mb-6 grid grid-cols-2 gap-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-1">
               <button
+                type="button"
                 onClick={() => setExportMethod("download")}
-                className={`px-4 py-3 rounded-xl font-medium transition-all ${exportMethod === "download"
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/25"
-                  : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+                className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${exportMethod === "download"
+                  ? "bg-blue-600 text-white shadow-sm ring-1 ring-blue-500/30"
+                  : "text-zinc-400 hover:bg-zinc-800/80 hover:text-white"
                   }`}
               >
-                💾 Download File
+                <HardDriveDownload className="size-4 shrink-0" aria-hidden />
+                Download
               </button>
               <button
+                type="button"
                 onClick={() => setExportMethod("onedrive")}
-                className={`px-4 py-3 rounded-xl font-medium transition-all ${exportMethod === "onedrive"
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/25"
-                  : "text-zinc-400 hover:text-white hover:bg-zinc-700/50"
+                className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${exportMethod === "onedrive"
+                  ? "bg-blue-600 text-white shadow-sm ring-1 ring-blue-500/30"
+                  : "text-zinc-400 hover:bg-zinc-800/80 hover:text-white"
                   }`}
               >
-                ☁️ Save to Job
+                <CloudUpload className="size-4 shrink-0" aria-hidden />
+                Job / OneDrive
               </button>
             </div>
-            {/* Conditional content */}
             {exportMethod === "download" ? (
               <div className="mb-6">
                 <p className="text-zinc-400 mb-4 text-sm">
@@ -1250,7 +1339,7 @@ export default function WeightCalcPage() {
                   value={selectedJob}
                   onChange={(e) => setSelectedJob(e.target.value)}
                   disabled={projectsLoading}
-                  className="w-full bg-zinc-800/50 border border-zinc-600/50 hover:border-zinc-500/70 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/70 rounded-2xl px-5 py-4 text-xl font-medium text-white transition-all duration-300 shadow-lg hover:shadow-xl"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950/50 px-4 py-3 text-base text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
                   {projectsLoading ? (
                     <option>Loading projects...</option>
@@ -1275,38 +1364,35 @@ export default function WeightCalcPage() {
                 {exportError}
               </p>
             )}
-            {/* Buttons */}
-            <div className="flex gap-4">
-              <button
+            <div className="flex gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
                 onClick={() => {
                   setIsExportModalOpen(false);
                   setSelectedJob("");
                   setExportError("");
                 }}
-                className="flex-1 bg-zinc-700 hover:bg-zinc-600 border border-zinc-600 rounded-2xl px-6 py-3 font-medium text-white transition-all"
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
+                type="button"
+                className="flex-1"
                 onClick={handleExport}
                 disabled={
                   sortedTapeItems.length === 0 ||
                   isExporting ||
                   (exportMethod === "onedrive" && !selectedJob)
                 }
-                className={`flex-1 rounded-2xl px-6 py-3 font-medium text-white transition-all ${sortedTapeItems.length === 0 ||
-                  isExporting ||
-                  (exportMethod === "onedrive" && !selectedJob)
-                  ? "bg-zinc-700 cursor-not-allowed border-zinc-600 hover:bg-zinc-700"
-                  : "bg-blue-600 hover:bg-blue-500 border border-blue-500"
-                  }`}
               >
                 {isExporting
-                  ? "Exporting..."
+                  ? "Exporting…"
                   : exportMethod === "download"
-                    ? "Download Tape"
-                    : "Export to OneDrive"}
-              </button>
+                    ? "Download"
+                    : "Upload to OneDrive"}
+              </Button>
             </div>
           </div>
         </div>

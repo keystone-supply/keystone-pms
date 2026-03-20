@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 const NESTNOW_URL =
   process.env.NESTNOW_URL || "http://127.0.0.1:3001";
 
+/** Allow long NestNow runs when the platform honors this (e.g. Vercel). */
+export const maxDuration = 3600;
+
 export async function POST(request: NextRequest) {
   let body: unknown;
   try {
