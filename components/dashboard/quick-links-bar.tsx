@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  Calculator,
   FolderOpen,
   Layers,
   Package,
@@ -79,6 +80,20 @@ export function QuickLinksBar({
           >
             <Scale className="size-4" />
             Weight calc
+          </Link>
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <Link
+            href="/pipad-calc"
+            className={cn(
+              "gap-2",
+              activeHref === "/pipad-calc" &&
+                "border-blue-500/50 bg-blue-500/10 text-blue-200",
+            )}
+            aria-current={activeHref === "/pipad-calc" ? "page" : undefined}
+          >
+            <Calculator className="size-4" />
+            Tape calc
           </Link>
         </Button>
       </div>
