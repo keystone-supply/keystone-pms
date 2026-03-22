@@ -51,7 +51,6 @@ import { PROJECT_SELECT } from "@/lib/projectQueries";
 import {
   type Remnant,
   type PartShape,
-  genMockSVG,
   parseRemnantDims,
   placeOutline,
   placeHoles,
@@ -75,9 +74,24 @@ import {
   NEST_PRESET_PREVIEW_FIELDS,
   NEST_REQUEST_TIMEOUT_SEC_MAX,
   NEST_REQUEST_TIMEOUT_SEC_MIN,
+  NEST_PRESET_MODULE_FIELDS,
   NEST_ROTATION_OPTIONS,
   sanitizeDirectNestNowUrl,
 } from "@/lib/nestPayload";
+import {
+  remnantToNestSheet,
+  nestSheetPreviewDimensions,
+  nestSheetPayloadToPreviewOutline,
+  type NestApiSheetPayload,
+} from "@/lib/remnantNestGeometry";
+import {
+  selectNestPlacementLane,
+  partsUnitQuantities,
+} from "@/lib/nestStrategy";
+import {
+  expandModuleToGrid,
+  type NestGridMetadata,
+} from "@/lib/nestGridExpand";
 import { NestFieldHelp, NestLabelWithHelp } from "@/lib/nestHelp";
 
 /** UI caps for advanced nest fields (keep in sync with inputs and `handleGenerateNest`). */
@@ -103,6 +117,8 @@ type NestResult = {
   placements: { sheet: number; sheetid: unknown; sheetplacements: SheetPlacement[] }[];
   /** Top alternative layouts from one NestNow run (lower fitness is better); index 0 matches top-level fields. */
   candidates?: NestResult[];
+  /** Set when result came from production grid expansion. */
+  nestStrategyMeta?: NestGridMetadata;
 };
 
 /** `/api/nest` may add these for debugging timeouts (see `app/api/nest/route.ts`). */
@@ -592,8 +608,8 @@ type NestApiPartPayload = {
 };
 
 type LastNestPayload = {
-  /** Sent to NestNow: `width` = length_in (x), `height` = width_in (y). */
-  sheets: { width: number; height: number }[];
+  /** Sent to NestNow (rectangle and/or polygon outline per sheet). */
+  sheets: NestApiSheetPayload[];
   parts: NestApiPartPayload[];
   config: Record<string, string | number | boolean>;
   attemptsUsed: number;
@@ -661,6 +677,7 @@ function computeNestPreviewWorld(
   sh: number,
   parts: NestPreviewPart[],
   sheetplacements: SheetPlacement[],
+  sheetOutlineNest?: { x: number; y: number }[],
 ): { worldW: number; worldH: number; innerTf: string } {
   let minX = Infinity;
   let minY = Infinity;
@@ -684,12 +701,16 @@ function computeNestPreviewWorld(
     }
   };
 
-  expand([
-    { x: 0, y: 0 },
-    { x: sw, y: 0 },
-    { x: sw, y: sh },
-    { x: 0, y: sh },
-  ]);
+  if (sheetOutlineNest && sheetOutlineNest.length >= 3) {
+    expand(sheetOutlineNest);
+  } else {
+    expand([
+      { x: 0, y: 0 },
+      { x: sw, y: 0 },
+      { x: sw, y: sh },
+      { x: 0, y: sh },
+    ]);
+  }
 
   for (const p of sheetplacements) {
     if (!p || typeof p.source !== "number") continue;
@@ -715,6 +736,22 @@ function computeNestPreviewWorld(
   const flipY = `matrix(1,0,0,-1,0,${sh})`;
   const innerTf = `translate(${pad - minX}, ${pad - minY}) ${flipY}`;
   return { worldW, worldH, innerTf };
+}
+
+function nestPreviewSheetView(s: NestApiSheetPayload | undefined): {
+  sheetWidth: number;
+  sheetHeight: number;
+  sheetOutlineNest?: { x: number; y: number }[];
+} {
+  if (!s) {
+    return { sheetWidth: 96, sheetHeight: 48 };
+  }
+  const { width, height } = nestSheetPreviewDimensions(s);
+  return {
+    sheetWidth: width,
+    sheetHeight: height,
+    sheetOutlineNest: nestSheetPayloadToPreviewOutline(s),
+  };
 }
 
 /** Selectable mini schematics for layout goal: gravity (width-heavy), box AABB, convex hull. */
@@ -861,19 +898,29 @@ const NestPreviewZoomable = forwardRef(function NestPreviewZoomable(
     sheetHeight,
     parts,
     sheetplacements,
+    sheetOutlineNest,
   }: {
     sheetWidth: number;
     sheetHeight: number;
     parts: NestPreviewPart[];
     sheetplacements: SheetPlacement[];
+    /** When set, draw this polygon instead of a rectangle (Nest y-up coordinates). */
+    sheetOutlineNest?: { x: number; y: number }[];
   },
   ref: Ref<NestPreviewZoomableHandle>,
 ) {
   const sw = Math.max(1e-6, Number(sheetWidth) || 96);
   const sh = Math.max(1e-6, Number(sheetHeight) || 48);
   const { worldW, worldH, innerTf } = useMemo(
-    () => computeNestPreviewWorld(sw, sh, parts, sheetplacements),
-    [sw, sh, parts, sheetplacements],
+    () =>
+      computeNestPreviewWorld(
+        sw,
+        sh,
+        parts,
+        sheetplacements,
+        sheetOutlineNest,
+      ),
+    [sw, sh, parts, sheetplacements, sheetOutlineNest],
   );
   const [view, setView] = useState({
     zoom: NEST_PREVIEW_ZOOM_MIN,
@@ -1083,9 +1130,19 @@ const NestPreviewZoomable = forwardRef(function NestPreviewZoomable(
       aria-label="Nest layout preview. Scroll to zoom, drag to pan when zoomed."
     >
       <g transform={innerTf}>
-        {/* NestNow sheet polygon (y-up): BL(0,0)→BR→TR→TL — not SVG <rect> (y-down) */}
+        {/* NestNow sheet: rect or polygon in nest y-up space */}
         <path
-          d={`M 0 0 L ${sw} 0 L ${sw} ${sh} L 0 ${sh} Z`}
+          d={
+            sheetOutlineNest && sheetOutlineNest.length >= 3
+              ? [
+                  `M ${mapPt(sheetOutlineNest[0].x, sheetOutlineNest[0].y)}`,
+                  ...sheetOutlineNest
+                    .slice(1)
+                    .map((pt) => `L ${mapPt(pt.x, pt.y)}`),
+                  "Z",
+                ].join(" ")
+              : `M 0 0 L ${sw} 0 L ${sw} ${sh} L 0 ${sh} Z`
+          }
           fill="none"
           stroke={SHEET_STROKE}
           strokeWidth={NEST_PREVIEW_VECTOR_STROKE_PX}
@@ -1225,7 +1282,7 @@ export default function NestRemnantsPage() {
   );
   /** Sheets + parts for preview during nesting (same as request body). */
   const [nestRunPreviewGeometry, setNestRunPreviewGeometry] = useState<{
-    sheets: { width: number; height: number }[];
+    sheets: NestApiSheetPayload[];
     parts: NestApiPartPayload[];
   } | null>(null);
   const [nestError, setNestError] = useState<string | null>(null);
@@ -1239,7 +1296,7 @@ export default function NestRemnantsPage() {
   /** Latest progress snapshot; read in `handleStopNest` so promotion is not stale. */
   const nestLiveBestSoFarRef = useRef<NestResult | null>(null);
   const nestRunPreviewGeometryRef = useRef<{
-    sheets: { width: number; height: number }[];
+    sheets: NestApiSheetPayload[];
     parts: NestApiPartPayload[];
   } | null>(null);
   const nestActiveEndpointsRef = useRef(
@@ -1508,11 +1565,17 @@ export default function NestRemnantsPage() {
     const shortId = dbId ? `#${dbId.slice(0, 8).toUpperCase()}` : "#SHEET";
     const label: string | null = row.label ?? null;
 
+    const pathFromDb =
+      typeof row.svg_path === "string" && row.svg_path.trim()
+        ? row.svg_path.trim()
+        : undefined;
+
     return {
       id: label || shortId,
       db_id: dbId,
       label,
-      svg_path: length_in && width_in ? genMockSVG(length_in, width_in) : undefined,
+      /** Real remnant outline from DB only — no synthetic shape, so rect stock nests as a rectangle. */
+      svg_path: pathFromDb,
       dims,
       length_in,
       width_in,
@@ -1788,17 +1851,17 @@ export default function NestRemnantsPage() {
               remnants[0],
           ];
 
-    const sheets = sheetsSource.map((r) => {
-      if (r.width_in && r.length_in) {
-        return { width: r.length_in, height: r.width_in };
-      }
-      const parsed = parseRemnantDims(r.dims);
-      // Dims string is "length×width"; parser puts first number in .width, second in .height.
-      return { width: parsed.width, height: parsed.height };
-    });
+    const sheets: NestApiSheetPayload[] =
+      sheetsSource.map(remnantToNestSheet);
 
     const nestPartsPayload = mapPartsToApiPayload(parts);
     setNestRunPreviewGeometry({ sheets, parts: nestPartsPayload });
+
+    const placementLane = selectNestPlacementLane(
+      nestUiSettings.nestStrategy,
+      parts,
+      sheets,
+    );
 
     const attempts = Math.min(
       NEST_UI_MAX_SEPARATE_ATTEMPTS,
@@ -1812,7 +1875,7 @@ export default function NestRemnantsPage() {
 
     let bestResult: NestResult | null = null;
     let bestPayloadBody: {
-      sheets: typeof sheets;
+      sheets: NestApiSheetPayload[];
       parts: NestApiPartPayload[];
       config: typeof apiConfig;
       requestTimeoutMs: number;
@@ -1849,6 +1912,139 @@ export default function NestRemnantsPage() {
     }, 500);
 
     try {
+      if (placementLane.kind !== "full") {
+        setNestProgressLabel("Nesting module…");
+        const moduleConfig = {
+          ...apiConfig,
+          ...NEST_PRESET_MODULE_FIELDS,
+        };
+        const modulePartsPayload = mapPartsToApiPayload(
+          partsUnitQuantities(parts),
+        );
+        const modulePayload = {
+          sheets,
+          parts: modulePartsPayload,
+          config: moduleConfig,
+          requestTimeoutMs,
+        };
+
+        if (nestRunVersionRef.current !== myVersion) {
+          return;
+        }
+
+        const postStarted = performance.now();
+        const res = await postNestWith503Retry(
+          endpoints.nest,
+          modulePayload,
+          endpoints.stop,
+        );
+        const clientRequestDurationMs = Math.round(
+          performance.now() - postStarted,
+        );
+        let raw: NestApiResponse = {} as NestApiResponse;
+        let responseParseError: string | undefined;
+        try {
+          const parsed: unknown = await res.json();
+          if (parsed && typeof parsed === "object") {
+            raw = parsed as NestApiResponse;
+          }
+        } catch (pe) {
+          responseParseError =
+            pe instanceof Error ? pe.message : String(pe);
+        }
+
+        const failureCtx: NestFailureContext = {
+          nestPath: endpoints.isDirect ? "direct" : "proxy",
+          clientRequestDurationMs,
+          responseParseError,
+        };
+
+        if (nestRunVersionRef.current !== myVersion) {
+          return;
+        }
+
+        if (responseParseError) {
+          const synthetic = {
+            error: res.ok
+              ? "Nesting returned a non-JSON response"
+              : res.statusText || "Non-JSON error response",
+          } as NestApiResponse;
+          const { userMessage, adminDetail } = parseNestFailure(
+            res,
+            synthetic,
+            failureCtx,
+          );
+          setNestError(userMessage);
+          setNestErrorAdmin(adminDetail);
+          return;
+        }
+
+        if (!res.ok) {
+          const { userMessage, adminDetail } = parseNestFailure(
+            res,
+            raw,
+            failureCtx,
+          );
+          setNestError(userMessage);
+          setNestErrorAdmin(adminDetail);
+          return;
+        }
+
+        const moduleData = stripNestApiDiagnostics(raw);
+        setNestProgressLabel("Filling grid…");
+        const expanded = expandModuleToGrid({
+          moduleResult: moduleData,
+          parts,
+          sheet: sheets[0],
+          spacing: Number(apiConfig.spacing) || 0,
+          sheetKind: placementLane.sheetKind,
+        });
+
+        if ("error" in expanded) {
+          setNestError(
+            `${expanded.error} Try Tight (full) strategy or a smaller module.`,
+          );
+          setNestErrorAdmin(null);
+          return;
+        }
+
+        const gridResult: NestResult = {
+          ...expanded.result,
+          nestStrategyMeta: expanded.meta,
+        };
+        const configSummary: Record<string, string | number | boolean> = {
+          spacing: apiConfig.spacing,
+          rotations: apiConfig.rotations,
+          placementType: apiConfig.placementType,
+          mergeLines: apiConfig.mergeLines,
+          curveTolerance: apiConfig.curveTolerance,
+          simplify: apiConfig.simplify,
+          clipperScale: apiConfig.clipperScale,
+          populationSize: moduleConfig.populationSize ?? apiConfig.populationSize,
+          mutationRate: moduleConfig.mutationRate ?? apiConfig.mutationRate,
+          gaGenerations:
+            moduleConfig.gaGenerations ?? apiConfig.gaGenerations,
+          timeRatio: apiConfig.timeRatio,
+          scale: apiConfig.scale,
+          attempts: 1,
+          requestTimeoutSec,
+          nestStrategy: nestUiSettings.nestStrategy,
+          gridStampsPlaced: expanded.meta.stampsPlaced,
+          gridCapacity: expanded.meta.gridCapacity,
+          gridPitchX: expanded.meta.pitchX,
+          gridPitchY: expanded.meta.pitchY,
+        };
+        setNestResult(gridResult);
+        setLastNestPayload({
+          sheets,
+          parts: nestPartsPayload,
+          config: configSummary,
+          attemptsUsed: 1,
+        });
+        setPageLastUpdated(new Date());
+        return;
+      }
+
       for (let attempt = 1; attempt <= attempts; attempt++) {
         if (nestRunVersionRef.current !== myVersion) {
           return;
@@ -1984,6 +2180,7 @@ export default function NestRemnantsPage() {
           scale: apiConfig.scale,
           attempts,
           requestTimeoutSec,
+          nestStrategy: nestUiSettings.nestStrategy,
         };
         setNestResult(bestResult);
         setLastNestPayload({
@@ -2076,6 +2273,7 @@ export default function NestRemnantsPage() {
             scale: apiConfig.scale,
             attempts,
             requestTimeoutSec,
+            nestStrategy: nestUiSettings.nestStrategy,
             stoppedWithPartialLayout: true,
           },
           attemptsUsed: 0,
@@ -2345,8 +2543,14 @@ export default function NestRemnantsPage() {
       return { worldW: 96, worldH: 48 };
     }
     const sheet = nestRunPreviewGeometry.sheets[liveSafePreviewSheetIndex];
-    const sw = sheet?.width ?? 96;
-    const sh = sheet?.height ?? 48;
+    const dim = sheet
+      ? nestSheetPreviewDimensions(sheet)
+      : { width: 96, height: 48 };
+    const sw = dim.width;
+    const sh = dim.height;
+    const sheetOutlineNest = sheet
+      ? nestSheetPayloadToPreviewOutline(sheet)
+      : undefined;
     const sheetplacements =
       nestLiveBestSoFar.placements[liveSafePreviewSheetIndex]
         ?.sheetplacements ?? [];
@@ -2355,6 +2559,7 @@ export default function NestRemnantsPage() {
       sh,
       nestRunPreviewGeometry.parts as NestPreviewPart[],
       sheetplacements,
+      sheetOutlineNest,
     );
   }, [
     nestRunPreviewGeometry,
@@ -2370,8 +2575,14 @@ export default function NestRemnantsPage() {
       return { worldW: 96, worldH: 48 };
     }
     const sheet = lastNestPayload.sheets[safePreviewSheetIndex];
-    const sw = sheet?.width ?? 96;
-    const sh = sheet?.height ?? 48;
+    const dim = sheet
+      ? nestSheetPreviewDimensions(sheet)
+      : { width: 96, height: 48 };
+    const sw = dim.width;
+    const sh = dim.height;
+    const sheetOutlineNest = sheet
+      ? nestSheetPayloadToPreviewOutline(sheet)
+      : undefined;
     const sheetplacements =
       displayedNestResult.placements[safePreviewSheetIndex]
         ?.sheetplacements ?? [];
@@ -2380,6 +2591,7 @@ export default function NestRemnantsPage() {
       sh,
       lastNestPayload.parts as NestPreviewPart[],
       sheetplacements,
+      sheetOutlineNest,
     );
   }, [lastNestPayload, safePreviewSheetIndex, displayedNestResult]);
 
@@ -2972,18 +3184,13 @@ export default function NestRemnantsPage() {
                               >
                                 <div className="absolute inset-0 min-h-0 min-w-0">
                                   <NestPreviewZoomable
-                                    key={`live-${liveSafePreviewSheetIndex}-${nestRunPreviewGeometry.sheets[liveSafePreviewSheetIndex]?.width ?? ""}-${nestRunPreviewGeometry.sheets[liveSafePreviewSheetIndex]?.height ?? ""}`}
+                                    key={`live-${liveSafePreviewSheetIndex}-${nestPreviewSheetView(nestRunPreviewGeometry.sheets[liveSafePreviewSheetIndex]).sheetWidth}-${nestPreviewSheetView(nestRunPreviewGeometry.sheets[liveSafePreviewSheetIndex]).sheetHeight}`}
                                     ref={nestPreviewRef}
-                                    sheetWidth={
+                                    {...nestPreviewSheetView(
                                       nestRunPreviewGeometry.sheets[
                                         liveSafePreviewSheetIndex
-                                      ]?.width ?? 96
-                                    }
-                                    sheetHeight={
-                                      nestRunPreviewGeometry.sheets[
-                                        liveSafePreviewSheetIndex
-                                      ]?.height ?? 48
-                                    }
+                                      ],
+                                    )}
                                     parts={nestRunPreviewGeometry.parts}
                                     sheetplacements={
                                       nestLiveBestSoFar.placements[
@@ -3111,18 +3318,13 @@ export default function NestRemnantsPage() {
                               >
                                 <div className="absolute inset-0 min-h-0 min-w-0">
                                   <NestPreviewZoomable
-                                    key={`${nestCandidateIndex}-${safePreviewSheetIndex}-${lastNestPayload.sheets[safePreviewSheetIndex]?.width ?? ""}-${lastNestPayload.sheets[safePreviewSheetIndex]?.height ?? ""}`}
+                                    key={`${nestCandidateIndex}-${safePreviewSheetIndex}-${nestPreviewSheetView(lastNestPayload.sheets[safePreviewSheetIndex]).sheetWidth}-${nestPreviewSheetView(lastNestPayload.sheets[safePreviewSheetIndex]).sheetHeight}`}
                                     ref={nestPreviewRef}
-                                    sheetWidth={
+                                    {...nestPreviewSheetView(
                                       lastNestPayload.sheets[
                                         safePreviewSheetIndex
-                                      ]?.width ?? 96
-                                    }
-                                    sheetHeight={
-                                      lastNestPayload.sheets[
-                                        safePreviewSheetIndex
-                                      ]?.height ?? 48
-                                    }
+                                      ],
+                                    )}
                                     parts={lastNestPayload.parts}
                                     sheetplacements={
                                       displayedNestResult.placements[
@@ -3182,6 +3384,22 @@ export default function NestRemnantsPage() {
                               placement{" "}
                               {String(lastNestPayload.config.placementType)}
                             </span>
+                            {typeof lastNestPayload.config.nestStrategy ===
+                              "string" && (
+                              <span>
+                                strategy{" "}
+                                {String(lastNestPayload.config.nestStrategy)}
+                              </span>
+                            )}
+                            {typeof lastNestPayload.config.gridStampsPlaced ===
+                              "number" && (
+                              <span title="Production grid: module copies placed.">
+                                grid stamps{" "}
+                                {String(lastNestPayload.config.gridStampsPlaced)}
+                                /
+                                {String(lastNestPayload.config.gridCapacity ?? "—")}
+                              </span>
+                            )}
                             <span>
                               merge{" "}
                               {lastNestPayload.config.mergeLines ? "on" : "off"}
@@ -3706,6 +3924,37 @@ export default function NestRemnantsPage() {
                       </button>
                     </div>
 
+                    <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+                      <span className="text-xs font-medium text-zinc-400">
+                        <NestLabelWithHelp
+                          fieldId="nestStrategy"
+                          disabled={nestLoading}
+                        >
+                          Strategy
+                        </NestLabelWithHelp>
+                      </span>
+                      <select
+                        value={nestUiSettings.nestStrategy}
+                        disabled={nestLoading}
+                        onChange={(e) =>
+                          setNestUiSettings((s) => ({
+                            ...s,
+                            nestStrategy: e.target.value as
+                              | "auto"
+                              | "production_batch"
+                              | "tight",
+                          }))
+                        }
+                        className="w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-800/80 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 sm:max-w-xs"
+                        aria-label="Nesting strategy"
+                      >
+                        <option value="auto">Auto</option>
+                        <option value="production_batch">
+                          Production (grid)
+                        </option>
+                        <option value="tight">Tight (full search)</option>
+                      </select>
+                    </div>
                   </div>
                   <div className="flex flex-col gap-2 border-t border-zinc-800/80 pt-3">
                     <div className="flex flex-wrap items-center gap-2">

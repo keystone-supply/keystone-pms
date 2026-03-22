@@ -1,3 +1,5 @@
+import type { NestStrategyMode } from "@/lib/nestStrategy";
+
 export type NestPlacementType = "gravity" | "box" | "convexhull";
 
 /** Fields edited in the Nest tab; persisted to localStorage (subset). */
@@ -33,6 +35,12 @@ export interface NestUiSettings {
    * calls NestNow directly (CORS). Empty string uses Next.js `/api/nest` proxy.
    */
   directNestNowUrl: string;
+  /**
+   * auto: grid when many copies + rect sheet; full GA/NFP for irregular sheets or small batches.
+   * production_batch: module + grid on rect or polygon sheet when possible.
+   * tight: always full NestNow job with part quantities as given.
+   */
+  nestStrategy: NestStrategyMode;
 }
 
 export const NEST_ROTATION_OPTIONS = [1, 2, 4, 8, 16] as const;
@@ -67,6 +75,7 @@ export const DEFAULT_NEST_UI_SETTINGS: NestUiSettings = {
   /** 1 hour — matches NestNow / UI max per evaluation. */
   requestTimeoutSec: 3600,
   directNestNowUrl: "",
+  nestStrategy: "auto",
 };
 
 /** Fast smoke nest: fewer rotations, single GA generation, small population. */
@@ -81,6 +90,14 @@ export const NEST_PRESET_PREVIEW_FIELDS: Partial<NestUiSettings> = {
 export const NEST_PRESET_FINAL_FIELDS: Partial<NestUiSettings> = {
   populationSize: 100,
   gaGenerations: 100,
+  attempts: 1,
+  rotations: 4,
+};
+
+/** Module-only nest before grid expansion (NestNow defaults–scale GA). */
+export const NEST_PRESET_MODULE_FIELDS: Partial<NestUiSettings> = {
+  populationSize: 10,
+  gaGenerations: 3,
   attempts: 1,
   rotations: 4,
 };
@@ -148,6 +165,11 @@ export function loadNestUiSettings(): NestUiSettings {
       typeof merged.directNestNowUrl === "string"
         ? merged.directNestNowUrl
         : DEFAULT_NEST_UI_SETTINGS.directNestNowUrl;
+    const strat = merged.nestStrategy;
+    merged.nestStrategy =
+      strat === "production_batch" || strat === "tight" || strat === "auto"
+        ? strat
+        : DEFAULT_NEST_UI_SETTINGS.nestStrategy;
     return merged;
   } catch {
     return DEFAULT_NEST_UI_SETTINGS;

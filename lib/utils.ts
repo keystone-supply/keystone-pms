@@ -99,7 +99,7 @@ export function parseRemnantDims(
   return { width, height };
 }
 
-// Mock for demo: Random polygon SVG path
+/** Trapezoid path for demos only — do not assign to real sheet `svg_path` or nesting will use this shape. */
 export function genMockSVG(width = 100, height = 50): string {
   const points = [
     [0, 0],

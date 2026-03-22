@@ -27,7 +27,8 @@ export type NestHelpFieldId =
   | "clipperScale"
   | "partStatsHeavy"
   | "loadingNoProgress"
-  | "advancedDefaults";
+  | "advancedDefaults"
+  | "nestStrategy";
 
 const nestAdvancedDefaultsHelp: ReactNode = (() => {
   const d = DEFAULT_NEST_UI_SETTINGS;
@@ -288,6 +289,24 @@ export const NEST_FIELD_HELP: Record<NestHelpFieldId, ReactNode> = {
     </>
   ),
   advancedDefaults: nestAdvancedDefaultsHelp,
+  nestStrategy: (
+    <>
+      <strong className="text-zinc-200">Auto</strong> uses a fast{" "}
+      <em>module + grid</em> path when you have many total copies, only a few
+      unique parts, and a rectangular sheet; irregular sheet outlines still use
+      the full NestNow search.
+      <br />
+      <br />
+      <strong className="text-zinc-200">Production (grid)</strong> always tries
+      module + grid on rectangular sheets, or grid with containment checks on
+      polygon sheets when possible.
+      <br />
+      <br />
+      <strong className="text-zinc-200">Tight (full search)</strong> sends all
+      part quantities through the full genetic / NFP nest (best for organic
+      shapes and dense packing).
+    </>
+  ),
 };
 
 export function NestFieldHelp({
