@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "db:push": "npx supabase db push",
-    "import:book1": "npx tsx scripts/import-book1.ts"
+    "import:book1": "npx tsx scripts/import-book1.ts",
+    "nest:estimate-payload": "node scripts/estimate-nest-payload-size.mjs"
   },
   "dependencies": {
     "@azure/identity": "^4.13.0",

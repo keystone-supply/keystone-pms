@@ -7,7 +7,11 @@ import {
   useRef,
   useMemo,
   useCallback,
+  forwardRef,
+  useImperativeHandle,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type Ref,
 } from "react";
 import { createPortal } from "react-dom";
 import { signIn, signOut, useSession } from "next-auth/react";
@@ -30,6 +34,9 @@ import {
   LayoutGrid,
   Table2,
   Percent,
+  RotateCcw,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
@@ -63,10 +70,21 @@ import {
   saveNestUiSettings,
   buildApiNestConfig,
   clampNestRequestTimeoutSec,
+  nestNowEndpoints,
+  NEST_PRESET_FINAL_FIELDS,
+  NEST_PRESET_PREVIEW_FIELDS,
   NEST_REQUEST_TIMEOUT_SEC_MAX,
   NEST_REQUEST_TIMEOUT_SEC_MIN,
   NEST_ROTATION_OPTIONS,
+  sanitizeDirectNestNowUrl,
 } from "@/lib/nestPayload";
+import { NestFieldHelp, NestLabelWithHelp } from "@/lib/nestHelp";
+
+/** UI caps for advanced nest fields (keep in sync with inputs and `handleGenerateNest`). */
+const NEST_UI_MAX_SEPARATE_ATTEMPTS = 30;
+const NEST_UI_MAX_POPULATION_SIZE = 100000;
+const NEST_UI_MAX_MUTATION_RATE = 1000;
+const NEST_UI_MAX_GA_GENERATIONS = 100000;
 
 type SheetPlacement = {
   filename?: string;
@@ -83,7 +101,487 @@ type NestResult = {
   mergedLength: number;
   utilisation: number;
   placements: { sheet: number; sheetid: unknown; sheetplacements: SheetPlacement[] }[];
+  /** Top alternative layouts from one NestNow run (lower fitness is better); index 0 matches top-level fields. */
+  candidates?: NestResult[];
 };
+
+/** `/api/nest` may add these for debugging timeouts (see `app/api/nest/route.ts`). */
+type NestApiResponse = NestResult &
+  Partial<{
+    error: string;
+    /** Technical detail for IT; safe to show in an expandable panel. */
+    adminHint: string;
+    proxyDurationMs: number;
+    nestNowHttpStatus: number;
+    stage: string;
+    /** NestNow server mode: timeout | no_layout | placement_failed | stopped | exception */
+    failureKind: string;
+    /** Wall time for the NestNow /nest job (ms), from NestNow JSON. */
+    nestNowDurationMs: number;
+    /** Layout evaluations run in the failed NestNow job (GA or single). */
+    evalCount: number;
+    populationSize: number;
+    gaGenerations: number;
+    /** Last worker error string from a failed evaluation (NestNow 500). */
+    lastEvalError: string;
+    /** Progress snapshot when the job failed without a final layout (rare). */
+    bestEffort: NestResult;
+  }>;
+
+function stripNestApiDiagnostics(raw: NestApiResponse): NestResult {
+  const {
+    proxyDurationMs: _p,
+    nestNowHttpStatus: _n,
+    stage: _s,
+    error: _e,
+    adminHint: _ah,
+    failureKind: _fk,
+    nestNowDurationMs: _nnd,
+    evalCount: _ec,
+    populationSize: _ps,
+    gaGenerations: _gg,
+    lastEvalError: _lee,
+    bestEffort: _be,
+    candidates: rawCandidates,
+    ...nest
+  } = raw;
+  const out = nest as NestResult;
+  if (Array.isArray(rawCandidates) && rawCandidates.length > 0) {
+    out.candidates = rawCandidates.map((c) => {
+      const row = c as NestApiResponse;
+      const {
+        proxyDurationMs: __p,
+        nestNowHttpStatus: __n,
+        stage: __s,
+        error: __e,
+        adminHint: __ah,
+        failureKind: __fk,
+        nestNowDurationMs: __nnd,
+        evalCount: __ec,
+        populationSize: __ps,
+        gaGenerations: __gg,
+        lastEvalError: __lee,
+        bestEffort: __be,
+        candidates: __nested,
+        ...rest
+      } = row;
+      return rest as NestResult;
+    });
+  }
+  return out;
+}
+
+/** Context for IT quick read (path + browser-measured POST duration). */
+type NestFailureContext = {
+  nestPath: "direct" | "proxy";
+  clientRequestDurationMs?: number;
+  responseParseError?: string;
+};
+
+/** True when the server error is likely NestNow’s per-eval timeout, not a network/proxy cut. */
+function looksLikeNestEvalTimeoutMessage(message: string): boolean {
+  const m = message.toLowerCase().trim();
+  if (
+    m.includes("connection") ||
+    m.includes("network") ||
+    m.includes("econnrefused") ||
+    m.includes("failed to fetch") ||
+    m.includes("load failed")
+  ) {
+    return false;
+  }
+  // Legacy generic NestNow 500 copy — not a real timeout signal
+  if (m === "nesting failed or timed out") return false;
+  if (m.includes("nesting timed out")) return true;
+  if (m.includes("nest request timed out")) return true;
+  if (/\btimed out after\b/.test(m)) return true;
+  return false;
+}
+
+function nestFailureIsFastNoSuccess(raw: NestApiResponse): boolean {
+  const fk =
+    typeof raw.failureKind === "string" ? raw.failureKind.trim() : "";
+  if (fk === "timeout" || fk === "stopped" || fk === "exception") {
+    return false;
+  }
+  const n = raw.nestNowDurationMs;
+  if (typeof n !== "number" || !Number.isFinite(n) || n >= 8000) {
+    return false;
+  }
+  return fk === "no_layout" || fk === "placement_failed";
+}
+
+function formatProxyDurationForIt(ms: number): string {
+  const n = Math.max(0, ms);
+  const sec = n / 1000;
+  const secLabel = sec < 10 ? sec.toFixed(2) : sec.toFixed(1);
+  return `${Math.round(n)} ms (~${secLabel}s)`;
+}
+
+function proxyDurationFailureBucket(
+  ms: number | undefined,
+): "unknown" | "instant" | "mid" | "hosting60" | "veryLong" {
+  if (ms == null || !Number.isFinite(ms)) return "unknown";
+  if (ms < 3000) return "instant";
+  if (ms >= 55_000 && ms <= 75_000) return "hosting60";
+  if (ms >= 3500 * 1000) return "veryLong";
+  return "mid";
+}
+
+function nestTimingHintLines(
+  labelMs: number,
+  forProxyPath: boolean,
+): string[] {
+  const bucket = proxyDurationFailureBucket(labelMs);
+  if (bucket === "instant") {
+    return [
+      `Timing (${forProxyPath ? "proxy" : "client"}): instant/sub‑3s (not a ~60s proxy cut — check NestNow up, 503 worker race, or payload 400).`,
+    ];
+  }
+    if (bucket === "hosting60") {
+    return [
+      `Timing (${forProxyPath ? "proxy" : "client"}): ~60s window — often reverse-proxy/hosting read timeout${
+        forProxyPath ? " on /api/nest" : " (browser clock; compare proxyDurationMs when using app proxy)"
+      }.`,
+    ];
+  }
+  if (bucket === "veryLong") {
+    return [
+      `Timing (${forProxyPath ? "proxy" : "client"}): very long — near max serverless route duration or huge nest run.`,
+    ];
+  }
+  if (bucket === "mid") {
+    return [
+      `Timing (${forProxyPath ? "proxy" : "client"}): mid — NestNow ran a while before failing.`,
+    ];
+  }
+  return [];
+}
+
+/** Structured lines for “Details for IT” (timing bucket, status codes, proxy ms). */
+function buildNestItQuickRead(
+  res: Response,
+  raw: NestApiResponse,
+  ctx: NestFailureContext,
+): string {
+  const lines: string[] = ["--- IT quick read ---"];
+  lines.push(
+    ctx.nestPath === "direct"
+      ? "Nest request path: direct (browser → NestNow; no Next.js proxy)"
+      : "Nest request path: app proxy (browser → /api/nest → NestNow)",
+  );
+  lines.push(`Client HTTP status: ${res.status}`);
+
+  if (ctx.responseParseError) {
+    lines.push(
+      `Response body: not valid JSON (${ctx.responseParseError}) — often HTML error page from host/proxy.${
+        res.ok ? " Unexpected on HTTP 200." : ""
+      }`,
+    );
+  }
+
+  const cr = ctx.clientRequestDurationMs;
+  if (typeof cr === "number" && Number.isFinite(cr)) {
+    lines.push(`clientRequestDurationMs: ${formatProxyDurationForIt(cr)}`);
+    lines.push(...nestTimingHintLines(cr, false));
+  }
+
+  const nns = raw.nestNowHttpStatus;
+  if (typeof nns === "number" && Number.isFinite(nns)) {
+    lines.push(`NestNow upstream HTTP status: ${nns}`);
+  }
+
+  const fk =
+    typeof raw.failureKind === "string" && raw.failureKind.trim()
+      ? raw.failureKind.trim()
+      : "";
+  if (fk) {
+    lines.push(`failureKind: ${fk}`);
+  }
+
+  const nnd = raw.nestNowDurationMs;
+  if (typeof nnd === "number" && Number.isFinite(nnd)) {
+    lines.push(`nestNowDurationMs: ${formatProxyDurationForIt(nnd)}`);
+  }
+
+  const pdm = raw.proxyDurationMs;
+  if (typeof pdm === "number" && Number.isFinite(pdm)) {
+    lines.push(`proxyDurationMs: ${formatProxyDurationForIt(pdm)}`);
+    const bucket = proxyDurationFailureBucket(pdm);
+    if (bucket === "instant") {
+      lines.push(
+        "Timing (proxy): instant/sub‑3s (not a ~60s proxy cut — check NestNow up, 503 worker race, or payload 400).",
+      );
+    } else if (bucket === "hosting60") {
+      lines.push(
+        "Timing (proxy): ~60s window — often reverse-proxy/hosting read timeout on /api/nest.",
+      );
+    } else if (bucket === "veryLong") {
+      lines.push(
+        "Timing (proxy): very long — near max serverless route duration or huge nest run.",
+      );
+    } else if (bucket === "mid") {
+      lines.push("Timing (proxy): mid — NestNow ran a while before failing.");
+    }
+  } else {
+    lines.push(
+      "proxyDurationMs: (not reported — direct NestNow, Next connect error without JSON, or non-JSON error body)",
+    );
+  }
+
+  if (typeof raw.stage === "string" && raw.stage.trim()) {
+    lines.push(`stage: ${raw.stage.trim()}`);
+  }
+
+  if (typeof raw.evalCount === "number" && Number.isFinite(raw.evalCount)) {
+    lines.push(`evalCount: ${raw.evalCount}`);
+  }
+  if (
+    typeof raw.populationSize === "number" &&
+    Number.isFinite(raw.populationSize)
+  ) {
+    lines.push(`populationSize: ${raw.populationSize}`);
+  }
+  if (
+    typeof raw.gaGenerations === "number" &&
+    Number.isFinite(raw.gaGenerations)
+  ) {
+    lines.push(`gaGenerations: ${raw.gaGenerations}`);
+  }
+  if (
+    typeof raw.lastEvalError === "string" &&
+    raw.lastEvalError.trim().length > 0
+  ) {
+    lines.push(`lastEvalError: ${raw.lastEvalError.trim()}`);
+  }
+  if (
+    raw.bestEffort &&
+    typeof raw.bestEffort === "object" &&
+    Array.isArray(raw.bestEffort.placements) &&
+    raw.bestEffort.placements.length > 0
+  ) {
+    lines.push(
+      "bestEffort: present (partial layout in JSON — check network response)",
+    );
+  }
+
+  lines.push("---------------------");
+  return lines.join("\n");
+}
+
+/** Proxy / NestNow job timing for IT (supplements quick read; failureKind is only in quick read). */
+function buildNestAdminDiagnostics(
+  proxyDurationMs?: number,
+  nestNowDurationMs?: number,
+): string {
+  const parts: string[] = [];
+  if (proxyDurationMs != null && Number.isFinite(proxyDurationMs)) {
+    const ms = Math.max(0, proxyDurationMs);
+    const sec = ms / 1000;
+    const durationLabel =
+      ms < 1000
+        ? `${sec.toFixed(2)}s`
+        : ms < 10_000
+          ? `${sec.toFixed(1)}s`
+          : `${sec.toFixed(0)}s`;
+    let tail = `Next.js proxy duration ${durationLabel}`;
+    if (ms >= 55_000 && ms <= 75_000) {
+      tail += " (often a ~60s reverse-proxy or hosting limit)";
+    } else if (ms >= 3500 * 1000) {
+      tail +=
+        " (near max route duration — reduce search settings or raise platform limits)";
+    } else if (ms > 0 && ms < 3000) {
+      tail += " (instant failure — not NestNow’s long eval timeout)";
+    }
+    parts.push(tail);
+  }
+  if (nestNowDurationMs != null && Number.isFinite(nestNowDurationMs)) {
+    const s = nestNowDurationMs / 1000;
+    const label = s < 10 ? s.toFixed(2) : s.toFixed(1);
+    parts.push(`NestNow job wall time ~${label}s (nestNowDurationMs)`);
+  }
+  return parts.join(" · ");
+}
+
+/** Human-readable cap for one NestNow layout evaluation (matches requestTimeoutSec). */
+function formatNestMaxEvalTime(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  if (s >= 3600) {
+    const h = Math.floor(s / 3600);
+    const m = Math.round((s % 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+  if (s >= 60) {
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return r > 0 ? `${m}m ${r}s` : `${m} min`;
+  }
+  return `${s}s`;
+}
+
+function parseNestFailure(
+  res: Response,
+  raw: NestApiResponse,
+  ctx: NestFailureContext,
+): { userMessage: string; adminDetail: string } {
+  const base =
+    typeof raw.error === "string"
+      ? raw.error
+      : res.statusText || "Nesting failed";
+
+  let userMessage = base;
+  if (res.status === 503) {
+    userMessage = base.trim().length
+      ? `${base.trim()} Try Generate Nest again in a moment.`
+      : "The nesting service is busy or still starting. Try Generate Nest again in a moment.";
+  } else {
+    const fastNoSuccess = nestFailureIsFastNoSuccess(raw);
+    if (!fastNoSuccess && looksLikeNestEvalTimeoutMessage(base)) {
+      userMessage = `${base} You can raise “Max time per layout try” under More tuning, or use a simpler Preview preset.`;
+    }
+    if (raw.failureKind === "timeout") {
+      userMessage = `${userMessage} (NestNow reported timeout — increase “Max time per layout try” or simplify the job.)`;
+    }
+    if (fastNoSuccess) {
+      userMessage = `${userMessage} NestNow finished this attempt in under a few seconds (see nestNowDurationMs in Details for IT) — that usually means no valid layout was found, not a long timeout.`;
+    }
+    const pdm = raw.proxyDurationMs;
+    if (typeof pdm === "number" && pdm >= 55_000 && pdm <= 75_000) {
+      userMessage = `${userMessage} If you use the app proxy, a ~60s hosting limit may be cutting off /api/nest — try Direct NestNow (localhost) or ask IT to raise the proxy read timeout.`;
+    }
+    const cr = ctx.clientRequestDurationMs;
+    if (
+      ctx.nestPath === "proxy" &&
+      typeof cr === "number" &&
+      cr >= 55_000 &&
+      cr <= 75_000 &&
+      !(typeof pdm === "number" && pdm >= 55_000 && pdm <= 75_000)
+    ) {
+      userMessage = `${userMessage} Client saw ~60s — likely a hosting/proxy read timeout on /api/nest; ask IT to raise the limit or use Direct NestNow.`;
+    }
+  }
+
+  const quick = buildNestItQuickRead(res, raw, ctx);
+  const diag = buildNestAdminDiagnostics(
+    raw.proxyDurationMs,
+    raw.nestNowDurationMs,
+  );
+  const hint =
+    typeof raw.adminHint === "string" && raw.adminHint.trim().length > 0
+      ? raw.adminHint.trim()
+      : base;
+  const adminDetail = [quick, hint, diag].filter(Boolean).join("\n\n");
+  return { userMessage, adminDetail };
+}
+
+/** Only retry another full attempt on likely-transient gateway errors. */
+function shouldAbortMultiAttemptNest(status: number): boolean {
+  if (status === 502 || status === 504) return false;
+  return status >= 400;
+}
+
+/**
+ * When using multiple “Separate full attempts”, keep going after NestNow 500
+ * for no_layout / placement_failed (same idea as clicking Generate again).
+ */
+function shouldRetryNestOnRecoverableFailure(
+  status: number,
+  raw: NestApiResponse,
+  attempt: number,
+  maxAttempts: number,
+): boolean {
+  if (attempt >= maxAttempts) return false;
+  if (status !== 500) return false;
+  const fk =
+    typeof raw.failureKind === "string" ? raw.failureKind.trim() : "";
+  return fk === "no_layout" || fk === "placement_failed";
+}
+
+/** Small jitter before another full /nest POST so we don’t hammer the worker. */
+const NEST_RETRY_BACKOFF_MIN_MS = 120;
+const NEST_RETRY_BACKOFF_EXTRA_MS = 380;
+
+const NEST_POST_503_MAX_TRIES = 5;
+const NEST_POST_503_BACKOFF_MS = [400, 800, 1200, 2000, 3200];
+/** Keep loading UI visible at least this long so fast failures still show a spinner (ms). */
+const NEST_LOADING_MIN_VISIBLE_MS = 480;
+
+/**
+ * POST /nest with retries for transient 503 (worker recycling / “still in progress”).
+ * On 503, optionally POST /stop to clear NestNow, then exponential backoff — avoids
+ * racing /nest immediately after /stop recreates the Electron worker.
+ */
+async function postNestWith503Retry(
+  nestUrl: string,
+  payloadObj: object,
+  stopUrl?: string,
+): Promise<Response> {
+  const body = JSON.stringify(payloadObj);
+  const init: RequestInit = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  };
+
+  let lastRes: Response | null = null;
+  for (let i = 0; i < NEST_POST_503_MAX_TRIES; i++) {
+    lastRes = await fetch(nestUrl, init);
+    if (lastRes.status !== 503) {
+      return lastRes;
+    }
+    if (i < NEST_POST_503_MAX_TRIES - 1) {
+      await lastRes.text().catch(() => {});
+      if (stopUrl) {
+        try {
+          await fetch(stopUrl, { method: "POST" });
+        } catch {
+          /* ignore */
+        }
+      }
+      const delayMs = NEST_POST_503_BACKOFF_MS[i] ?? 400;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  return lastRes!;
+}
+
+type NestProgressApi = {
+  busy?: boolean;
+  placement?: { index: number; progress: number } | null;
+  ga?: {
+    gen: number;
+    generations: number;
+    idx: number;
+    pop: number;
+    evalCount: number;
+  } | null;
+  /** Genetic search: best layout so far this HTTP job (same core fields as POST /nest). */
+  bestSoFar?: NestResult | null;
+  /** Server-reported progress timestamp (ms); from NestNow GET /progress. */
+  updatedAt?: number;
+};
+
+function formatNestProgressFromApi(p: NestProgressApi): string | null {
+  if (!p.busy) return null;
+  const pl = p.placement;
+  if (pl && typeof pl.progress === "number") {
+    const prog = pl.progress;
+    if (prog < 0) return "Finishing…";
+    if (prog < 0.5) {
+      const pct = Math.min(100, Math.round((prog / 0.5) * 100));
+      return `NFP / prep ~${pct}%`;
+    }
+    const pct = Math.min(100, Math.round(((prog - 0.5) / 0.5) * 100));
+    return `Placing parts ~${pct}%`;
+  }
+  const g = p.ga;
+  if (g && typeof g.gen === "number" && typeof g.generations === "number") {
+    return `Search gen ${g.gen + 1}/${g.generations} · layout ${(g.idx ?? 0) + 1}/${g.pop ?? "?"}${
+      typeof g.evalCount === "number" ? ` (#${g.evalCount})` : ""
+    }`;
+  }
+  return "Starting…";
+}
 
 type NestApiPartPayload = {
   outline: { x: number; y: number }[];
@@ -94,26 +592,130 @@ type NestApiPartPayload = {
 };
 
 type LastNestPayload = {
+  /** Sent to NestNow: `width` = length_in (x), `height` = width_in (y). */
   sheets: { width: number; height: number }[];
   parts: NestApiPartPayload[];
   config: Record<string, string | number | boolean>;
   attemptsUsed: number;
 };
 
-// Semi-transparent fills and distinct strokes so parts are visible and distinguishable (plan: cyan/purple/amber by index)
+// Semi-transparent fills and distinct strokes so parts are visible and distinguishable (plan: cyan/purple/amber by index).
+// Colors are ~50% desaturated (blend toward luminance) so preview shading reads softer than the UI accent palette.
 const PART_FILLS = [
-  "rgba(34, 211, 238, 0.35)",
-  "rgba(168, 85, 247, 0.35)",
-  "rgba(245, 158, 11, 0.35)",
-  "rgba(34, 197, 94, 0.35)",
-  "rgba(239, 68, 68, 0.35)",
+  "rgba(98, 186, 200, 0.35)",
+  "rgba(148, 107, 188, 0.35)",
+  "rgba(206, 163, 89, 0.35)",
+  "rgba(86, 167, 116, 0.35)",
+  "rgba(179, 94, 94, 0.35)",
 ];
-const PART_STROKES = ["rgb(34, 211, 238)", "rgb(168, 85, 247)", "rgb(245, 158, 11)", "rgb(34, 197, 94)", "rgb(239, 68, 68)"];
+const PART_STROKES = [
+  "rgb(98, 186, 200)",
+  "rgb(148, 107, 188)",
+  "rgb(206, 163, 89)",
+  "rgb(86, 167, 116)",
+  "rgb(179, 94, 94)",
+];
 
-// Subdued sheet border so nested parts stand out; thin stroke, muted color
+// Subdued sheet border so nested parts stand out; muted color
 const SHEET_STROKE = "rgb(255, 255, 255)"; // zinc-500
-const SHEET_STROKE_WIDTH = 0.03;
+/** Viewport pixels; used with vectorEffect non-scaling-stroke so edges stay thin when zoomed. */
+const NEST_PREVIEW_VECTOR_STROKE_PX = 1.25;
 const VIEW_PADDING = 3; // space between viewBox edge and remnant
+const NEST_PREVIEW_ZOOM_MIN = 1;
+const NEST_PREVIEW_ZOOM_MAX = 32;
+/**
+ * NestNow rectSheet: API `width` = horizontal (x), `height` = vertical (y), origin bottom-left, y up.
+ * We send length_in as `width` and width_in as `height` so the long side matches Nest’s x-axis and the preview.
+ * Preview: flip y only (y ↦ sheetHeight − y) so (0,0) reads as bottom-left on screen.
+ */
+/** Aspect-ratio frame for nest SVG; min height for empty states; max respects parent then viewport. */
+const NEST_PREVIEW_FRAME_CLASS =
+  "relative h-auto w-full min-w-0 min-h-[140px] max-h-[min(100%,min(840px,120dvh))] overflow-hidden";
+
+function clampNestPreviewPan(
+  panX: number,
+  panY: number,
+  zoom: number,
+  worldW: number,
+  worldH: number,
+) {
+  const vbW = worldW / zoom;
+  const vbH = worldH / zoom;
+  const maxX = Math.max(0, worldW - vbW);
+  const maxY = Math.max(0, worldH - vbH);
+  return {
+    panX: Math.min(maxX, Math.max(0, panX)),
+    panY: Math.min(maxY, Math.max(0, panY)),
+  };
+}
+
+type NestPreviewPart = {
+  outline: { x: number; y: number }[];
+  holes?: { x: number; y: number }[][];
+  filename?: string;
+};
+
+/** Union of sheet rect and all placed part geometry in preview coordinates. */
+function computeNestPreviewWorld(
+  sw: number,
+  sh: number,
+  parts: NestPreviewPart[],
+  sheetplacements: SheetPlacement[],
+): { worldW: number; worldH: number; innerTf: string } {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  /** Nest y-up → on-screen y-down (same x). */
+  const toPreview = (x: number, y: number) => ({
+    x,
+    y: sh - y,
+  });
+
+  const expand = (pts: { x: number; y: number }[]) => {
+    for (const pt of pts) {
+      if (!Number.isFinite(pt.x) || !Number.isFinite(pt.y)) continue;
+      const q = toPreview(pt.x, pt.y);
+      minX = Math.min(minX, q.x);
+      maxX = Math.max(maxX, q.x);
+      minY = Math.min(minY, q.y);
+      maxY = Math.max(maxY, q.y);
+    }
+  };
+
+  expand([
+    { x: 0, y: 0 },
+    { x: sw, y: 0 },
+    { x: sw, y: sh },
+    { x: 0, y: sh },
+  ]);
+
+  for (const p of sheetplacements) {
+    if (!p || typeof p.source !== "number") continue;
+    const part = parts[p.source];
+    const outline = part?.outline;
+    if (!outline || outline.length < 3) continue;
+    const rot = p.rotation ?? 0;
+    const px = p.x ?? 0;
+    const py = p.y ?? 0;
+    expand(placeOutline(outline, rot, px, py));
+    const holes = part.holes;
+    if (holes?.length) {
+      const placedHoles = placeHoles(holes, rot, px, py);
+      for (const loop of placedHoles) {
+        expand(loop);
+      }
+    }
+  }
+
+  const pad = VIEW_PADDING;
+  const worldW = Math.max(1e-6, maxX - minX + 2 * pad);
+  const worldH = Math.max(1e-6, maxY - minY + 2 * pad);
+  const flipY = `matrix(1,0,0,-1,0,${sh})`;
+  const innerTf = `translate(${pad - minX}, ${pad - minY}) ${flipY}`;
+  return { worldW, worldH, innerTf };
+}
 
 /** Selectable mini schematics for layout goal: gravity (width-heavy), box AABB, convex hull. */
 function PlacementTypeVisuals({
@@ -161,8 +763,8 @@ function PlacementTypeVisuals({
     );
   };
 
-  const partFill = "rgba(34, 211, 238, 0.35)";
-  const partStroke = "rgb(34, 211, 238)";
+  const partFill = "rgba(98, 186, 200, 0.35)";
+  const partStroke = "rgb(98, 186, 200)";
   const mute = "rgba(161, 161, 170, 0.55)";
   const accent = "rgb(244, 114, 182)";
 
@@ -247,44 +849,254 @@ function PlacementTypeVisuals({
   );
 }
 
-function NestPreviewSVG({
-  sheetWidth,
-  sheetHeight,
-  parts,
-  sheetplacements,
-}: {
-  sheetWidth: number;
-  sheetHeight: number;
-  parts: { outline: { x: number; y: number }[]; holes?: { x: number; y: number }[][]; filename?: string }[];
-  sheetplacements: SheetPlacement[];
-}) {
-  /** Display-only: show stock length (nest Y / payload height) left–right; nesting math unchanged. */
-  const previewW = sheetHeight + 2 * VIEW_PADDING;
-  const previewH = sheetWidth + 2 * VIEW_PADDING;
-  const innerTf = `translate(${VIEW_PADDING}, ${VIEW_PADDING}) scale(1, -1) translate(0, -${sheetWidth})`;
-  const mapPt = (x: number, y: number) => `${y},${x}`;
+type NestPreviewZoomableHandle = {
+  resetView: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
+};
+
+const NestPreviewZoomable = forwardRef(function NestPreviewZoomable(
+  {
+    sheetWidth,
+    sheetHeight,
+    parts,
+    sheetplacements,
+  }: {
+    sheetWidth: number;
+    sheetHeight: number;
+    parts: NestPreviewPart[];
+    sheetplacements: SheetPlacement[];
+  },
+  ref: Ref<NestPreviewZoomableHandle>,
+) {
+  const sw = Math.max(1e-6, Number(sheetWidth) || 96);
+  const sh = Math.max(1e-6, Number(sheetHeight) || 48);
+  const { worldW, worldH, innerTf } = useMemo(
+    () => computeNestPreviewWorld(sw, sh, parts, sheetplacements),
+    [sw, sh, parts, sheetplacements],
+  );
+  const [view, setView] = useState({
+    zoom: NEST_PREVIEW_ZOOM_MIN,
+    panX: 0,
+    panY: 0,
+  });
+  const svgRef = useRef<SVGSVGElement>(null);
+  const interactionRef = useRef({
+    zoom: NEST_PREVIEW_ZOOM_MIN,
+    panX: 0,
+    panY: 0,
+    worldW: 1,
+    worldH: 1,
+  });
+  const viewRef = useRef(view);
+  const dragRef = useRef<{
+    pointerId: number;
+    panStart: { x: number; y: number };
+    worldStart: { x: number; y: number };
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    viewRef.current = view;
+    interactionRef.current = {
+      zoom: view.zoom,
+      panX: view.panX,
+      panY: view.panY,
+      worldW,
+      worldH,
+    };
+  }, [view, worldW, worldH]);
+
+  /** Reset camera when stock or computed scene bounds change. */
+  useLayoutEffect(() => {
+    setView({ zoom: NEST_PREVIEW_ZOOM_MIN, panX: 0, panY: 0 });
+  }, [sheetWidth, sheetHeight, worldW, worldH]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      resetView: () =>
+        setView({ zoom: NEST_PREVIEW_ZOOM_MIN, panX: 0, panY: 0 }),
+      zoomIn: () => {
+        setView((prev) => {
+          const z0 = prev.zoom;
+          const z1 = Math.min(
+            NEST_PREVIEW_ZOOM_MAX,
+            Math.max(NEST_PREVIEW_ZOOM_MIN, z0 * 1.25),
+          );
+          if (z1 === z0) return prev;
+          const oldVbW = worldW / z0;
+          const oldVbH = worldH / z0;
+          const newVbW = worldW / z1;
+          const newVbH = worldH / z1;
+          const cx = prev.panX + oldVbW / 2;
+          const cy = prev.panY + oldVbH / 2;
+          const c = clampNestPreviewPan(
+            cx - newVbW / 2,
+            cy - newVbH / 2,
+            z1,
+            worldW,
+            worldH,
+          );
+          return { zoom: z1, panX: c.panX, panY: c.panY };
+        });
+      },
+      zoomOut: () => {
+        setView((prev) => {
+          const z0 = prev.zoom;
+          const z1 = Math.min(
+            NEST_PREVIEW_ZOOM_MAX,
+            Math.max(NEST_PREVIEW_ZOOM_MIN, z0 / 1.25),
+          );
+          if (z1 === z0) return prev;
+          const oldVbW = worldW / z0;
+          const oldVbH = worldH / z0;
+          const newVbW = worldW / z1;
+          const newVbH = worldH / z1;
+          const cx = prev.panX + oldVbW / 2;
+          const cy = prev.panY + oldVbH / 2;
+          const c = clampNestPreviewPan(
+            cx - newVbW / 2,
+            cy - newVbH / 2,
+            z1,
+            worldW,
+            worldH,
+          );
+          return { zoom: z1, panX: c.panX, panY: c.panY };
+        });
+      },
+    }),
+    [worldW, worldH],
+  );
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const iv = interactionRef.current;
+      const { zoom: z0, panX: px0, panY: py0, worldW: pw, worldH: ph } = iv;
+      const oldVbW = pw / z0;
+      const oldVbH = ph / z0;
+
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX;
+      pt.y = e.clientY;
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return;
+      const loc = pt.matrixTransform(ctm.inverse());
+      const sx = loc.x;
+      const sy = loc.y;
+
+      const direction = e.deltaY > 0 ? -1 : 1;
+      const factor = direction > 0 ? 1 / 1.12 : 1.12;
+      const z1 = Math.min(
+        NEST_PREVIEW_ZOOM_MAX,
+        Math.max(NEST_PREVIEW_ZOOM_MIN, z0 * factor),
+      );
+      if (z1 === z0) return;
+
+      const newVbW = pw / z1;
+      const newVbH = ph / z1;
+      const fracX = (sx - px0) / oldVbW;
+      const fracY = (sy - py0) / oldVbH;
+      const px1 = sx - fracX * newVbW;
+      const py1 = sy - fracY * newVbH;
+      const c = clampNestPreviewPan(px1, py1, z1, pw, ph);
+      setView({ zoom: z1, panX: c.panX, panY: c.panY });
+    };
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
+  }, []);
+
+  const clientToSvg = useCallback((clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return { x: 0, y: 0 };
+    const loc = pt.matrixTransform(ctm.inverse());
+    return { x: loc.x, y: loc.y };
+  }, []);
+
+  const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (viewRef.current.zoom <= NEST_PREVIEW_ZOOM_MIN) return;
+    if (e.button !== 0) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const u = clientToSvg(e.clientX, e.clientY);
+    dragRef.current = {
+      pointerId: e.pointerId,
+      panStart: { x: viewRef.current.panX, y: viewRef.current.panY },
+      worldStart: u,
+    };
+  };
+
+  const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const u = clientToSvg(e.clientX, e.clientY);
+    const v = viewRef.current;
+    const nextPanX = d.panStart.x + (d.worldStart.x - u.x);
+    const nextPanY = d.panStart.y + (d.worldStart.y - u.y);
+    const c = clampNestPreviewPan(
+      nextPanX,
+      nextPanY,
+      v.zoom,
+      worldW,
+      worldH,
+    );
+    setView((prev) => ({ ...prev, panX: c.panX, panY: c.panY }));
+  };
+
+  const endDrag = (e: ReactPointerEvent<SVGSVGElement>) => {
+    const d = dragRef.current;
+    if (d && d.pointerId === e.pointerId) {
+      dragRef.current = null;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* already released */
+      }
+    }
+  };
+
+  const { zoom, panX, panY } = view;
+  const vbW = worldW / zoom;
+  const vbH = worldH / zoom;
+  const mapPt = (x: number, y: number) => `${x},${y}`;
+  const canPan = zoom > NEST_PREVIEW_ZOOM_MIN;
+
   return (
     <svg
-      viewBox={`0 0 ${previewW} ${previewH}`}
-      className="w-full h-full min-h-0"
+      ref={svgRef}
+      viewBox={`${panX} ${panY} ${vbW} ${vbH}`}
+      overflow="hidden"
+      className={`block h-full min-h-0 w-full ${canPan ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
       preserveAspectRatio="xMidYMid meet"
-      style={{ overflow: "visible" }}
+      style={{ touchAction: "none", overflow: "hidden" }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      role="img"
+      aria-label="Nest layout preview. Scroll to zoom, drag to pan when zoomed."
     >
       <g transform={innerTf}>
-        <rect
-          x={0}
-          y={0}
-          width={sheetHeight}
-          height={sheetWidth}
+        {/* NestNow sheet polygon (y-up): BL(0,0)→BR→TR→TL — not SVG <rect> (y-down) */}
+        <path
+          d={`M 0 0 L ${sw} 0 L ${sw} ${sh} L 0 ${sh} Z`}
           fill="none"
           stroke={SHEET_STROKE}
-          strokeWidth={SHEET_STROKE_WIDTH}
+          strokeWidth={NEST_PREVIEW_VECTOR_STROKE_PX}
+          vectorEffect="non-scaling-stroke"
         />
         {sheetplacements.map((p, idx) => {
           if (!p || typeof p.source !== "number") return null;
           const part = parts[p.source];
           const outline = part?.outline;
-          if (!outline || !Array.isArray(outline) || outline.length < 3) return null;
+          if (!outline || !Array.isArray(outline) || outline.length < 3)
+            return null;
           const rot = p.rotation ?? 0;
           const px = p.x ?? 0;
           const py = p.y ?? 0;
@@ -315,14 +1127,17 @@ function NestPreviewSVG({
               fillRule="evenodd"
               fill={fill}
               stroke={stroke}
-              strokeWidth={0.07}
+              strokeWidth={NEST_PREVIEW_VECTOR_STROKE_PX}
+              vectorEffect="non-scaling-stroke"
             />
           );
         })}
       </g>
     </svg>
   );
-}
+});
+
+NestPreviewZoomable.displayName = "NestPreviewZoomable";
 
 function SheetWireframe({
   lengthIn,
@@ -333,8 +1148,8 @@ function SheetWireframe({
   widthIn?: number;
   dims?: string;
 }) {
-  let w = widthIn;
-  let h = lengthIn;
+  let w = lengthIn;
+  let h = widthIn;
   if (!w || !h) {
     const parsed = parseRemnantDims(dims);
     w = parsed.width;
@@ -402,16 +1217,40 @@ export default function NestRemnantsPage() {
   const [selectedSheetIds, setSelectedSheetIds] = useState<string[]>([]);
   const [editingSheetId, setEditingSheetId] = useState<string | null>(null);
   const [nestResult, setNestResult] = useState<NestResult | null>(null);
+  /** Which layout from `nestResult.candidates` (or sole result) is shown in the preview. */
+  const [nestCandidateIndex, setNestCandidateIndex] = useState(0);
+  /** Live best layout from GET /progress while a nest HTTP request is in flight. */
+  const [nestLiveBestSoFar, setNestLiveBestSoFar] = useState<NestResult | null>(
+    null,
+  );
+  /** Sheets + parts for preview during nesting (same as request body). */
+  const [nestRunPreviewGeometry, setNestRunPreviewGeometry] = useState<{
+    sheets: { width: number; height: number }[];
+    parts: NestApiPartPayload[];
+  } | null>(null);
   const [nestError, setNestError] = useState<string | null>(null);
+  const [nestErrorAdmin, setNestErrorAdmin] = useState<string | null>(null);
   const [nestLoading, setNestLoading] = useState(false);
   const [nestProgressLabel, setNestProgressLabel] = useState<string | null>(null);
+  const [nestElapsedSec, setNestElapsedSec] = useState(0);
   const [lastNestPayload, setLastNestPayload] = useState<LastNestPayload | null>(null);
   const nestInFlightRef = useRef(false);
   const nestRunVersionRef = useRef(0);
+  /** Latest progress snapshot; read in `handleStopNest` so promotion is not stale. */
+  const nestLiveBestSoFarRef = useRef<NestResult | null>(null);
+  const nestRunPreviewGeometryRef = useRef<{
+    sheets: { width: number; height: number }[];
+    parts: NestApiPartPayload[];
+  } | null>(null);
+  const nestActiveEndpointsRef = useRef(
+    nestNowEndpoints(""),
+  );
   const [nestUiSettings, setNestUiSettings] = useState<NestUiSettings>(() =>
     loadNestUiSettings(),
   );
   const [nestAdvancedOpen, setNestAdvancedOpen] = useState(false);
+  const [nestGeometryOpen, setNestGeometryOpen] = useState(false);
+  const [nestAdminVisible, setNestAdminVisible] = useState(false);
   const filterPanelRef = useRef<HTMLDivElement>(null);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const filterDropdownRef = useRef<HTMLDivElement>(null);
@@ -438,6 +1277,9 @@ export default function NestRemnantsPage() {
   const [filterMaterial, setFilterMaterial] = useState<string>("");
   const [filterThickness, setFilterThickness] = useState<string>("");
   const [filterOpen, setFilterOpen] = useState(false);
+  const [nestSheetQuickFilter, setNestSheetQuickFilter] = useState("");
+  const [previewSheetIndex, setPreviewSheetIndex] = useState(0);
+  const nestPreviewRef = useRef<NestPreviewZoomableHandle>(null);
 
   const fetchOpenQuotesCount = useCallback(async () => {
     const { data, error } = await supabase
@@ -469,6 +1311,39 @@ export default function NestRemnantsPage() {
       ].sort((a, b) => parseFloat(a) - parseFloat(b)),
     [remnants],
   );
+
+  useEffect(() => {
+    if (!nestLoading) {
+      setNestElapsedSec(0);
+      return;
+    }
+    setNestElapsedSec(0);
+    const t = window.setInterval(() => {
+      setNestElapsedSec((s) => s + 1);
+    }, 1000);
+    return () => clearInterval(t);
+  }, [nestLoading]);
+
+  const nestDisplayTimeoutSec = useMemo(
+    () => clampNestRequestTimeoutSec(nestUiSettings.requestTimeoutSec),
+    [nestUiSettings.requestTimeoutSec],
+  );
+
+  const nestPartStats = useMemo(() => {
+    const rowCount = parts.length;
+    const expanded = parts.reduce(
+      (n, p) => n + Math.max(1, Math.floor(Number(p.quantity)) || 1),
+      0,
+    );
+    const vertexTotal = parts.reduce((n, p) => {
+      const holeVerts =
+        p.holes?.reduce((hn, hole) => hn + (hole?.length ?? 0), 0) ?? 0;
+      return n + (p.outline?.length ?? 0) + holeVerts;
+    }, 0);
+    const approxPairs =
+      expanded > 1 ? Math.round((expanded * (expanded - 1)) / 2) : 0;
+    return { rowCount, expanded, vertexTotal, approxPairs };
+  }, [parts]);
 
   function filterRemnants(list: Remnant[], query: string): Remnant[] {
     const q = query.trim().toLowerCase();
@@ -510,6 +1385,34 @@ export default function NestRemnantsPage() {
       return true;
     });
   }, [searchFiltered, filterMaterial, filterThickness]);
+
+  const nestQuickFilteredRemnants = useMemo(
+    () => filterRemnants(remnants, nestSheetQuickFilter),
+    [remnants, nestSheetQuickFilter],
+  );
+
+  useEffect(() => {
+    setPreviewSheetIndex(0);
+    setNestCandidateIndex(0);
+  }, [nestResult]);
+
+  useEffect(() => {
+    setPreviewSheetIndex(0);
+  }, [nestCandidateIndex]);
+
+  const nestCandidateOptions = useMemo((): NestResult[] => {
+    if (!nestResult) return [];
+    if (nestResult.candidates?.length) return nestResult.candidates;
+    return [nestResult];
+  }, [nestResult]);
+
+  const displayedNestResult =
+    nestCandidateOptions[
+      Math.min(
+        nestCandidateIndex,
+        Math.max(0, nestCandidateOptions.length - 1),
+      )
+    ] ?? null;
 
   useLayoutEffect(() => {
     if (!filterOpen) {
@@ -800,6 +1703,26 @@ export default function NestRemnantsPage() {
     saveNestUiSettings(nestUiSettings);
   }, [nestUiSettings]);
 
+  useEffect(() => {
+    nestLiveBestSoFarRef.current = nestLiveBestSoFar;
+  }, [nestLiveBestSoFar]);
+
+  useEffect(() => {
+    nestRunPreviewGeometryRef.current = nestRunPreviewGeometry;
+  }, [nestRunPreviewGeometry]);
+
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      setNestAdminVisible(
+        q.get("admin") === "1" ||
+          process.env.NEXT_PUBLIC_SHOW_NEST_ADMIN === "1",
+      );
+    } catch {
+      setNestAdminVisible(false);
+    }
+  }, []);
+
   function mapPartsToApiPayload(
     partList: PartShape[],
   ): NestApiPartPayload[] {
@@ -828,21 +1751,31 @@ export default function NestRemnantsPage() {
 
     if (!remnants.length) {
       setNestError("Add at least one sheet/remnant before nesting.");
+      setNestErrorAdmin(null);
       return;
     }
 
     if (!parts.length) {
       setNestError("Add at least one part before nesting.");
+      setNestErrorAdmin(null);
       return;
     }
 
     nestInFlightRef.current = true;
     const myVersion = ++nestRunVersionRef.current;
     setNestError(null);
+    setNestErrorAdmin(null);
     setNestResult(null);
     setLastNestPayload(null);
+    setNestCandidateIndex(0);
+    setNestLiveBestSoFar(null);
+    setNestRunPreviewGeometry(null);
     setNestLoading(true);
-    setNestProgressLabel(null);
+    setNestProgressLabel("Starting…");
+    const nestLoadStartedAt = Date.now();
+
+    const endpoints = nestNowEndpoints(nestUiSettings.directNestNowUrl);
+    nestActiveEndpointsRef.current = endpoints;
 
     const selectedRemnants = remnants.filter(
       (r) => r.db_id && selectedSheetIds.includes(r.db_id),
@@ -857,14 +1790,18 @@ export default function NestRemnantsPage() {
 
     const sheets = sheetsSource.map((r) => {
       if (r.width_in && r.length_in) {
-        return { width: r.width_in, height: r.length_in };
+        return { width: r.length_in, height: r.width_in };
       }
       const parsed = parseRemnantDims(r.dims);
+      // Dims string is "length×width"; parser puts first number in .width, second in .height.
       return { width: parsed.width, height: parsed.height };
     });
 
+    const nestPartsPayload = mapPartsToApiPayload(parts);
+    setNestRunPreviewGeometry({ sheets, parts: nestPartsPayload });
+
     const attempts = Math.min(
-      10,
+      NEST_UI_MAX_SEPARATE_ATTEMPTS,
       Math.max(1, Math.floor(nestUiSettings.attempts) || 1),
     );
     const apiConfig = buildApiNestConfig(nestUiSettings);
@@ -881,6 +1818,35 @@ export default function NestRemnantsPage() {
       requestTimeoutMs: number;
     } | null = null;
     let lastAttemptError: string | null = null;
+    let lastAttemptAdmin: string | null = null;
+    /** Which numbered attempt produced the layout kept in `bestResult` (for metadata). */
+    let successfulAttempt: number | null = null;
+
+    const progressTimer = window.setInterval(async () => {
+      if (nestRunVersionRef.current !== myVersion) return;
+      try {
+        const pr = await fetch(endpoints.progress, {
+          method: "GET",
+          cache: "no-store",
+        });
+        if (!pr.ok) return;
+        const j = (await pr.json()) as NestProgressApi;
+        if (nestRunVersionRef.current !== myVersion) return;
+        const label = formatNestProgressFromApi(j);
+        if (label) setNestProgressLabel(label);
+        const live = j.bestSoFar;
+        if (
+          live &&
+          typeof live === "object" &&
+          Array.isArray(live.placements) &&
+          live.placements.length > 0
+        ) {
+          setNestLiveBestSoFar(live as NestResult);
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 500);
 
     try {
       for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -894,50 +1860,112 @@ export default function NestRemnantsPage() {
 
         const payload = {
           sheets,
-          parts: mapPartsToApiPayload(parts),
+          parts: nestPartsPayload,
           config: apiConfig,
           requestTimeoutMs,
         };
 
+        if (nestRunVersionRef.current !== myVersion) {
+          return;
+        }
+
+        const postStarted = performance.now();
+        const res = await postNestWith503Retry(
+          endpoints.nest,
+          payload,
+          endpoints.stop,
+        );
+        const clientRequestDurationMs = Math.round(
+          performance.now() - postStarted,
+        );
+        let raw: NestApiResponse = {} as NestApiResponse;
+        let responseParseError: string | undefined;
         try {
-          await fetch("/api/nest/stop", { method: "POST" });
-        } catch {}
+          const parsed: unknown = await res.json();
+          if (parsed && typeof parsed === "object") {
+            raw = parsed as NestApiResponse;
+          }
+        } catch (pe) {
+          responseParseError =
+            pe instanceof Error ? pe.message : String(pe);
+        }
+
+        const failureCtx: NestFailureContext = {
+          nestPath: endpoints.isDirect ? "direct" : "proxy",
+          clientRequestDurationMs,
+          responseParseError,
+        };
 
         if (nestRunVersionRef.current !== myVersion) {
           return;
         }
 
-        const res = await fetch("/api/nest", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const data = (await res.json()) as NestResult & { error?: string };
-
-        if (nestRunVersionRef.current !== myVersion) {
-          return;
-        }
-
-        if (!res.ok) {
-          lastAttemptError =
-            typeof data?.error === "string"
-              ? data.error
-              : res.statusText ?? "Nesting failed";
-          if (attempts === 1) {
+        if (responseParseError) {
+          const synthetic = {
+            error: res.ok
+              ? "Nesting returned a non-JSON response"
+              : res.statusText || "Non-JSON error response",
+          } as NestApiResponse;
+          const { userMessage, adminDetail } = parseNestFailure(
+            res,
+            synthetic,
+            failureCtx,
+          );
+          lastAttemptError = userMessage;
+          lastAttemptAdmin = adminDetail;
+          if (attempts === 1 || shouldAbortMultiAttemptNest(res.status)) {
             setNestError(lastAttemptError);
+            setNestErrorAdmin(lastAttemptAdmin);
             return;
           }
           continue;
         }
 
+        if (!res.ok) {
+          const { userMessage, adminDetail } = parseNestFailure(
+            res,
+            raw,
+            failureCtx,
+          );
+          lastAttemptError = userMessage;
+          lastAttemptAdmin = adminDetail;
+          if (
+            attempts > 1 &&
+            shouldRetryNestOnRecoverableFailure(
+              res.status,
+              raw,
+              attempt,
+              attempts,
+            )
+          ) {
+            setNestProgressLabel(
+              `No layout on attempt ${attempt} of ${attempts} — retrying…`,
+            );
+            const backoff =
+              NEST_RETRY_BACKOFF_MIN_MS +
+              Math.floor(Math.random() * NEST_RETRY_BACKOFF_EXTRA_MS);
+            await new Promise((r) => window.setTimeout(r, backoff));
+            continue;
+          }
+          if (attempts === 1 || shouldAbortMultiAttemptNest(res.status)) {
+            setNestError(lastAttemptError);
+            setNestErrorAdmin(lastAttemptAdmin);
+            return;
+          }
+          continue;
+        }
+
+        const data = stripNestApiDiagnostics(raw);
         if (nestAttemptBetter(data, bestResult)) {
           bestResult = data;
           bestPayloadBody = payload;
+          successfulAttempt = attempt;
         }
       }
 
       if (!bestResult && lastAttemptError) {
         setNestError(lastAttemptError);
+        setNestErrorAdmin(lastAttemptAdmin);
       }
 
       if (bestResult && bestPayloadBody) {
@@ -962,28 +1990,100 @@ export default function NestRemnantsPage() {
           sheets: bestPayloadBody.sheets,
           parts: bestPayloadBody.parts,
           config: configSummary,
-          attemptsUsed: attempts,
+          attemptsUsed: successfulAttempt ?? attempts,
         });
         setPageLastUpdated(new Date());
       }
     } catch (e) {
-      setNestError(e instanceof Error ? e.message : "Request failed");
+      const msg = e instanceof Error ? e.message : String(e);
+      const looksNetwork =
+        /network|fetch|failed|aborted|load failed|econnrefused|failed to fetch/i.test(
+          msg,
+        );
+      const pathLine = endpoints.isDirect
+        ? "Nest request path: direct (browser → NestNow; no Next.js proxy)"
+        : "Nest request path: app proxy (browser → /api/nest → NestNow)";
+      const quickIt = `--- IT quick read ---\n${pathLine}\nNote: client exception before a normal HTTP JSON body (e.g. fetch aborted or runtime error).\n---------------------`;
+      setNestError(
+        looksNetwork
+          ? `Could not complete the nesting request. Check that NestNow is running (e.g. npm run start:server) and try again. (${msg})`
+          : `Nesting request failed: ${msg}`,
+      );
+      setNestErrorAdmin(`${quickIt}\n\n${msg}`);
     } finally {
+      window.clearInterval(progressTimer);
       nestInFlightRef.current = false;
-      setNestLoading(false);
-      setNestProgressLabel(null);
+      const elapsed = Date.now() - nestLoadStartedAt;
+      const pad = Math.max(0, NEST_LOADING_MIN_VISIBLE_MS - elapsed);
+      if (pad > 0 && nestRunVersionRef.current === myVersion) {
+        await new Promise((r) => window.setTimeout(r, pad));
+      }
+      if (nestRunVersionRef.current === myVersion) {
+        setNestLoading(false);
+        setNestProgressLabel(null);
+        setNestLiveBestSoFar(null);
+        setNestRunPreviewGeometry(null);
+      }
     }
   }
 
   async function handleStopNest() {
     if (!nestLoading) return;
+    /** Last full-round snapshot from GET /progress; mid-round stop may omit the latest intra-round improvement. */
+    const liveBest = nestLiveBestSoFarRef.current;
+    const previewGeom = nestRunPreviewGeometryRef.current;
+    const apiConfig = buildApiNestConfig(nestUiSettings);
+    const requestTimeoutSec = clampNestRequestTimeoutSec(
+      nestUiSettings.requestTimeoutSec,
+    );
+    const attempts = Math.min(
+      NEST_UI_MAX_SEPARATE_ATTEMPTS,
+      Math.max(1, Math.floor(nestUiSettings.attempts) || 1),
+    );
     nestRunVersionRef.current += 1;
     try {
-      await fetch("/api/nest/stop", { method: "POST" });
+      await fetch(nestActiveEndpointsRef.current.stop, { method: "POST" });
     } finally {
       nestInFlightRef.current = false;
       setNestLoading(false);
       setNestProgressLabel(null);
+      const canPromote =
+        liveBest &&
+        Array.isArray(liveBest.placements) &&
+        liveBest.placements.length > 0 &&
+        previewGeom?.parts?.length &&
+        previewGeom.sheets?.length;
+      if (canPromote) {
+        setNestError(null);
+        setNestErrorAdmin(null);
+        setNestCandidateIndex(0);
+        setNestResult(liveBest);
+        setLastNestPayload({
+          sheets: previewGeom.sheets,
+          parts: previewGeom.parts,
+          config: {
+            spacing: apiConfig.spacing,
+            rotations: apiConfig.rotations,
+            placementType: apiConfig.placementType,
+            mergeLines: apiConfig.mergeLines,
+            curveTolerance: apiConfig.curveTolerance,
+            simplify: apiConfig.simplify,
+            clipperScale: apiConfig.clipperScale,
+            populationSize: apiConfig.populationSize,
+            mutationRate: apiConfig.mutationRate,
+            gaGenerations: apiConfig.gaGenerations,
+            timeRatio: apiConfig.timeRatio,
+            scale: apiConfig.scale,
+            attempts,
+            requestTimeoutSec,
+            stoppedWithPartialLayout: true,
+          },
+          attemptsUsed: 0,
+        });
+        setPageLastUpdated(new Date());
+      }
+      setNestLiveBestSoFar(null);
+      setNestRunPreviewGeometry(null);
     }
   }
 
@@ -1219,11 +2319,79 @@ export default function NestRemnantsPage() {
       document.body,
     );
 
-  const lastNestSheetsUsed = nestResult?.placements?.length ?? 0;
+  const lastNestSheetsUsed = displayedNestResult?.placements?.length ?? 0;
   const lastUtilDisplay =
-    nestResult != null
-      ? `${(nestResult.utilisation ?? 0).toFixed(1)}%`
+    displayedNestResult != null
+      ? `${(displayedNestResult.utilisation ?? 0).toFixed(2)}%`
       : "—";
+
+  const safePreviewSheetIndex = useMemo(() => {
+    const n = displayedNestResult?.placements?.length ?? 0;
+    if (n <= 0) return 0;
+    return Math.min(Math.max(0, previewSheetIndex), n - 1);
+  }, [displayedNestResult?.placements?.length, previewSheetIndex]);
+
+  const liveSafePreviewSheetIndex = useMemo(() => {
+    const n = nestLiveBestSoFar?.placements?.length ?? 0;
+    if (n <= 0) return 0;
+    return Math.min(Math.max(0, previewSheetIndex), n - 1);
+  }, [nestLiveBestSoFar?.placements?.length, previewSheetIndex]);
+
+  const liveNestPreviewWorld = useMemo(() => {
+    if (
+      !nestRunPreviewGeometry?.parts?.length ||
+      !nestLiveBestSoFar?.placements?.length
+    ) {
+      return { worldW: 96, worldH: 48 };
+    }
+    const sheet = nestRunPreviewGeometry.sheets[liveSafePreviewSheetIndex];
+    const sw = sheet?.width ?? 96;
+    const sh = sheet?.height ?? 48;
+    const sheetplacements =
+      nestLiveBestSoFar.placements[liveSafePreviewSheetIndex]
+        ?.sheetplacements ?? [];
+    return computeNestPreviewWorld(
+      sw,
+      sh,
+      nestRunPreviewGeometry.parts as NestPreviewPart[],
+      sheetplacements,
+    );
+  }, [
+    nestRunPreviewGeometry,
+    liveSafePreviewSheetIndex,
+    nestLiveBestSoFar,
+  ]);
+
+  const completedNestPreviewWorld = useMemo(() => {
+    if (
+      !lastNestPayload?.parts?.length ||
+      !displayedNestResult?.placements?.length
+    ) {
+      return { worldW: 96, worldH: 48 };
+    }
+    const sheet = lastNestPayload.sheets[safePreviewSheetIndex];
+    const sw = sheet?.width ?? 96;
+    const sh = sheet?.height ?? 48;
+    const sheetplacements =
+      displayedNestResult.placements[safePreviewSheetIndex]
+        ?.sheetplacements ?? [];
+    return computeNestPreviewWorld(
+      sw,
+      sh,
+      lastNestPayload.parts as NestPreviewPart[],
+      sheetplacements,
+    );
+  }, [lastNestPayload, safePreviewSheetIndex, displayedNestResult]);
+
+  const showCompletedNestPreview =
+    !nestLoading &&
+    !!nestResult &&
+    !!lastNestPayload &&
+    !!displayedNestResult?.placements?.length;
+  const showLiveNestPreview =
+    nestLoading &&
+    !!nestLiveBestSoFar?.placements?.length &&
+    !!nestRunPreviewGeometry;
 
   return (
     <>
@@ -1244,44 +2412,6 @@ export default function NestRemnantsPage() {
               newProjectHref="/new-project?returnTo=%2Fnest-remnants"
             />
           </div>
-
-          <section
-            aria-label="Sheet and nest snapshot"
-            className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
-          >
-            <KpiCard
-              label="Sheets in stock"
-              value={remnants.length}
-              hint={`${availableSheetCount} available`}
-              icon={Package}
-            />
-            <KpiCard
-              label="Available sheets"
-              value={availableSheetCount}
-              hint="Status: Available"
-              icon={Layers}
-            />
-            <KpiCard
-              label="Selected for nest"
-              value={selectedForNest.length}
-              hint={
-                selectedForNest.length > 0
-                  ? `~${selectedNestWeightLbs.toFixed(1)} lbs est.`
-                  : "Choose sheets on Sheets tab"
-              }
-              icon={Package}
-            />
-            <KpiCard
-              label="Last nest utilisation"
-              value={lastUtilDisplay}
-              hint={
-                nestResult
-                  ? `${lastNestSheetsUsed} sheet(s), ${(nestResult.placements ?? []).reduce((n, p) => n + (p.sheetplacements?.length ?? 0), 0)} parts`
-                  : "Run Generate Nest to see results"
-              }
-              icon={Percent}
-            />
-          </section>
 
           <div className="mt-8 overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-900/40 shadow-xl">
             <div className="flex gap-1 border-b border-zinc-800 bg-zinc-950/80 p-1.5">
@@ -1706,617 +2836,344 @@ export default function NestRemnantsPage() {
 
           {/* Nest Tool Tab */}
           {activeTab === "nest" && (
-            <div className="flex flex-col gap-4 p-6 sm:p-8">
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-                      Sheets for this nest
-                    </p>
-                    <p className="text-sm text-white">
-                      <span className="font-semibold tabular-nums">
-                        {selectedForNest.length}
-                      </span>{" "}
-                      selected
-                      {selectedForNest.length > 0 ? (
+            <div className="grid grid-cols-1 gap-6 p-6 sm:p-8 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] xl:items-start">
+              <div className="order-1 flex min-h-0 min-w-0 flex-col gap-4 xl:sticky xl:top-4 xl:max-h-[min(92dvh,980px)] xl:overflow-y-auto xl:self-start">
+                <div className="flex h-[min(50dvh,600px)] min-h-[min(280px,40dvh)] shrink-0 flex-col overflow-hidden rounded-2xl border-2 border-dashed border-cyan-700/50 bg-zinc-800/30 shadow-inner">
+                  <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-cyan-800/40 bg-zinc-950/50 px-2 py-2 sm:px-3">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                      {showCompletedNestPreview || showLiveNestPreview ? (
                         <>
-                          {" "}
-                          · ~
-                          <span className="tabular-nums">
-                            {selectedNestWeightLbs.toFixed(1)}
-                          </span>{" "}
-                          lbs est.
-                        </>
-                      ) : null}
-                    </p>
-                    {selectedForNest.length > 0 ? (
-                      <div className="flex max-w-full flex-wrap gap-1.5 pt-1">
-                        {selectedForNest.slice(0, 6).map((r) => (
-                          <span
-                            key={r.db_id}
-                            className="inline-flex max-w-[10rem] items-center gap-1 truncate rounded-lg border border-zinc-700 bg-zinc-950/80 pl-2 pr-1 text-xs text-zinc-200"
-                            title={r.id}
-                          >
-                            <span className="truncate">{r.id}</span>
+                          <h4 className="text-sm font-bold text-cyan-100 sm:text-base">
+                            {showLiveNestPreview && !showCompletedNestPreview
+                              ? "Nest preview (live)"
+                              : "Nest preview"}
+                          </h4>
+                          <span className="text-[10px] text-zinc-500 sm:text-[11px]">
+                            Scroll to zoom · drag to pan
+                          </span>
+                          <div className="flex items-center gap-0.5">
                             <button
                               type="button"
-                              className="rounded p-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-red-300"
-                              aria-label={`Remove ${r.id} from nest`}
-                              onClick={() => toggleSelectedSheet(r.db_id)}
+                              onClick={() =>
+                                nestPreviewRef.current?.zoomOut()
+                              }
+                              className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
+                              aria-label="Zoom out nest preview"
                             >
-                              <X className="size-3.5" />
+                              <ZoomOut className="size-4" />
                             </button>
-                          </span>
-                        ))}
-                        {selectedForNest.length > 6 ? (
-                          <span className="self-center text-xs text-zinc-500">
-                            +{selectedForNest.length - 6} more
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveTab("remnants");
-                      window.requestAnimationFrame(() => {
-                        remnantsSectionRef.current?.scrollIntoView({
-                          behavior: "smooth",
-                          block: "start",
-                        });
-                      });
-                    }}
-                    className="shrink-0 rounded-xl border border-zinc-700 bg-zinc-800/80 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:border-purple-500/50 hover:text-white"
-                  >
-                    Manage sheets
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex w-full flex-col rounded-3xl border-2 border-cyan-800/50 bg-gradient-to-br from-zinc-900/70 to-zinc-950/50 p-6 shadow-xl shadow-cyan-500/10 backdrop-blur-sm sm:p-8">
-                <div className="sticky top-0 z-20 -mx-6 mb-4 space-y-3 border-b border-zinc-800/90 bg-zinc-950/95 px-6 pb-3 backdrop-blur-md sm:-mx-8 sm:px-8">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h3 className="flex items-center gap-2 text-lg font-bold text-cyan-100 sm:text-xl">
-                      <Layers className="size-7 shrink-0 sm:size-8" />
-                      Nesting
-                    </h3>
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={openAddShapeModal}
-                        className="flex items-center gap-2 rounded-full border border-purple-500/40 bg-purple-600/25 px-3 py-2 text-xs font-medium text-purple-100 transition-all hover:bg-purple-500/45 sm:text-sm"
-                      >
-                        <Plus className="size-4" /> Add Shape
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          alert("DXF/Parts upload coming soon. Shapes from DXF will be added to the same Parts list and used in nests alongside UI-created shapes.");
-                        }}
-                        className="flex items-center gap-2 rounded-full border border-cyan-500/40 bg-cyan-600/30 px-3 py-2 text-xs font-medium text-cyan-200 transition-all hover:bg-cyan-500/50 sm:text-sm"
-                      >
-                        <Upload className="size-4" /> Upload DXF
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleGenerateNest}
-                        disabled={nestLoading}
-                        className="flex items-center gap-2 rounded-full border border-emerald-500/40 bg-gradient-to-r from-emerald-600/30 to-emerald-500/50 px-3 py-2 text-xs font-medium text-emerald-200 transition-all disabled:pointer-events-none disabled:opacity-60 sm:text-sm"
-                      >
-                        {nestLoading ? (
-                          <Loader2 className="size-4 animate-spin" />
-                        ) : (
-                          <Zap className="size-4" />
-                        )}
-                        {nestLoading ? "Nesting…" : "Generate Nest"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleStopNest}
-                        disabled={!nestLoading}
-                        className="flex items-center gap-2 rounded-full border border-red-500/40 bg-red-600/20 px-3 py-2 text-xs font-medium text-red-200 transition-all disabled:pointer-events-none disabled:opacity-60 sm:text-sm"
-                      >
-                        <X className="size-4" /> Stop
-                      </button>
-                      <button
-                        type="button"
-                        className="flex items-center gap-2 rounded-full border border-zinc-600 bg-zinc-700/50 px-3 py-2 text-xs font-medium text-zinc-300 sm:text-sm"
-                      >
-                        Export .DXF
-                      </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                nestPreviewRef.current?.zoomIn()
+                              }
+                              className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
+                              aria-label="Zoom in nest preview"
+                            >
+                              <ZoomIn className="size-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                nestPreviewRef.current?.resetView()
+                              }
+                              className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
+                              aria-label="Reset nest preview view"
+                              title="Fit sheet"
+                            >
+                              <RotateCcw className="size-4" />
+                            </button>
+                          </div>
+                        </>
+                      ) : null}
                     </div>
+                    <button
+                      type="button"
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-600/80 bg-zinc-800/80 px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-500 hover:bg-zinc-700 hover:text-white sm:text-sm"
+                    >
+                      Export .DXF
+                    </button>
                   </div>
-                  <div className="flex flex-wrap items-end gap-4 text-sm">
-                    <label className="flex min-w-[10rem] max-w-[14rem] flex-col gap-1 text-zinc-400">
-                      <span>Part &amp; sheet edge gap (in)</span>
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.01}
-                        value={nestUiSettings.spacing}
-                        onChange={(e) =>
-                          setNestUiSettings((s) => ({
-                            ...s,
-                            spacing: Math.max(
-                              0,
-                              parseFloat(e.target.value) || 0,
-                            ),
-                          }))
-                        }
-                        disabled={nestLoading}
-                        className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                      />
-                      <span className="text-[10px] leading-tight text-zinc-500">
-                        Same as DeepNest &ldquo;space between parts&rdquo;: minimum
-                        clearance between parts and from nested geometry to the sheet
-                        edge.
-                      </span>
-                    </label>
-                    <label className="flex min-w-[10rem] flex-col gap-1 text-zinc-400">
-                      <span>How many rotations to try</span>
-                      <select
-                        value={nestUiSettings.rotations}
-                        onChange={(e) =>
-                          setNestUiSettings((s) => ({
-                            ...s,
-                            rotations: Number(e.target.value) || 4,
-                          }))
-                        }
-                        disabled={nestLoading}
-                        className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                      >
-                        {NEST_ROTATION_OPTIONS.map((n) => (
-                          <option key={n} value={n}>
-                            {n} orientations (every {(360 / n).toFixed(1)}°)
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                </div>
-
-                <div className="mb-4 rounded-2xl border border-cyan-800/40 bg-zinc-950/50 p-4">
-                  <button
-                    type="button"
-                    onClick={() => setNestAdvancedOpen((o) => !o)}
-                    className="flex items-center gap-1 text-xs font-medium text-cyan-300/90 hover:text-cyan-200"
-                  >
-                    {nestAdvancedOpen ? (
-                      <ChevronDown className="size-4" />
-                    ) : (
-                      <ChevronRight className="size-4" />
-                    )}
-                    Advanced nest options
-                  </button>
-                  {nestAdvancedOpen && (
-                    <div className="mt-3 space-y-4 text-sm">
-                      <div className="rounded-xl border border-zinc-800/70 bg-zinc-900/20 px-3 py-2.5">
-                        <span className="mb-1.5 block text-[11px] font-medium text-zinc-400">
-                          What should “a good nest” optimize for?
-                        </span>
-                        <p className="mb-2 text-[10px] leading-tight text-zinc-500">
-                          Click a card to set the layout goal (same as DeepNest
-                          optimization type).
-                        </p>
-                        <PlacementTypeVisuals
-                          active={nestUiSettings.placementType}
-                          disabled={nestLoading}
-                          onSelect={(placementType) =>
-                            setNestUiSettings((s) => ({ ...s, placementType }))
-                          }
-                        />
-                      </div>
-                      <label className="flex max-w-md flex-col gap-1 text-zinc-400">
-                        <span>Separate full attempts</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={10}
-                          step={1}
-                          value={nestUiSettings.attempts}
-                          onChange={(e) =>
-                            setNestUiSettings((s) => ({
-                              ...s,
-                              attempts: Math.min(
-                                10,
-                                Math.max(
-                                  1,
-                                  parseInt(e.target.value, 10) || 1,
-                                ),
-                              ),
-                            }))
-                          }
-                          disabled={nestLoading}
-                          className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                        />
-                        <span className="text-[10px] leading-tight text-zinc-500">
-                          Run the whole search more than once and keep the best
-                          layout. Turn this up if you want another roll of the
-                          dice (each run takes the same time as the first).
-                        </span>
-                      </label>
-                      <label className="flex max-w-md flex-col gap-1 text-zinc-400">
-                        <span>Max time per attempt (seconds)</span>
-                        <input
-                          type="number"
-                          min={NEST_REQUEST_TIMEOUT_SEC_MIN}
-                          max={NEST_REQUEST_TIMEOUT_SEC_MAX}
-                          step={30}
-                          value={nestUiSettings.requestTimeoutSec}
-                          onChange={(e) =>
-                            setNestUiSettings((s) => ({
-                              ...s,
-                              requestTimeoutSec: clampNestRequestTimeoutSec(
-                                parseInt(e.target.value, 10),
-                              ),
-                            }))
-                          }
-                          disabled={nestLoading}
-                          className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                        />
-                        <span className="text-[10px] leading-tight text-zinc-500">
-                          NestNow stops one attempt after this limit — raise it when
-                          nesting many parts. Range {NEST_REQUEST_TIMEOUT_SEC_MIN}–
-                          {NEST_REQUEST_TIMEOUT_SEC_MAX}s (NestNow max 1 hr). Env{" "}
-                          <code className="text-zinc-400">NESTNOW_REQUEST_TIMEOUT_MS</code>{" "}
-                          applies only if a request omits this field.
-                        </span>
-                      </label>
-                      <div className="rounded-xl border border-zinc-800/70 bg-zinc-900/20 px-3 py-2.5">
-                        <span className="mb-2 block text-[11px] font-medium text-zinc-400">
-                          Automatic layout search (NestNow)
-                        </span>
-                        <p className="mb-2 text-[10px] leading-tight text-zinc-500">
-                          NestNow tries many orderings and rotations, keeps the
-                          best fit. Larger numbers below usually mean better
-                          results and longer waits. Use at least{" "}
-                          <strong className="text-zinc-400 font-medium">2</strong>{" "}
-                          layouts-at-once for this search to run;{" "}
-                          <strong className="text-zinc-400 font-medium">1</strong>{" "}
-                          runs a single quick pass.
-                        </p>
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                          <label className="flex flex-col gap-1 text-zinc-400">
-                            <span>Layouts tried at once</span>
-                            <input
-                              type="number"
-                              min={1}
-                              max={50}
-                              step={1}
-                              value={nestUiSettings.populationSize}
-                              onChange={(e) =>
-                                setNestUiSettings((s) => ({
-                                  ...s,
-                                  populationSize: Math.min(
-                                    50,
-                                    Math.max(
-                                      1,
-                                      parseInt(e.target.value, 10) || 10,
-                                    ),
-                                  ),
-                                }))
-                              }
-                              disabled={nestLoading}
-                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                            />
-                            <span className="text-[10px] leading-tight text-zinc-500">
-                              More parallel ideas per round — often improves
-                              quality, always costs more time.
-                            </span>
-                          </label>
-                          <label className="flex flex-col gap-1 text-zinc-400">
-                            <span>How experimental each round is</span>
-                            <input
-                              type="number"
-                              min={0}
-                              max={100}
-                              step={1}
-                              value={nestUiSettings.mutationRate}
-                              onChange={(e) =>
-                                setNestUiSettings((s) => ({
-                                  ...s,
-                                  mutationRate: Math.min(
-                                    100,
-                                    Math.max(
-                                      0,
-                                      parseInt(e.target.value, 10) || 10,
-                                    ),
-                                  ),
-                                }))
-                              }
-                              disabled={nestLoading}
-                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                            />
-                            <span className="text-[10px] leading-tight text-zinc-500">
-                              Higher = more random swaps and rotations between
-                              rounds (explores farther, less predictable).
-                            </span>
-                          </label>
-                          <label className="flex flex-col gap-1 text-zinc-400">
-                            <span>How many improvement rounds</span>
-                            <input
-                              type="number"
-                              min={1}
-                              max={20}
-                              step={1}
-                              value={nestUiSettings.gaGenerations}
-                              onChange={(e) =>
-                                setNestUiSettings((s) => ({
-                                  ...s,
-                                  gaGenerations: Math.min(
-                                    20,
-                                    Math.max(
-                                      1,
-                                      parseInt(e.target.value, 10) || 3,
-                                    ),
-                                  ),
-                                }))
-                              }
-                              disabled={nestLoading}
-                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                            />
-                            <span className="text-[10px] leading-tight text-zinc-500">
-                              Each round refines the best layouts from the last
-                              one. More rounds → longer runs, sometimes nicer nests.
-                            </span>
-                          </label>
-                          <label className="flex flex-col gap-1 text-zinc-400">
-                            <span>Shared cuts vs saving material</span>
-                            <input
-                              type="number"
-                              min={0}
-                              max={2}
-                              step={0.05}
-                              value={nestUiSettings.timeRatio}
-                              onChange={(e) =>
-                                setNestUiSettings((s) => ({
-                                  ...s,
-                                  timeRatio: Math.max(
-                                    0,
-                                    parseFloat(e.target.value) || 0,
-                                  ),
-                                }))
-                              }
-                              disabled={nestLoading}
-                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                            />
-                            <span className="text-[10px] leading-tight text-zinc-500">
-                              Only matters when “Reward lining up edges” is on.
-                              Turn this up to favor one long shared cut; turn it
-                              down to care mostly about using less sheet.
-                            </span>
-                          </label>
-                          <label className="flex flex-col gap-1 text-zinc-400">
-                            <span>Drawing scale for edge detection</span>
-                            <input
-                              type="number"
-                              min={1}
-                              max={200}
-                              step={1}
-                              value={nestUiSettings.scale}
-                              onChange={(e) =>
-                                setNestUiSettings((s) => ({
-                                  ...s,
-                                  scale: Math.max(
-                                    1,
-                                    parseFloat(e.target.value) || 72,
-                                  ),
-                                }))
-                              }
-                              disabled={nestLoading}
-                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                            />
-                            <span className="text-[10px] leading-tight text-zinc-500">
-                              Should match typical SVG / drawing units. Leave at
-                              72 unless you know your files use a different base
-                              scale.
-                            </span>
-                          </label>
-                        </div>
-                        <p className="mt-2 text-[10px] leading-tight text-zinc-500">
-                          <span className="text-zinc-400">Server / IT:</span>{" "}
-                          <code className="text-zinc-400">NESTNOW_DISABLE_GA=1</code>{" "}
-                          forces one fast layout instead of multi-layout search.{" "}
-                          <code className="text-zinc-400">NESTNOW_GA_MAX_EVALS</code>{" "}
-                          limits total tries so runs cannot run forever.
-                        </p>
-                      </div>
-                      <label className="flex cursor-pointer select-none items-center gap-2 text-zinc-300">
-                        <input
-                          type="checkbox"
-                          checked={nestUiSettings.mergeLines}
-                          onChange={(e) =>
-                            setNestUiSettings((s) => ({
-                              ...s,
-                              mergeLines: e.target.checked,
-                            }))
-                          }
-                          disabled={nestLoading}
-                          className="rounded border-cyan-700 text-cyan-500"
-                        />
-                        Reward lining up edges (shared cuts)
-                      </label>
-                      <p className="text-[10px] leading-tight text-zinc-500 pl-6 -mt-2">
-                        When on, the solver can prefer arrangements where two
-                        parts share one cut line, which often saves machine time.
-                      </p>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                        <label className="flex flex-col gap-1 text-zinc-400">
-                          <span>Curve smoothing</span>
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.05}
-                            value={nestUiSettings.curveTolerance}
-                            onChange={(e) =>
-                              setNestUiSettings((s) => ({
-                                ...s,
-                                curveTolerance: Math.max(
-                                  0,
-                                  parseFloat(e.target.value) || 0,
-                                ),
-                              }))
-                            }
-                            disabled={nestLoading}
-                            className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                          />
-                          <span className="text-[10px] leading-tight text-zinc-500">
-                            Larger values allow more simplification of curved
-                            edges (can run faster, less exact).
-                          </span>
-                        </label>
-                        <label className="flex cursor-pointer select-none items-start gap-2 pt-1 text-zinc-300">
-                          <input
-                            type="checkbox"
-                            checked={nestUiSettings.simplify}
-                            onChange={(e) =>
-                              setNestUiSettings((s) => ({
-                                ...s,
-                                simplify: e.target.checked,
-                              }))
-                            }
-                            disabled={nestLoading}
-                            className="rounded border-cyan-700 text-cyan-500 mt-0.5"
-                          />
-                          <span>
-                            <span className="block">Use rough outline shapes</span>
-                            <span className="block text-[10px] font-normal text-zinc-500 mt-0.5">
-                              Good for speed; outlines may not match every bend
-                              in the original drawing.
-                            </span>
-                          </span>
-                        </label>
-                        <label className="flex flex-col gap-1 text-zinc-400">
-                          <span>Shape math precision</span>
-                          <input
-                            type="number"
-                            min={1000}
-                            step={1000000}
-                            value={nestUiSettings.clipperScale}
-                            onChange={(e) =>
-                              setNestUiSettings((s) => ({
-                                ...s,
-                                clipperScale: Math.max(
-                                  1000,
-                                  parseInt(e.target.value, 10) || s.clipperScale,
-                                ),
-                              }))
-                            }
-                            disabled={nestLoading}
-                            className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
-                          />
-                          <span className="text-[10px] leading-tight text-zinc-500">
-                            Internal multiplier for coordinates. Leave the
-                            default unless NestNow support asks you to change it.
-                          </span>
-                        </label>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex min-h-[200px] flex-1 flex-col overflow-auto rounded-2xl border-2 border-dashed border-cyan-700/50 bg-zinc-800/30 shadow-inner">
+                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                   {nestLoading && (
-                    <div className="flex-1 flex flex-col items-center justify-center text-cyan-400 gap-2">
-                      <div className="flex items-center">
-                        <Loader2 className="w-12 h-12 animate-spin mr-3" />
-                        <span>{nestProgressLabel ?? "Nesting…"}</span>
+                    <div
+                      className="flex min-h-0 flex-1 flex-col items-center justify-start gap-3 overflow-y-auto p-6 text-cyan-400"
+                      aria-live="polite"
+                      aria-busy="true"
+                    >
+                      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+                        <Loader2 className="mr-1 size-12 shrink-0 animate-spin sm:mr-3" />
+                        <span className="text-center">
+                          {nestProgressLabel ?? "Nesting…"}
+                          <span className="text-zinc-500">
+                            {" "}
+                            · {nestElapsedSec}s
+                          </span>
+                        </span>
                       </div>
-                      {nestProgressLabel ? (
-                        <p className="text-xs text-zinc-500">
-                          Stop cancels any further full attempts. Each attempt
-                          may try many layouts inside NestNow before it returns.
-                        </p>
-                      ) : (
-                        <p className="text-xs text-zinc-500">
-                          Big search settings can take several minutes. Raise{" "}
-                          <strong className="font-medium text-zinc-400">
-                            Max time per attempt
-                          </strong>{" "}
-                          under Advanced nest options, or set{" "}
-                          <code className="text-zinc-400">
-                            NESTNOW_REQUEST_TIMEOUT_MS
-                          </code>{" "}
-                          on NestNow for non-Keystone clients.
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  {!nestLoading && nestError && (
-                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-amber-400">
-                      <AlertCircle className="w-12 h-12 mb-3" />
-                      <p className="text-lg font-medium mb-1">Nesting failed</p>
-                      <p className="text-sm text-zinc-400 text-center">{nestError}</p>
-                      <p className="text-xs text-zinc-500 mt-2">Ensure NestNow is running (npm run start:server in NestNow).</p>
-                    </div>
-                  )}
-                  {!nestLoading && nestResult && (
-                    <div className="p-6 space-y-4 flex flex-col min-h-0">
-                      {lastNestPayload && nestResult.placements?.length > 0 && (
-                        <div className="flex flex-col flex-1 min-h-[240px] space-y-2">
-                          <h4 className="font-bold text-cyan-100">Nest preview</h4>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            {nestResult.placements.map((placement, sheetIndex) => (
+                      <p className="max-w-md text-center text-xs leading-relaxed text-zinc-500">
+                        Each layout evaluation can run up to{" "}
+                        <span className="text-zinc-400">
+                          {formatNestMaxEvalTime(nestDisplayTimeoutSec)}
+                        </span>
+                        . It can try many layouts in one run.
+                      </p>
+                      <p className="max-w-sm text-center text-xs text-zinc-500">
+                        Stop cancels any further full attempts.
+                      </p>
+                      <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-zinc-500">
+                        <NestFieldHelp
+                          fieldId="loadingNoProgress"
+                          disabled={nestLoading}
+                          label="Why nesting can take a long time"
+                        />
+                      </div>
+                      {showLiveNestPreview &&
+                        nestLiveBestSoFar &&
+                        nestRunPreviewGeometry && (
+                          <div className="mt-2 flex w-full max-w-full min-w-0 flex-col gap-2 border-t border-cyan-900/40 pt-4">
+                            <p className="text-center text-[11px] text-cyan-200/85">
+                              Best layout so far — updates after each improvement
+                              round completes
+                            </p>
+                            {nestLiveBestSoFar.placements.length > 1 ? (
                               <div
-                                key={sheetIndex}
-                                className="min-h-[200px] rounded-xl border border-cyan-700/50 bg-zinc-800/30 flex flex-col p-1 overflow-hidden"
+                                className="flex flex-wrap justify-center gap-1"
+                                role="tablist"
+                                aria-label="Live preview sheet"
                               >
-                                <div className="px-3 pt-2 pb-1 text-xs text-cyan-200/80">
-                                  Sheet {sheetIndex + 1}
-                                </div>
-                                <div className="flex-1 min-h-0">
-                                  <NestPreviewSVG
-                                    sheetWidth={lastNestPayload.sheets[sheetIndex]?.width ?? 96}
-                                    sheetHeight={lastNestPayload.sheets[sheetIndex]?.height ?? 48}
-                                    parts={lastNestPayload.parts}
-                                    sheetplacements={placement.sheetplacements ?? []}
+                                {nestLiveBestSoFar.placements.map((_, idx) => {
+                                  const on = liveSafePreviewSheetIndex === idx;
+                                  return (
+                                    <button
+                                      key={idx}
+                                      type="button"
+                                      role="tab"
+                                      aria-selected={on}
+                                      onClick={() => setPreviewSheetIndex(idx)}
+                                      className={`rounded-lg px-2 py-0.5 text-[10px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 ${
+                                        on
+                                          ? "bg-cyan-600/35 text-cyan-100 ring-1 ring-cyan-500/40"
+                                          : "bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700"
+                                      }`}
+                                    >
+                                      Sheet {idx + 1}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                            <div className="mx-auto min-h-0 w-full min-w-0 max-w-3xl overflow-hidden rounded-xl border border-cyan-700/40 bg-zinc-900/40 p-1">
+                              <div
+                                className={NEST_PREVIEW_FRAME_CLASS}
+                                style={{
+                                  aspectRatio: `${liveNestPreviewWorld.worldW} / ${liveNestPreviewWorld.worldH}`,
+                                }}
+                              >
+                                <div className="absolute inset-0 min-h-0 min-w-0">
+                                  <NestPreviewZoomable
+                                    key={`live-${liveSafePreviewSheetIndex}-${nestRunPreviewGeometry.sheets[liveSafePreviewSheetIndex]?.width ?? ""}-${nestRunPreviewGeometry.sheets[liveSafePreviewSheetIndex]?.height ?? ""}`}
+                                    ref={nestPreviewRef}
+                                    sheetWidth={
+                                      nestRunPreviewGeometry.sheets[
+                                        liveSafePreviewSheetIndex
+                                      ]?.width ?? 96
+                                    }
+                                    sheetHeight={
+                                      nestRunPreviewGeometry.sheets[
+                                        liveSafePreviewSheetIndex
+                                      ]?.height ?? 48
+                                    }
+                                    parts={nestRunPreviewGeometry.parts}
+                                    sheetplacements={
+                                      nestLiveBestSoFar.placements[
+                                        liveSafePreviewSheetIndex
+                                      ]?.sheetplacements ?? []
+                                    }
                                   />
                                 </div>
                               </div>
-                            ))}
+                            </div>
+                            <p className="text-center text-[10px] text-zinc-600">
+                              fitness{" "}
+                              <span className="font-mono text-zinc-500">
+                                {typeof nestLiveBestSoFar.fitness === "number"
+                                  ? nestLiveBestSoFar.fitness.toFixed(2)
+                                  : "—"}
+                              </span>
+                              {" · "}
+                              util{" "}
+                              {(nestLiveBestSoFar.utilisation ?? 0).toFixed(2)}%
+                              {" · "}
+                              parts{" "}
+                              <span className="font-mono text-zinc-500">
+                                {nestLiveBestSoFar.placements.reduce(
+                                  (n, p) =>
+                                    n + (p.sheetplacements?.length ?? 0),
+                                  0,
+                                )}
+                              </span>
+                            </p>
                           </div>
-                        </div>
+                        )}
+                    </div>
+                  )}
+                  {!nestLoading && nestError && (
+                    <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto p-6 text-amber-400">
+                      <AlertCircle className="mb-3 size-12" />
+                      <p className="mb-1 text-lg font-medium">Nesting failed</p>
+                      <p className="max-w-md text-center text-sm text-zinc-400">
+                        {nestError}
+                      </p>
+                      {nestErrorAdmin && (
+                        <details className="mt-3 max-w-lg text-left">
+                          <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-400">
+                            Details for IT
+                          </summary>
+                          <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 font-mono text-[10px] leading-relaxed text-zinc-500">
+                            {nestErrorAdmin}
+                          </pre>
+                        </details>
                       )}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                        <div className="bg-zinc-800/50 rounded-xl p-3 border border-cyan-700/30">
-                          <div className="text-2xl font-bold text-cyan-400">{(nestResult.utilisation ?? 0).toFixed(1)}%</div>
-                          <div className="text-xs text-zinc-500">Utilisation</div>
-                        </div>
-                        <div className="bg-zinc-800/50 rounded-xl p-3 border border-cyan-700/30">
-                          <div className="text-2xl font-bold text-white">{(nestResult.placements ?? []).length}</div>
-                          <div className="text-xs text-zinc-500">Sheets used</div>
-                        </div>
-                        <div className="bg-zinc-800/50 rounded-xl p-3 border border-cyan-700/30">
-                          <div className="text-2xl font-bold text-white">{(nestResult.placements ?? []).reduce((n, p) => n + (p.sheetplacements?.length ?? 0), 0)}</div>
-                          <div className="text-xs text-zinc-500">Parts placed</div>
-                        </div>
-                        <div
-                          className="bg-zinc-800/50 rounded-xl p-3 border border-cyan-700/30"
-                          title="Lower is better. Combined cost from NestNow’s search: sheet use, your layout goal, unplaced penalties, and merge-line bonuses when enabled."
-                        >
-                          <div className="text-lg font-bold text-zinc-300 tabular-nums">
-                            {typeof nestResult.fitness === "number"
-                              ? nestResult.fitness.toFixed(4)
-                              : "—"}
+                    </div>
+                  )}
+                  {!nestLoading && nestResult && (
+                    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 sm:p-5">
+                      {lastNestPayload &&
+                        displayedNestResult?.placements &&
+                        displayedNestResult.placements.length > 0 && (
+                          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+                            {nestCandidateOptions.length > 1 ? (
+                              <div
+                                className="flex flex-wrap gap-1"
+                                role="tablist"
+                                aria-label="Layout candidates"
+                              >
+                                {nestCandidateOptions.map((opt, idx) => {
+                                  const on = nestCandidateIndex === idx;
+                                  return (
+                                    <button
+                                      key={idx}
+                                      type="button"
+                                      role="tab"
+                                      aria-selected={on}
+                                      onClick={() => setNestCandidateIndex(idx)}
+                                      className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 ${
+                                        on
+                                          ? "bg-violet-600/35 text-violet-100 ring-1 ring-violet-500/40"
+                                          : "bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+                                      }`}
+                                    >
+                                      {idx === 0
+                                        ? "Best"
+                                        : `Alt ${idx + 1}`}{" "}
+                                      <span className="font-mono text-[10px] opacity-80">
+                                        {(opt.utilisation ?? 0).toFixed(2)}%
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                            {displayedNestResult.placements.length > 1 ? (
+                              <div
+                                className="flex flex-wrap gap-1"
+                                role="tablist"
+                                aria-label="Preview sheet"
+                              >
+                                {displayedNestResult.placements.map((_, idx) => {
+                                  const on = safePreviewSheetIndex === idx;
+                                  return (
+                                    <button
+                                      key={idx}
+                                      type="button"
+                                      role="tab"
+                                      aria-selected={on}
+                                      onClick={() => setPreviewSheetIndex(idx)}
+                                      className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 ${
+                                        on
+                                          ? "bg-cyan-600/35 text-cyan-100 ring-1 ring-cyan-500/40"
+                                          : "bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+                                      }`}
+                                    >
+                                      Sheet {idx + 1}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-cyan-700/50 bg-zinc-800/30 p-1">
+                              <div
+                                className={NEST_PREVIEW_FRAME_CLASS}
+                                style={{
+                                  aspectRatio: `${completedNestPreviewWorld.worldW} / ${completedNestPreviewWorld.worldH}`,
+                                }}
+                              >
+                                <div className="absolute inset-0 min-h-0 min-w-0">
+                                  <NestPreviewZoomable
+                                    key={`${nestCandidateIndex}-${safePreviewSheetIndex}-${lastNestPayload.sheets[safePreviewSheetIndex]?.width ?? ""}-${lastNestPayload.sheets[safePreviewSheetIndex]?.height ?? ""}`}
+                                    ref={nestPreviewRef}
+                                    sheetWidth={
+                                      lastNestPayload.sheets[
+                                        safePreviewSheetIndex
+                                      ]?.width ?? 96
+                                    }
+                                    sheetHeight={
+                                      lastNestPayload.sheets[
+                                        safePreviewSheetIndex
+                                      ]?.height ?? 48
+                                    }
+                                    parts={lastNestPayload.parts}
+                                    sheetplacements={
+                                      displayedNestResult.placements[
+                                        safePreviewSheetIndex
+                                      ]?.sheetplacements ?? []
+                                    }
+                                  />
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-xs text-zinc-500">
-                            Search cost (fitness)
+                        )}
+                      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 sm:gap-2">
+                        <div className="rounded-lg border border-cyan-700/30 bg-zinc-800/50 px-2 py-1.5 sm:px-2.5 sm:py-2">
+                          <div className="text-lg font-bold leading-none text-cyan-400 sm:text-xl">
+                            {(displayedNestResult?.utilisation ?? 0).toFixed(2)}%
                           </div>
-                          <div className="mt-1 text-[10px] leading-tight text-zinc-600">
-                            Lower is better
+                          <div className="mt-0.5 text-[10px] leading-tight text-zinc-500 sm:text-[11px]">
+                            Utilisation
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-cyan-700/30 bg-zinc-800/50 px-2 py-1.5 sm:px-2.5 sm:py-2">
+                          <div className="text-lg font-bold leading-none text-white sm:text-xl">
+                            {(displayedNestResult?.placements ?? []).length}
+                          </div>
+                          <div className="mt-0.5 text-[10px] leading-tight text-zinc-500 sm:text-[11px]">
+                            Sheets used
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-cyan-700/30 bg-zinc-800/50 px-2 py-1.5 sm:px-2.5 sm:py-2">
+                          <div className="text-lg font-bold leading-none text-white sm:text-xl">
+                            {(displayedNestResult?.placements ?? []).reduce(
+                              (n, p) =>
+                                n + (p.sheetplacements?.length ?? 0),
+                              0,
+                            )}
+                          </div>
+                          <div className="mt-0.5 text-[10px] leading-tight text-zinc-500 sm:text-[11px]">
+                            Parts placed
                           </div>
                         </div>
                       </div>
                       {lastNestPayload && (
-                        <div className="rounded-xl border border-zinc-700/80 bg-zinc-900/40 px-4 py-3 text-xs text-zinc-400 space-y-1">
+                        <div className="space-y-1 rounded-xl border border-zinc-700/80 bg-zinc-900/40 px-3 py-2.5 text-[11px] text-zinc-400 sm:text-xs">
                           <div className="font-semibold text-zinc-300">
                             Last run parameters
                           </div>
-                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                          <div className="flex flex-wrap gap-x-3 gap-y-1">
                             <span title="Minimum clearance part-to-part and to sheet edge (DeepNest spacing).">
-                              part/sheet gap {String(lastNestPayload.config.spacing)}
-                              ″
+                              part/sheet gap{" "}
+                              {String(lastNestPayload.config.spacing)}″
                             </span>
                             <span>
                               rotations {lastNestPayload.config.rotations}
@@ -2330,17 +3187,23 @@ export default function NestRemnantsPage() {
                               {lastNestPayload.config.mergeLines ? "on" : "off"}
                             </span>
                             <span>
-                              attempts {lastNestPayload.attemptsUsed}
+                              attempts{" "}
+                              {lastNestPayload.config.stoppedWithPartialLayout
+                                ? "— (stopped early)"
+                                : lastNestPayload.attemptsUsed}
                             </span>
                             {typeof lastNestPayload.config.requestTimeoutSec ===
                               "number" && (
-                              <span>
-                                timeout{" "}
-                                {String(lastNestPayload.config.requestTimeoutSec)}s
+                              <span
+                                title="NestNow per-evaluation cap (not total time for the whole layout search)."
+                              >
+                                per-eval cap{" "}
+                                {String(lastNestPayload.config.requestTimeoutSec)}
+                                s
                               </span>
                             )}
                           </div>
-                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-zinc-500">
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 text-zinc-500">
                             <span>
                               curve tol{" "}
                               {String(lastNestPayload.config.curveTolerance)}
@@ -2350,76 +3213,130 @@ export default function NestRemnantsPage() {
                               {lastNestPayload.config.simplify ? "on" : "off"}
                             </span>
                             <span>
-                              clipper {String(lastNestPayload.config.clipperScale)}
+                              clipper{" "}
+                              {String(lastNestPayload.config.clipperScale)}
                             </span>
                           </div>
                         </div>
                       )}
-                      <div>
-                        <h4 className="font-bold text-cyan-100 mb-2">Placements</h4>
-                        <div className="overflow-x-auto rounded-xl border border-zinc-700">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="bg-zinc-800/80 text-zinc-400 text-left">
-                                <th className="px-4 py-2">Sheet</th>
-                                <th className="px-4 py-2">Part</th>
-                                <th className="px-4 py-2">X</th>
-                                <th className="px-4 py-2">Y</th>
-                                <th className="px-4 py-2">Rotation</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(nestResult.placements ?? []).flatMap((s, si) =>
-                                (s.sheetplacements ?? [])
-                                  .filter((p): p is SheetPlacement => Boolean(p))
-                                  .map((p, idx) => {
-                                    if (!p) return null;
-                                    const x = typeof p.x === "number" ? p.x : 0;
-                                    const y = typeof p.y === "number" ? p.y : 0;
-                                    const rotation = typeof p.rotation === "number" ? p.rotation : 0;
-                                    const keyId = typeof p.id === "number" ? p.id : idx;
-                                    return (
-                                      <tr key={`${si}-${keyId}`} className="border-t border-zinc-700 text-zinc-300">
-                                        <td className="px-4 py-2">{(s.sheet ?? si) + 1}</td>
-                                        <td className="px-4 py-2">{p.filename ?? `Part ${p.source ?? ""}`}</td>
-                                        <td className="px-4 py-2 font-mono">{x.toFixed(1)}</td>
-                                        <td className="px-4 py-2 font-mono">{y.toFixed(1)}</td>
-                                        <td className="px-4 py-2">{rotation}°</td>
-                                      </tr>
-                                    );
-                                  }),
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
                     </div>
                   )}
                   {!nestLoading && !nestError && !nestResult && (
-                    <div className="flex-1 flex items-center justify-center">
+                    <div className="flex min-h-[220px] flex-1 flex-col items-center justify-center p-6">
                       <div className="text-center text-zinc-500">
-                        <Zap className="w-16 h-16 mx-auto mb-4 text-cyan-500/50 animate-pulse" />
-                        <p className="text-lg mb-2">Ready for nesting</p>
-                        <p className="text-sm">Click Generate Nest to run a demo nest.</p>
+                        <Zap className="mx-auto mb-4 size-16 animate-pulse text-cyan-500/50" />
+                        <p className="mb-2 text-lg">Ready for nesting</p>
+                        <p className="text-sm">
+                          Click Generate Nest to run a demo nest.
+                        </p>
                       </div>
                     </div>
                   )}
+                  </div>
                 </div>
-              </div>
 
-              {/* Parts list + Selected for Nesting - full width below canvas */}
-              <div className="w-full bg-gradient-to-r from-purple-600/20 to-purple-700/20 border border-purple-500/30 rounded-3xl p-6 shadow-xl">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div>
-                    <h4 className="font-bold text-xl text-purple-100 mb-3">
-                      Parts in this Nest
-                    </h4>
+              <div className="w-full shrink-0 bg-gradient-to-r from-purple-600/20 to-purple-700/20 border border-purple-500/30 rounded-3xl p-6 shadow-xl">
+                <div className="flex w-full flex-col gap-6">
+                  <div className="w-full min-w-0">
+                    <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <h4 className="text-xl font-bold text-purple-100">
+                        Selected for Nesting
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab("remnants");
+                          window.requestAnimationFrame(() => {
+                            remnantsSectionRef.current?.scrollIntoView({
+                              behavior: "smooth",
+                              block: "start",
+                            });
+                          });
+                        }}
+                        className="shrink-0 rounded-xl border border-purple-500/40 bg-purple-950/50 px-4 py-2 text-sm font-medium text-purple-100 transition-colors hover:border-purple-400/60 hover:bg-purple-900/50"
+                      >
+                        Manage sheets
+                      </button>
+                    </div>
+                    <div className="max-h-64 space-y-2 overflow-y-auto">
+                      {selectedForNest.length > 0 ? (
+                        selectedForNest.map((r) => (
+                          <div
+                            key={r.db_id}
+                            className="flex w-full items-center gap-3 rounded-xl border border-purple-500/30 bg-purple-500/20 p-3 text-sm text-purple-200"
+                          >
+                            <div className="flex-shrink-0">
+                              <SheetWireframe
+                                lengthIn={r.length_in}
+                                widthIn={r.width_in}
+                                dims={r.dims}
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate font-medium">{r.id}</p>
+                              <p className="text-xs text-purple-200/80">
+                                {r.material} {r.thickness_in.toFixed(3)}" ·{" "}
+                                {r.dims ?? "—"}
+                              </p>
+                              {typeof r.est_weight_lbs === "number" && (
+                                <p className="mt-0.5 text-xs text-emerald-400/90">
+                                  {r.est_weight_lbs} lbs
+                                </p>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleSelectedSheet(r.db_id)}
+                              className="flex-shrink-0 text-xs text-purple-200/80 hover:text-red-300"
+                            >
+                              Remove from nest
+                            </button>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="py-2 text-sm text-purple-200/70">
+                          No sheets selected. Use the{" "}
+                          <span className="font-semibold">Quick sheet list</span>{" "}
+                          on the right, or open the{" "}
+                          <span className="font-semibold">Sheets</span> tab for
+                          filters and bulk view.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="w-full min-w-0">
+                    <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <h4 className="text-xl font-bold text-purple-100">
+                        Parts in this Nest
+                      </h4>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            alert("DXF/Parts upload coming soon. Shapes from DXF will be added to the same Parts list and used in nests alongside UI-created shapes.");
+                          }}
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-cyan-800/60 bg-cyan-950/40 px-3 py-2 text-sm font-medium text-cyan-100 transition-colors hover:border-cyan-600/60 hover:bg-cyan-900/45 sm:px-4"
+                        >
+                          <Upload className="size-4 shrink-0" aria-hidden />
+                          Upload DXF
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openAddShapeModal}
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-purple-500/40 bg-purple-950/50 px-3 py-2 text-sm font-medium text-purple-100 transition-colors hover:border-purple-400/60 hover:bg-purple-900/50 sm:px-4"
+                        >
+                          <Plus className="size-4 shrink-0" aria-hidden />
+                          + Add Shape
+                        </button>
+                      </div>
+                    </div>
                     {parts.length === 0 ? (
                       <p className="text-sm text-purple-200/70">
-                        No parts yet. Use <span className="font-semibold">Add Shape</span> or upload DXF/parts to add parts to this nest.
+                        No parts yet. Use <span className="font-semibold">Upload DXF</span> or <span className="font-semibold">+ Add Shape</span> above.
                       </p>
                     ) : (
-                      <div className="max-h-64 overflow-y-auto rounded-2xl border border-purple-500/40 bg-purple-950/30">
+                      <div className="w-full max-h-64 overflow-x-auto overflow-y-auto rounded-2xl border border-purple-500/40 bg-purple-950/30">
                         <table className="w-full text-sm">
                           <thead className="bg-purple-950/60 text-purple-200/80">
                             <tr>
@@ -2455,7 +3372,6 @@ export default function NestRemnantsPage() {
                                 </td>
                                 <td className="px-3 py-2 text-xs text-purple-200/80 hidden sm:table-cell">
                                   {(() => {
-                                    // Prefer explicit OD/ID labels for round shapes created via UI
                                     if (p.kind === "round" && p.meta?.source === "ui") {
                                       const params = p.meta.originalParams as
                                         | { od_in?: number }
@@ -2480,7 +3396,6 @@ export default function NestRemnantsPage() {
                                         return `${od.toFixed(2)}" OD x ${id.toFixed(2)}" ID`;
                                       }
                                     }
-                                    // Fallback: generic bounding-box based dims (for polygons / DXF, or if params missing)
                                     return formatPartDims(getPartDims(p));
                                   })()}
                                 </td>
@@ -2572,56 +3487,861 @@ export default function NestRemnantsPage() {
                       </div>
                     )}
                   </div>
-                  <div>
-                    <h4 className="font-bold text-xl text-purple-100 mb-3">
-                      Selected for Nesting
-                    </h4>
-                    <div className="max-h-64 overflow-y-auto space-y-2">
-                      {selectedForNest.length > 0 ? (
-                        selectedForNest.map((r) => (
-                          <div
-                            key={r.db_id}
-                            className="w-full flex items-center gap-3 p-3 bg-purple-500/20 border border-purple-500/30 rounded-xl text-purple-200 text-sm"
-                          >
-                            <div className="flex-shrink-0">
-                              <SheetWireframe
-                                lengthIn={r.length_in}
-                                widthIn={r.width_in}
-                                dims={r.dims}
-                              />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="font-medium truncate">{r.id}</p>
-                              <p className="text-xs text-purple-200/80">
-                                {r.material} {r.thickness_in.toFixed(3)}" · {r.dims ?? "—"}
-                              </p>
-                              {typeof r.est_weight_lbs === "number" && (
-                                <p className="text-xs text-emerald-400/90 mt-0.5">
-                                  {r.est_weight_lbs} lbs
-                                </p>
-                              )}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => toggleSelectedSheet(r.db_id)}
-                              className="flex-shrink-0 text-xs text-purple-200/80 hover:text-red-300"
-                            >
-                              Remove from nest
-                            </button>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="text-sm text-purple-200/70 py-2">
-                          No sheets selected. Open the <span className="font-semibold">Sheets</span> tab and use the <span className="font-semibold">Nest</span> column or <span className="font-semibold">Manage sheets</span> above.
-                        </p>
-                      )}
-                    </div>
+                </div>
+              </div>
+
+              {!nestLoading && nestResult && (
+                <div className="w-full min-w-0 shrink-0 rounded-2xl border border-cyan-800/50 bg-zinc-900/50 p-4 sm:p-5">
+                  <h4 className="mb-2 font-bold text-cyan-100">Placements</h4>
+                  <div className="max-h-[min(40dvh,22rem)] overflow-x-auto overflow-y-auto rounded-xl border border-zinc-700">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 z-[1] bg-zinc-800/95 backdrop-blur-sm">
+                        <tr className="text-left text-zinc-400">
+                          <th className="px-4 py-2">Sheet</th>
+                          <th className="px-4 py-2">Part</th>
+                          <th className="px-4 py-2">X</th>
+                          <th className="px-4 py-2">Y</th>
+                          <th className="px-4 py-2">Rotation</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(displayedNestResult?.placements ?? []).flatMap(
+                          (s, si) =>
+                            (s.sheetplacements ?? [])
+                              .filter((p): p is SheetPlacement => Boolean(p))
+                              .map((p, idx) => {
+                                if (!p) return null;
+                                const x = typeof p.x === "number" ? p.x : 0;
+                                const y = typeof p.y === "number" ? p.y : 0;
+                                const rotation =
+                                  typeof p.rotation === "number"
+                                    ? p.rotation
+                                    : 0;
+                                const keyId =
+                                  typeof p.id === "number" ? p.id : idx;
+                                return (
+                                  <tr
+                                    key={`${si}-${keyId}`}
+                                    className="border-t border-zinc-700 text-zinc-300"
+                                  >
+                                    <td className="px-4 py-2">
+                                      {(s.sheet ?? si) + 1}
+                                    </td>
+                                    <td className="px-4 py-2">
+                                      {p.filename ?? `Part ${p.source ?? ""}`}
+                                    </td>
+                                    <td className="px-4 py-2 font-mono">
+                                      {x.toFixed(1)}
+                                    </td>
+                                    <td className="px-4 py-2 font-mono">
+                                      {y.toFixed(1)}
+                                    </td>
+                                    <td className="px-4 py-2">{rotation}°</td>
+                                  </tr>
+                                );
+                              }),
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
+              )}
+              </div>
+
+              <div className="order-2 flex min-w-0 flex-col gap-4">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+                    Quick sheet list
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab("remnants");
+                      window.requestAnimationFrame(() => {
+                        remnantsSectionRef.current?.scrollIntoView({
+                          behavior: "smooth",
+                          block: "start",
+                        });
+                      });
+                    }}
+                    className="text-left text-xs font-medium text-purple-300 hover:text-purple-200 sm:text-right"
+                  >
+                    Advanced search, filters &amp; add stock → Sheets tab
+                  </button>
+                </div>
+                <div className="relative mb-2">
+                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
+                  <input
+                    type="text"
+                    value={nestSheetQuickFilter}
+                    onChange={(e) => setNestSheetQuickFilter(e.target.value)}
+                    placeholder="Filter by label, material, size…"
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-800/50 py-2.5 pl-10 pr-3 text-sm text-white placeholder-zinc-500 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+                    aria-label="Filter sheets for nest"
+                  />
+                </div>
+                {remnantsLoading && (
+                  <p className="py-4 text-center text-sm text-zinc-500">
+                    <Loader2 className="mr-2 inline size-4 animate-spin" />
+                    Loading sheets…
+                  </p>
+                )}
+                {!remnantsLoading && remnantsError && (
+                  <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                    {remnantsError}
+                  </p>
+                )}
+                {!remnantsLoading && !remnantsError && (
+                  <div className="max-h-[10.5rem] overflow-y-auto rounded-lg border border-zinc-800">
+                    <table className="w-full text-left text-xs sm:text-sm">
+                      <thead className="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950/95 text-[10px] font-medium uppercase tracking-wider text-zinc-500 backdrop-blur-sm sm:text-xs">
+                        <tr>
+                          <th className="w-10 px-2 py-2 text-center">Nest</th>
+                          <th className="px-2 py-2">Label</th>
+                          <th className="hidden px-2 py-2 sm:table-cell">Size</th>
+                          <th className="hidden px-2 py-2 md:table-cell">
+                            Mat / thick
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-800/80">
+                        {nestQuickFilteredRemnants.map((r) => (
+                          <tr
+                            key={r.db_id ?? r.id}
+                            className="hover:bg-zinc-800/40"
+                          >
+                            <td className="px-2 py-2 text-center">
+                              <input
+                                type="checkbox"
+                                title="Use in nest"
+                                className="rounded border-zinc-600 bg-zinc-900 text-purple-500 focus:ring-purple-500"
+                                checked={
+                                  !!r.db_id && selectedSheetIds.includes(r.db_id)
+                                }
+                                disabled={!r.db_id}
+                                onChange={() => toggleSelectedSheet(r.db_id)}
+                                aria-label={`Use ${r.id} in nest`}
+                              />
+                            </td>
+                            <td className="max-w-[8rem] truncate px-2 py-2 font-mono text-zinc-100 sm:max-w-none">
+                              {r.id}
+                            </td>
+                            <td className="hidden px-2 py-2 text-zinc-300 sm:table-cell">
+                              {r.length_in && r.width_in
+                                ? `${r.length_in}×${r.width_in}`
+                                : (r.dims ?? "—")}
+                            </td>
+                            <td className="hidden px-2 py-2 text-zinc-400 md:table-cell">
+                              <span className="line-clamp-2">
+                                {r.material}{" "}
+                                {r.thickness_in != null
+                                  ? `${r.thickness_in.toFixed(3)}"`
+                                  : ""}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                        {nestQuickFilteredRemnants.length === 0 && (
+                          <tr>
+                            <td
+                              colSpan={4}
+                              className="px-3 py-6 text-center text-zinc-500"
+                            >
+                              {remnants.length === 0
+                                ? "No stock yet — use Sheets tab to add stock."
+                                : nestSheetQuickFilter.trim()
+                                  ? "No matches — try another filter or open the Sheets tab."
+                                  : "No sheets to show."}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex w-full min-w-0 flex-col rounded-3xl border-2 border-cyan-800/50 bg-gradient-to-br from-zinc-900/70 to-zinc-950/50 p-6 shadow-xl shadow-cyan-500/10 backdrop-blur-sm sm:p-8">
+                <div className="mb-4 space-y-3 border-b border-zinc-800/90 pb-3">
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-cyan-800/60 bg-cyan-950/40 text-cyan-300">
+                        <Layers className="size-5" aria-hidden />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-cyan-100 sm:text-xl">
+                          Nesting
+                        </h3>
+                        <p className="text-[11px] text-zinc-500 sm:text-xs">
+                          Add parts, pick stock, then run the nest.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid min-w-0 grid-cols-[2fr_1fr] gap-2 sm:gap-3">
+                      <button
+                        type="button"
+                        onClick={handleGenerateNest}
+                        disabled={nestLoading}
+                        className="flex min-h-[3rem] min-w-0 items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-3 py-3.5 text-base font-semibold text-white shadow-lg shadow-emerald-900/35 ring-1 ring-emerald-400/50 transition hover:from-emerald-400 hover:to-teal-500 hover:shadow-emerald-800/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:pointer-events-none disabled:opacity-55 sm:px-4"
+                      >
+                        {nestLoading ? (
+                          <Loader2 className="size-5 shrink-0 animate-spin" />
+                        ) : (
+                          <Zap className="size-5 shrink-0" aria-hidden />
+                        )}
+                        <span className="truncate">
+                          {nestLoading ? "Nesting…" : "Generate Nest"}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleStopNest}
+                        disabled={!nestLoading}
+                        className="flex min-h-[3rem] min-w-0 items-center justify-center gap-2 rounded-xl border border-red-500/40 bg-red-950/30 px-2 py-3.5 text-sm font-semibold text-red-100 shadow-md shadow-red-950/20 transition hover:border-red-400/55 hover:bg-red-950/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:pointer-events-none disabled:border-zinc-700 disabled:bg-zinc-900/50 disabled:text-zinc-500 disabled:shadow-none sm:text-base"
+                      >
+                        <X className="size-5 shrink-0" aria-hidden />
+                        <span className="truncate">Stop</span>
+                      </button>
+                    </div>
+
+                  </div>
+                  <div className="flex flex-col gap-2 border-t border-zinc-800/80 pt-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] font-medium text-zinc-500">
+                        Presets
+                      </span>
+                      <button
+                        type="button"
+                        disabled={nestLoading}
+                        onClick={() =>
+                          setNestUiSettings((s) => ({
+                            ...s,
+                            ...NEST_PRESET_PREVIEW_FIELDS,
+                          }))
+                        }
+                        className="rounded-lg border border-amber-700/50 bg-amber-950/40 px-2.5 py-1 text-[11px] font-medium text-amber-100/90 hover:bg-amber-900/50 disabled:opacity-50"
+                      >
+                        Preview (fast)
+                      </button>
+                      <button
+                        type="button"
+                        disabled={nestLoading}
+                        onClick={() =>
+                          setNestUiSettings((s) => ({
+                            ...s,
+                            ...NEST_PRESET_FINAL_FIELDS,
+                          }))
+                        }
+                        className="rounded-lg border border-cyan-800/60 bg-cyan-950/30 px-2.5 py-1 text-[11px] font-medium text-cyan-100/90 hover:bg-cyan-900/40 disabled:opacity-50"
+                      >
+                        Final (quality)
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-start gap-2 text-[11px] leading-snug text-zinc-400">
+                      <p className="min-w-0 flex-1">
+                        <span className="font-medium tabular-nums text-zinc-300">
+                          {nestPartStats.rowCount}
+                        </span>{" "}
+                        part row
+                        {nestPartStats.rowCount === 1 ? "" : "s"} ·{" "}
+                        <span className="font-medium tabular-nums text-zinc-300">
+                          {nestPartStats.expanded}
+                        </span>{" "}
+                        pieces · ~{" "}
+                        <span className="tabular-nums">
+                          {nestPartStats.vertexTotal}
+                        </span>{" "}
+                        outline vertices · ~{" "}
+                        <span className="tabular-nums">
+                          {nestPartStats.approxPairs}
+                        </span>{" "}
+                        part pairs
+                      </p>
+                      <NestFieldHelp fieldId="partStatsHeavy" />
+                    </div>
+                    {(nestPartStats.expanded >= 40 ||
+                      nestPartStats.vertexTotal >= 6000) && (
+                      <p className="text-[11px] leading-snug text-amber-200/90">
+                        Heavy nest — expect long runs. Start with Preview and
+                        Geometry → simplify, or ask IT about single-pass mode on
+                        the nesting server.
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-end gap-4 text-sm">
+                    <label className="flex min-w-[10rem] max-w-[14rem] flex-col gap-1 text-zinc-400">
+                      <NestLabelWithHelp fieldId="spacing" disabled={nestLoading}>
+                        <span>Part &amp; sheet edge gap (in)</span>
+                      </NestLabelWithHelp>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={nestUiSettings.spacing}
+                        onChange={(e) =>
+                          setNestUiSettings((s) => ({
+                            ...s,
+                            spacing: Math.max(
+                              0,
+                              parseFloat(e.target.value) || 0,
+                            ),
+                          }))
+                        }
+                        disabled={nestLoading}
+                        className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                      />
+                    </label>
+                    <label className="flex min-w-[10rem] flex-col gap-1 text-zinc-400">
+                      <NestLabelWithHelp fieldId="rotations" disabled={nestLoading}>
+                        <span>Rotations to try</span>
+                      </NestLabelWithHelp>
+                      <select
+                        value={nestUiSettings.rotations}
+                        onChange={(e) =>
+                          setNestUiSettings((s) => ({
+                            ...s,
+                            rotations: Number(e.target.value) || 4,
+                          }))
+                        }
+                        disabled={nestLoading}
+                        className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                      >
+                        {NEST_ROTATION_OPTIONS.map((n) => (
+                          <option key={n} value={n}>
+                            {n} orientations (every {(360 / n).toFixed(1)}°)
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="mb-4 rounded-2xl border border-cyan-800/40 bg-zinc-950/50 p-4">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-medium text-zinc-300">
+                      Layout goal
+                    </span>
+                    <NestFieldHelp
+                      fieldId="layoutGoalIntro"
+                      disabled={nestLoading}
+                    />
+                  </div>
+                  <PlacementTypeVisuals
+                    active={nestUiSettings.placementType}
+                    disabled={nestLoading}
+                    onSelect={(placementType) =>
+                      setNestUiSettings((s) => ({ ...s, placementType }))
+                    }
+                  />
+                </div>
+
+                <div className="mb-4 rounded-2xl border border-cyan-800/40 bg-zinc-950/50 p-4">
+                  <button
+                    type="button"
+                    onClick={() => setNestAdvancedOpen((o) => !o)}
+                    className="flex items-center gap-1 text-xs font-medium text-cyan-300/90 hover:text-cyan-200"
+                  >
+                    {nestAdvancedOpen ? (
+                      <ChevronDown className="size-4" />
+                    ) : (
+                      <ChevronRight className="size-4" />
+                    )}
+                    Advanced: search tuning &amp; geometry
+                  </button>
+                  {nestAdvancedOpen && (
+                    <div className="mt-3 space-y-4 text-sm">
+                      <p className="flex flex-wrap items-center gap-1 text-[11px] leading-snug text-zinc-500">
+                        <span>
+                          Defaults work for most jobs. Open{" "}
+                          <span className="text-zinc-400">?</span> next to a field
+                          for full detail.
+                        </span>
+                        <NestFieldHelp
+                          fieldId="advancedDefaults"
+                          disabled={nestLoading}
+                          label="Default values for advanced nest settings"
+                        />
+                      </p>
+
+                      <div className="space-y-3 rounded-xl border border-zinc-800/70 bg-zinc-900/20 px-3 py-2.5">
+                        <span className="block text-[11px] font-medium text-zinc-400">
+                          More tuning
+                        </span>
+                        <label className="flex max-w-md flex-col gap-1 text-zinc-400">
+                          <span className="inline-flex items-center gap-1">
+                            Separate full attempts
+                            <NestFieldHelp
+                              fieldId="attempts"
+                              disabled={nestLoading}
+                            />
+                          </span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={NEST_UI_MAX_SEPARATE_ATTEMPTS}
+                            step={1}
+                            value={nestUiSettings.attempts}
+                            onChange={(e) =>
+                              setNestUiSettings((s) => ({
+                                ...s,
+                                attempts: Math.min(
+                                  NEST_UI_MAX_SEPARATE_ATTEMPTS,
+                                  Math.max(
+                                    1,
+                                    parseInt(e.target.value, 10) || 1,
+                                  ),
+                                ),
+                              }))
+                            }
+                            disabled={nestLoading}
+                            className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                          />
+                          <span className="text-[10px] text-zinc-600">
+                            With 2+, automatically retries when NestNow returns no
+                            layout or placement failed (new roll of the genetic
+                            search each time).
+                          </span>
+                        </label>
+                        <label className="flex max-w-md flex-col gap-1 text-zinc-400">
+                          <span className="inline-flex flex-wrap items-center gap-1">
+                            Max time per layout try (seconds)
+                            <NestFieldHelp
+                              fieldId="requestTimeout"
+                              disabled={nestLoading}
+                            />
+                          </span>
+                          <input
+                            type="number"
+                            min={NEST_REQUEST_TIMEOUT_SEC_MIN}
+                            max={NEST_REQUEST_TIMEOUT_SEC_MAX}
+                            step={30}
+                            value={nestUiSettings.requestTimeoutSec}
+                            onChange={(e) =>
+                              setNestUiSettings((s) => ({
+                                ...s,
+                                requestTimeoutSec: clampNestRequestTimeoutSec(
+                                  parseInt(e.target.value, 10),
+                                ),
+                              }))
+                            }
+                            disabled={nestLoading}
+                            className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                          />
+                          <span className="text-[10px] text-zinc-600">
+                            Allowed range {NEST_REQUEST_TIMEOUT_SEC_MIN}–
+                            {NEST_REQUEST_TIMEOUT_SEC_MAX}s per evaluation.
+                          </span>
+                        </label>
+                      </div>
+
+                      <div className="rounded-xl border border-zinc-800/70 bg-zinc-900/20 px-3 py-2.5">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-medium text-zinc-400">
+                            Automatic layout search
+                          </span>
+                          <NestFieldHelp
+                            fieldId="layoutSearchIntro"
+                            disabled={nestLoading}
+                          />
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          <label className="flex flex-col gap-1 text-zinc-400">
+                            <span className="inline-flex items-center gap-1">
+                              Improvement rounds
+                              <NestFieldHelp
+                                fieldId="gaGenerations"
+                                disabled={nestLoading}
+                              />
+                            </span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={NEST_UI_MAX_GA_GENERATIONS}
+                              step={1}
+                              value={nestUiSettings.gaGenerations}
+                              onChange={(e) =>
+                                setNestUiSettings((s) => ({
+                                  ...s,
+                                  gaGenerations: Math.min(
+                                    NEST_UI_MAX_GA_GENERATIONS,
+                                    Math.max(
+                                      1,
+                                      parseInt(e.target.value, 10) || 3,
+                                    ),
+                                  ),
+                                }))
+                              }
+                              disabled={nestLoading}
+                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-zinc-400">
+                            <span className="inline-flex items-center gap-1">
+                              Search randomness
+                              <NestFieldHelp
+                                fieldId="mutationRate"
+                                disabled={nestLoading}
+                              />
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={NEST_UI_MAX_MUTATION_RATE}
+                              step={1}
+                              value={nestUiSettings.mutationRate}
+                              onChange={(e) =>
+                                setNestUiSettings((s) => ({
+                                  ...s,
+                                  mutationRate: Math.min(
+                                    NEST_UI_MAX_MUTATION_RATE,
+                                    Math.max(
+                                      0,
+                                      parseInt(e.target.value, 10) || 10,
+                                    ),
+                                  ),
+                                }))
+                              }
+                              disabled={nestLoading}
+                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-zinc-400">
+                            <span className="inline-flex items-center gap-1">
+                              Layouts tried at once
+                              <NestFieldHelp
+                                fieldId="populationSize"
+                                disabled={nestLoading}
+                              />
+                            </span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={NEST_UI_MAX_POPULATION_SIZE}
+                              step={1}
+                              value={nestUiSettings.populationSize}
+                              onChange={(e) =>
+                                setNestUiSettings((s) => ({
+                                  ...s,
+                                  populationSize: Math.min(
+                                    NEST_UI_MAX_POPULATION_SIZE,
+                                    Math.max(
+                                      1,
+                                      parseInt(e.target.value, 10) || 10,
+                                    ),
+                                  ),
+                                }))
+                              }
+                              disabled={nestLoading}
+                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                            />
+                          </label>
+                          <label
+                            className={`flex flex-col gap-1 text-zinc-400 transition-[opacity,color] ${
+                              !nestUiSettings.mergeLines
+                                ? "opacity-45 text-zinc-500"
+                                : ""
+                            }`}
+                          >
+                            <span className="flex min-h-[2.75rem] items-start gap-1">
+                              Shared cuts vs material
+                              <NestFieldHelp
+                                fieldId="timeRatio"
+                                disabled={nestLoading}
+                              />
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={2}
+                              step={0.05}
+                              value={nestUiSettings.timeRatio}
+                              onChange={(e) =>
+                                setNestUiSettings((s) => ({
+                                  ...s,
+                                  timeRatio: Math.max(
+                                    0,
+                                    parseFloat(e.target.value) || 0,
+                                  ),
+                                }))
+                              }
+                              disabled={
+                                nestLoading || !nestUiSettings.mergeLines
+                              }
+                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-zinc-400">
+                            <span className="flex min-h-[2.75rem] items-start gap-1">
+                              Drawing scale (edge detection)
+                              <NestFieldHelp
+                                fieldId="scale"
+                                disabled={nestLoading}
+                              />
+                            </span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={200}
+                              step={1}
+                              value={nestUiSettings.scale}
+                              onChange={(e) =>
+                                setNestUiSettings((s) => ({
+                                  ...s,
+                                  scale: Math.max(
+                                    1,
+                                    parseFloat(e.target.value) || 72,
+                                  ),
+                                }))
+                              }
+                              disabled={nestLoading}
+                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                            />
+                          </label>
+                        </div>
+                        {nestAdminVisible && (
+                          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-800/60 pt-2 text-[10px] text-zinc-500">
+                            <span className="font-medium text-zinc-400">
+                              NestNow host env
+                            </span>
+                            <NestFieldHelp
+                              fieldId="serverEnvGa"
+                              disabled={nestLoading}
+                              label="NestNow server environment variables"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <label className="flex cursor-pointer select-none items-center gap-2 text-zinc-300">
+                        <input
+                          type="checkbox"
+                          checked={nestUiSettings.mergeLines}
+                          onChange={(e) =>
+                            setNestUiSettings((s) => ({
+                              ...s,
+                              mergeLines: e.target.checked,
+                            }))
+                          }
+                          disabled={nestLoading}
+                          className="rounded border-cyan-700 text-cyan-500"
+                        />
+                        <span className="inline-flex items-center gap-1">
+                          Reward lining up edges (shared cuts)
+                          <NestFieldHelp
+                            fieldId="mergeLines"
+                            disabled={nestLoading}
+                          />
+                        </span>
+                      </label>
+
+                      <div className="rounded-xl border border-zinc-800/70 bg-zinc-900/15">
+                        <button
+                          type="button"
+                          onClick={() => setNestGeometryOpen((o) => !o)}
+                          className="flex w-full items-center gap-1 px-3 py-2 text-left text-xs font-medium text-zinc-400 hover:text-zinc-300"
+                        >
+                          {nestGeometryOpen ? (
+                            <ChevronDown className="size-4 shrink-0" />
+                          ) : (
+                            <ChevronRight className="size-4 shrink-0" />
+                          )}
+                          Geometry &amp; precision
+                        </button>
+                        {nestGeometryOpen && (
+                          <div className="grid grid-cols-1 gap-3 border-t border-zinc-800/60 px-3 pb-3 pt-3 sm:grid-cols-3">
+                            <label className="flex flex-col gap-1 text-zinc-400">
+                              <span className="inline-flex items-center gap-1">
+                                Curve smoothing
+                                <NestFieldHelp
+                                  fieldId="curveTolerance"
+                                  disabled={nestLoading}
+                                />
+                              </span>
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.001}
+                                value={nestUiSettings.curveTolerance}
+                                onChange={(e) =>
+                                  setNestUiSettings((s) => ({
+                                    ...s,
+                                    curveTolerance: Math.max(
+                                      0,
+                                      parseFloat(e.target.value) || 0,
+                                    ),
+                                  }))
+                                }
+                                disabled={nestLoading}
+                                className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                              />
+                            </label>
+                            <label className="flex cursor-pointer select-none items-start gap-2 pt-1 text-zinc-300 sm:pt-7">
+                              <input
+                                type="checkbox"
+                                checked={nestUiSettings.simplify}
+                                onChange={(e) =>
+                                  setNestUiSettings((s) => ({
+                                    ...s,
+                                    simplify: e.target.checked,
+                                  }))
+                                }
+                                disabled={nestLoading}
+                                className="mt-0.5 rounded border-cyan-700 text-cyan-500"
+                              />
+                              <span>
+                                <span className="inline-flex items-center gap-1">
+                                  Rough outline shapes
+                                  <NestFieldHelp
+                                    fieldId="simplify"
+                                    disabled={nestLoading}
+                                  />
+                                </span>
+                              </span>
+                            </label>
+                            <label className="flex flex-col gap-1 text-zinc-400">
+                              <span className="inline-flex items-center gap-1">
+                                Shape math precision
+                                <NestFieldHelp
+                                  fieldId="clipperScale"
+                                  disabled={nestLoading}
+                                />
+                              </span>
+                              <input
+                                type="number"
+                                min={1000}
+                                step={1000000}
+                                value={nestUiSettings.clipperScale}
+                                onChange={(e) =>
+                                  setNestUiSettings((s) => ({
+                                    ...s,
+                                    clipperScale: Math.max(
+                                      1000,
+                                      parseInt(e.target.value, 10) ||
+                                        s.clipperScale,
+                                    ),
+                                  }))
+                                }
+                                disabled={nestLoading}
+                                className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 disabled:opacity-50"
+                              />
+                            </label>
+                          </div>
+                        )}
+                      </div>
+
+                      {nestAdminVisible && (
+                        <div className="space-y-2 rounded-xl border border-amber-900/35 bg-amber-950/20 px-3 py-2.5">
+                          <span className="block text-[11px] font-medium text-amber-200/90">
+                            Connection (admin / dev)
+                          </span>
+                          <p className="text-[10px] leading-snug text-zinc-500">
+                            For local debugging only. Production users should use
+                            the app proxy; set{" "}
+                            <code className="text-zinc-400">NESTNOW_URL</code> on
+                            the Keystone server. On a first visit from localhost,
+                            this field defaults to{" "}
+                            <code className="text-zinc-400">
+                              http://127.0.0.1:3001
+                            </code>{" "}
+                            (clear it to force /api/nest).
+                          </p>
+                          <label className="flex max-w-xl flex-col gap-1 text-zinc-400">
+                            <span className="inline-flex items-center gap-1">
+                              Direct NestNow base (localhost HTTP only)
+                              <NestFieldHelp
+                                fieldId="directNestNow"
+                                disabled={nestLoading}
+                              />
+                            </span>
+                            <input
+                              type="url"
+                              inputMode="url"
+                              autoComplete="off"
+                              placeholder="http://127.0.0.1:3001"
+                              value={nestUiSettings.directNestNowUrl}
+                              onChange={(e) =>
+                                setNestUiSettings((s) => ({
+                                  ...s,
+                                  directNestNowUrl: e.target.value,
+                                }))
+                              }
+                              disabled={nestLoading}
+                              className="rounded-lg border border-cyan-900/50 bg-zinc-900 px-3 py-2 text-cyan-100 placeholder:text-zinc-600 disabled:opacity-50"
+                            />
+                            <span className="text-[10px] text-zinc-500">
+                              {sanitizeDirectNestNowUrl(
+                                nestUiSettings.directNestNowUrl,
+                              ) ? (
+                                <>
+                                  Active: browser →{" "}
+                                  <code className="text-zinc-400">
+                                    {sanitizeDirectNestNowUrl(
+                                      nestUiSettings.directNestNowUrl,
+                                    )}
+                                  </code>
+                                </>
+                              ) : (
+                                <>
+                                  Active: browser →{" "}
+                                  <code className="text-zinc-400">
+                                    /api/nest
+                                  </code>{" "}
+                                  on this app
+                                </>
+                              )}
+                            </span>
+                          </label>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               </div>
             </div>
           )}
         </div>
+
+          <section
+            aria-label="Sheet and nest snapshot"
+            className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+          >
+            <KpiCard
+              label="Sheets in stock"
+              value={remnants.length}
+              hint={`${availableSheetCount} available`}
+              icon={Package}
+            />
+            <KpiCard
+              label="Available sheets"
+              value={availableSheetCount}
+              hint="Status: Available"
+              icon={Layers}
+            />
+            <KpiCard
+              label="Selected for nest"
+              value={selectedForNest.length}
+              hint={
+                selectedForNest.length > 0
+                  ? `~${selectedNestWeightLbs.toFixed(1)} lbs est.`
+                  : "Use quick sheet list on Nest tab or Sheets tab"
+              }
+              icon={Package}
+            />
+            <KpiCard
+              label="Last nest utilisation"
+              value={lastUtilDisplay}
+              hint={
+                nestResult
+                  ? `${lastNestSheetsUsed} sheet(s), ${(displayedNestResult?.placements ?? []).reduce((n, p) => n + (p.sheetplacements?.length ?? 0), 0)} parts`
+                  : "Run Generate Nest to see results"
+              }
+              icon={Percent}
+            />
+          </section>
         </div>
       </div>
 
@@ -2697,6 +4417,9 @@ export default function NestRemnantsPage() {
                 <label className="block text-sm font-medium text-zinc-300">
                   Length
                 </label>
+                <p className="text-[11px] text-zinc-500 -mt-1 mb-1">
+                  Longest side; runs left-to-right in nest preview (NestNow x).
+                </p>
                 <input
                   type="number"
                   min={0}
@@ -2710,6 +4433,9 @@ export default function NestRemnantsPage() {
                 <label className="block text-sm font-medium text-zinc-300">
                   Width
                 </label>
+                <p className="text-[11px] text-zinc-500 -mt-1 mb-1">
+                  Shorter side; vertical in nest preview (NestNow y).
+                </p>
                 <input
                   type="number"
                   min={0}
@@ -2955,7 +4681,9 @@ export default function NestRemnantsPage() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-zinc-200">Rectangle dimensions (in)</p>
-                      <p className="text-xs text-zinc-500">Enter width and height in inches.</p>
+                      <p className="text-xs text-zinc-500">
+                        Part outline: width and height in inches (local to the part).
+                      </p>
                     </div>
                     <label className="inline-flex items-center gap-2 text-xs text-cyan-200">
                       <input

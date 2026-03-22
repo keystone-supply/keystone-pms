@@ -48,6 +48,8 @@ Nesting logic comes from [NestingNow/NestNow](https://github.com/NestingNow/Nest
 3. The **nesting UI** will live in Keystone PMS (in this repo); NestNow is the engine, to be called via CLI, local server, or npm package as integration progresses.
 4. With the NestNow **server** running (`npm run start:server` in NestNow), use the **Nest Tool** tab on the nest-remnants page to run a nest and view the result. Optional: set `NESTNOW_URL` in `.env.local` (default `http://127.0.0.1:3001`).
 
+Long runs, proxy timeouts, and very large part counts are covered in [docs/nesting-scale-and-timeouts.md](docs/nesting-scale-and-timeouts.md). To estimate JSON payload size: `npm run nest:estimate-payload`.
+
 ## Deploy
 
 Build: `npm run build`. Start: `npm start`. For production, set `NEXTAUTH_URL` to your deployed URL. See [Next.js deployment docs](https://nextjs.org/docs/app/building-your-application/deploying) for platforms like Vercel.
