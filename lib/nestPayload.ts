@@ -2,6 +2,9 @@ import type { NestStrategyMode } from "@/lib/nestStrategy";
 
 export type NestPlacementType = "gravity" | "box" | "convexhull";
 
+/** Phase 1 (many cheap runs, collect seeds) vs Phase 2 (seeded polish run). */
+export type NestSearchPhase = "explore" | "refine";
+
 /** Fields edited in the Nest tab; persisted to localStorage (subset). */
 export interface NestUiSettings {
   spacing: number;
@@ -41,6 +44,11 @@ export interface NestUiSettings {
    * tight: always full NestNow job with part quantities as given.
    */
   nestStrategy: NestStrategyMode;
+  /**
+   * Explore: aggregate top distinct layouts (seeds) across attempts for optional Refine.
+   * Refine: POST optional `chromosome` from a chosen seed (full GA lane only).
+   */
+  nestSearchPhase: NestSearchPhase;
 }
 
 export const NEST_ROTATION_OPTIONS = [1, 2, 4, 8, 16] as const;
@@ -76,6 +84,7 @@ export const DEFAULT_NEST_UI_SETTINGS: NestUiSettings = {
   requestTimeoutSec: 3600,
   directNestNowUrl: "",
   nestStrategy: "auto",
+  nestSearchPhase: "explore",
 };
 
 /** Fast smoke nest: fewer rotations, single GA generation, small population. */
@@ -92,6 +101,26 @@ export const NEST_PRESET_FINAL_FIELDS: Partial<NestUiSettings> = {
   gaGenerations: 100,
   attempts: 1,
   rotations: 4,
+};
+
+/** Phase 1 — many short independent runs, higher mutation, shorter per-eval cap. */
+export const NEST_PRESET_EXPLORE_FIELDS: Partial<NestUiSettings> = {
+  nestSearchPhase: "explore",
+  attempts: 30,
+  populationSize: 50,
+  gaGenerations: 20,
+  mutationRate: 70,
+  requestTimeoutSec: 600,
+};
+
+/** Phase 2 — single heavy run seeded from a chosen Explore layout (pick a seed first). */
+export const NEST_PRESET_REFINE_FIELDS: Partial<NestUiSettings> = {
+  nestSearchPhase: "refine",
+  attempts: 5,
+  populationSize: 50,
+  gaGenerations: 10,
+  mutationRate: 5,
+  requestTimeoutSec: 3600,
 };
 
 /** Module-only nest before grid expansion (NestNow defaults–scale GA). */
@@ -170,6 +199,11 @@ export function loadNestUiSettings(): NestUiSettings {
       strat === "production_batch" || strat === "tight" || strat === "auto"
         ? strat
         : DEFAULT_NEST_UI_SETTINGS.nestStrategy;
+    const phase = merged.nestSearchPhase;
+    merged.nestSearchPhase =
+      phase === "refine" || phase === "explore"
+        ? phase
+        : DEFAULT_NEST_UI_SETTINGS.nestSearchPhase;
     return merged;
   } catch {
     return DEFAULT_NEST_UI_SETTINGS;

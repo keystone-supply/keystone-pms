@@ -37,6 +37,8 @@ import {
   RotateCcw,
   ZoomIn,
   ZoomOut,
+  HardDriveDownload,
+  CloudUpload,
 } from "lucide-react";
 
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
@@ -71,6 +73,8 @@ import {
   clampNestRequestTimeoutSec,
   nestNowEndpoints,
   NEST_PRESET_FINAL_FIELDS,
+  NEST_PRESET_EXPLORE_FIELDS,
+  NEST_PRESET_REFINE_FIELDS,
   NEST_PRESET_PREVIEW_FIELDS,
   NEST_REQUEST_TIMEOUT_SEC_MAX,
   NEST_REQUEST_TIMEOUT_SEC_MIN,
@@ -83,11 +87,17 @@ import {
   nestSheetPreviewDimensions,
   nestSheetPayloadToPreviewOutline,
   type NestApiSheetPayload,
+  isRectNestSheet,
 } from "@/lib/remnantNestGeometry";
 import {
   selectNestPlacementLane,
   partsUnitQuantities,
 } from "@/lib/nestStrategy";
+import {
+  buildNestSheetDxf,
+  nestDxfFilename,
+} from "@/lib/nestDxfExport";
+import { uploadDxfToProjectCad } from "@/lib/onedrive";
 import {
   expandModuleToGrid,
   type NestGridMetadata,
@@ -108,6 +118,17 @@ type SheetPlacement = {
   x?: number;
   y?: number;
 };
+/** One gene from NestNow: `{ id, outline }` preserves GA order over JSON; legacy ring arrays are older shape. */
+type NestChromosomeGene =
+  | { id: number; source?: number; outline: { x: number; y: number }[] }
+  | { x: number; y: number }[];
+
+/** GA individual snapshot for Phase 2 seeding (NestNow ≥ chromosome support). */
+type NestChromosome = {
+  placement: NestChromosomeGene[];
+  rotation: number[];
+};
+
 type NestResult = {
   fitness: number;
   area: number;
@@ -117,6 +138,8 @@ type NestResult = {
   placements: { sheet: number; sheetid: unknown; sheetplacements: SheetPlacement[] }[];
   /** Top alternative layouts from one NestNow run (lower fitness is better); index 0 matches top-level fields. */
   candidates?: NestResult[];
+  /** Optional GA chromosome for re-seeding a later Refine run. */
+  chromosome?: NestChromosome;
   /** Set when result came from production grid expansion. */
   nestStrategyMeta?: NestGridMetadata;
 };
@@ -185,6 +208,123 @@ function stripNestApiDiagnostics(raw: NestApiResponse): NestResult {
     });
   }
   return out;
+}
+
+const NEST_SEED_FITNESS_EPS = 1e-6;
+const NEST_SEEDS_STORAGE_PREFIX = "keystone-nest-seeds:v1:";
+
+/** One distinct layout kept for Explore → Refine (preview + optional chromosome). */
+type NestSeedEntry = {
+  fitness: number;
+  utilisation: number;
+  mergedLength: number;
+  area: number;
+  totalarea: number;
+  placements: NestResult["placements"];
+  attemptLabel?: string;
+  chromosome?: NestChromosome;
+};
+
+function nestJobFingerprint(
+  sheets: NestApiSheetPayload[],
+  parts: NestApiPartPayload[],
+): string {
+  const encSheet = (s: NestApiSheetPayload) =>
+    isRectNestSheet(s)
+      ? `R${s.width}:${s.height}:${s.quantity ?? 1}`
+      : `P${s.outline?.length ?? 0}`;
+  const encPart = (p: NestApiPartPayload) =>
+    `${p.outline.length}q${p.quantity ?? 1}h${p.holes?.length ?? 0}`;
+  return `${sheets.map(encSheet).join(";")}|${parts.map(encPart).join(";")}`;
+}
+
+function nestResultRowsForSeeds(data: NestResult): NestResult[] {
+  const rows: NestResult[] = [];
+  const add = (r: NestResult) => {
+    if (
+      typeof r.fitness === "number" &&
+      Number.isFinite(r.fitness) &&
+      Array.isArray(r.placements)
+    ) {
+      rows.push(r);
+    }
+  };
+  add(data);
+  if (Array.isArray(data.candidates)) {
+    for (const c of data.candidates) add(c);
+  }
+  return rows;
+}
+
+function nestResultToSeedEntry(
+  r: NestResult,
+  attemptLabel?: string,
+): NestSeedEntry {
+  return {
+    fitness: r.fitness,
+    utilisation: r.utilisation,
+    mergedLength: r.mergedLength,
+    area: r.area,
+    totalarea: r.totalarea,
+    placements: r.placements,
+    attemptLabel,
+    chromosome: r.chromosome,
+  };
+}
+
+function mergeTopNestSeeds(
+  prev: NestSeedEntry[],
+  data: NestResult,
+  attemptLabel?: string,
+): NestSeedEntry[] {
+  const incoming = nestResultRowsForSeeds(data).map((r) =>
+    nestResultToSeedEntry(r, attemptLabel),
+  );
+  const all = [...prev, ...incoming];
+  all.sort((a, b) => a.fitness - b.fitness);
+  const out: NestSeedEntry[] = [];
+  for (const row of all) {
+    if (
+      out.some(
+        (o) => Math.abs(o.fitness - row.fitness) < NEST_SEED_FITNESS_EPS,
+      )
+    ) {
+      continue;
+    }
+    out.push(row);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+function loadNestSeedsFromStorage(fp: string): NestSeedEntry[] {
+  if (typeof window === "undefined" || !fp) return [];
+  try {
+    const raw = window.localStorage.getItem(NEST_SEEDS_STORAGE_PREFIX + fp);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (x) =>
+        x &&
+        typeof x === "object" &&
+        typeof (x as NestSeedEntry).fitness === "number",
+    ) as NestSeedEntry[];
+  } catch {
+    return [];
+  }
+}
+
+function saveNestSeedsToStorage(fp: string, seeds: NestSeedEntry[]) {
+  if (typeof window === "undefined" || !fp) return;
+  try {
+    window.localStorage.setItem(
+      NEST_SEEDS_STORAGE_PREFIX + fp,
+      JSON.stringify(seeds),
+    );
+  } catch {
+    /* ignore quota */
+  }
 }
 
 /** Context for IT quick read (path + browser-measured POST duration). */
@@ -613,6 +753,12 @@ type LastNestPayload = {
   parts: NestApiPartPayload[];
   config: Record<string, string | number | boolean>;
   attemptsUsed: number;
+};
+
+type NestDxfProjectRow = {
+  project_number: string;
+  project_name: string;
+  customer: string;
 };
 
 // Semi-transparent fills and distinct strokes so parts are visible and distinguishable (plan: cyan/purple/amber by index).
@@ -1307,6 +1453,11 @@ export default function NestRemnantsPage() {
   );
   const [nestAdvancedOpen, setNestAdvancedOpen] = useState(false);
   const [nestGeometryOpen, setNestGeometryOpen] = useState(false);
+  /** Up to three distinct Explore layouts (and latest Refine alternatives) for Phase 2 seeding. */
+  const [nestTopSeeds, setNestTopSeeds] = useState<NestSeedEntry[]>([]);
+  const [nestSelectedSeedIndex, setNestSelectedSeedIndex] = useState<
+    number | null
+  >(null);
   const [nestAdminVisible, setNestAdminVisible] = useState(false);
   const filterPanelRef = useRef<HTMLDivElement>(null);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
@@ -1338,6 +1489,22 @@ export default function NestRemnantsPage() {
   const [previewSheetIndex, setPreviewSheetIndex] = useState(0);
   const nestPreviewRef = useRef<NestPreviewZoomableHandle>(null);
 
+  const [nestDxfModalOpen, setNestDxfModalOpen] = useState(false);
+  const [nestDxfExportMethod, setNestDxfExportMethod] = useState<
+    "download" | "onedrive"
+  >("download");
+  const [nestDxfProjects, setNestDxfProjects] = useState<NestDxfProjectRow[]>(
+    [],
+  );
+  const [nestDxfProjectsLoading, setNestDxfProjectsLoading] = useState(false);
+  const [nestDxfSelectedJob, setNestDxfSelectedJob] = useState("");
+  const [nestDxfExportError, setNestDxfExportError] = useState("");
+  const [nestDxfExporting, setNestDxfExporting] = useState(false);
+  const [nestDxfIncludeLabels, setNestDxfIncludeLabels] = useState(true);
+  const [nestDxfIncludeSheetOutline, setNestDxfIncludeSheetOutline] =
+    useState(true);
+  const [nestDxfTextHeight, setNestDxfTextHeight] = useState("1");
+
   const fetchOpenQuotesCount = useCallback(async () => {
     const { data, error } = await supabase
       .from("projects")
@@ -1347,6 +1514,30 @@ export default function NestRemnantsPage() {
       aggregateDashboardMetrics(data as DashboardProjectRow[]).openQuotes,
     );
   }, []);
+
+  const fetchNestDxfProjects = useCallback(async () => {
+    setNestDxfProjectsLoading(true);
+    const { data, error } = await supabase
+      .from("projects")
+      .select(
+        "project_number, project_name, customer, project_status, customer_approval",
+      )
+      .eq("project_complete", false)
+      .or("customer_approval.is.null,customer_approval.neq.CANCELLED")
+      .or("project_status.is.null,project_status.neq.cancelled")
+      .order("project_number", { ascending: false });
+    if (error) console.error("Error fetching projects for DXF export:", error);
+    setNestDxfProjects((data as NestDxfProjectRow[]) || []);
+    setNestDxfProjectsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!nestDxfModalOpen) return;
+    setNestDxfExportMethod("download");
+    setNestDxfSelectedJob("");
+    setNestDxfExportError("");
+    void fetchNestDxfProjects();
+  }, [nestDxfModalOpen, fetchNestDxfProjects]);
 
   const uniqueMaterials = useMemo(
     () =>
@@ -1401,6 +1592,46 @@ export default function NestRemnantsPage() {
       expanded > 1 ? Math.round((expanded * (expanded - 1)) / 2) : 0;
     return { rowCount, expanded, vertexTotal, approxPairs };
   }, [parts]);
+
+  const nestJobCtxFingerprint = useMemo(() => {
+    if (!remnants.length || !parts.length) {
+      return {
+        fingerprint: "",
+        sheets: [] as NestApiSheetPayload[],
+        parts: [] as NestApiPartPayload[],
+      };
+    }
+    const selectedRemnants = remnants.filter(
+      (r) => r.db_id && selectedSheetIds.includes(r.db_id),
+    );
+    const sheetsSource =
+      selectedRemnants.length > 0
+        ? selectedRemnants
+        : [
+            remnants.find((r) => r.status === "Available") ??
+              remnants[0],
+          ];
+    if (!sheetsSource[0]) {
+      return {
+        fingerprint: "",
+        sheets: [] as NestApiSheetPayload[],
+        parts: [] as NestApiPartPayload[],
+      };
+    }
+    const sheets = sheetsSource.map(remnantToNestSheet);
+    const nestPartsPayload: NestApiPartPayload[] = parts.map((p, index) => ({
+      outline: p.outline,
+      ...(p.holes?.length ? { holes: p.holes } : {}),
+      quantity: p.quantity,
+      filename: p.name || `part-${index + 1}`,
+      ...(p.canRotate === false ? { canRotate: false } : {}),
+    }));
+    return {
+      fingerprint: nestJobFingerprint(sheets, nestPartsPayload),
+      sheets,
+      parts: nestPartsPayload,
+    };
+  }, [remnants, selectedSheetIds, parts]);
 
   function filterRemnants(list: Remnant[], query: string): Remnant[] {
     const q = query.trim().toLowerCase();
@@ -1767,6 +1998,26 @@ export default function NestRemnantsPage() {
   }, [nestUiSettings]);
 
   useEffect(() => {
+    const fp = nestJobCtxFingerprint.fingerprint;
+    if (!fp) {
+      setNestTopSeeds([]);
+      setNestSelectedSeedIndex(null);
+      return;
+    }
+    setNestTopSeeds(loadNestSeedsFromStorage(fp));
+    setNestSelectedSeedIndex(null);
+  }, [nestJobCtxFingerprint.fingerprint]);
+
+  useEffect(() => {
+    if (
+      nestSelectedSeedIndex != null &&
+      nestSelectedSeedIndex >= nestTopSeeds.length
+    ) {
+      setNestSelectedSeedIndex(null);
+    }
+  }, [nestTopSeeds, nestSelectedSeedIndex]);
+
+  useEffect(() => {
     nestLiveBestSoFarRef.current = nestLiveBestSoFar;
   }, [nestLiveBestSoFar]);
 
@@ -1809,6 +2060,45 @@ export default function NestRemnantsPage() {
     return (next.utilisation ?? 0) > (prev.utilisation ?? 0);
   }
 
+  function applyNestSeedPreview(seed: NestSeedEntry) {
+    if (!nestJobCtxFingerprint.fingerprint) return;
+    setNestResult({
+      fitness: seed.fitness,
+      area: seed.area,
+      totalarea: seed.totalarea,
+      mergedLength: seed.mergedLength,
+      utilisation: seed.utilisation,
+      placements: seed.placements,
+    });
+    setNestCandidateIndex(0);
+    const rtc = clampNestRequestTimeoutSec(nestUiSettings.requestTimeoutSec);
+    setLastNestPayload({
+      sheets: nestJobCtxFingerprint.sheets,
+      parts: nestJobCtxFingerprint.parts,
+      config: {
+        ...buildApiNestConfig(nestUiSettings),
+        attempts: nestUiSettings.attempts,
+        requestTimeoutSec: rtc,
+        nestStrategy: nestUiSettings.nestStrategy,
+        nestSearchPhase: nestUiSettings.nestSearchPhase,
+      },
+      attemptsUsed: 0,
+    });
+    setPageLastUpdated(new Date());
+  }
+
+  function clearNestTopSeedsForJob() {
+    setNestTopSeeds([]);
+    setNestSelectedSeedIndex(null);
+    const fp = nestJobCtxFingerprint.fingerprint;
+    if (typeof window === "undefined" || !fp) return;
+    try {
+      window.localStorage.removeItem(NEST_SEEDS_STORAGE_PREFIX + fp);
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function handleGenerateNest() {
     if (nestInFlightRef.current) return;
 
@@ -1822,6 +2112,46 @@ export default function NestRemnantsPage() {
       setNestError("Add at least one part before nesting.");
       setNestErrorAdmin(null);
       return;
+    }
+
+    const selectedRemnants = remnants.filter(
+      (r) => r.db_id && selectedSheetIds.includes(r.db_id),
+    );
+    const sheetsSource =
+      selectedRemnants.length > 0
+        ? selectedRemnants
+        : [
+            remnants.find((r) => r.status === "Available") ??
+              remnants[0],
+          ];
+
+    const sheets: NestApiSheetPayload[] =
+      sheetsSource.map(remnantToNestSheet);
+
+    const nestPartsPayload = mapPartsToApiPayload(parts);
+
+    const placementLane = selectNestPlacementLane(
+      nestUiSettings.nestStrategy,
+      parts,
+      sheets,
+    );
+
+    if (
+      placementLane.kind === "full" &&
+      nestUiSettings.nestSearchPhase === "refine"
+    ) {
+      const idx = nestSelectedSeedIndex;
+      const picked =
+        idx != null && idx >= 0 && idx < nestTopSeeds.length
+          ? nestTopSeeds[idx]
+          : null;
+      if (!picked?.chromosome) {
+        setNestError(
+          "Refine needs a seed with chromosome data. Run Explore, then select a seed below (NestNow must return chromosomes).",
+        );
+        setNestErrorAdmin(null);
+        return;
+      }
     }
 
     nestInFlightRef.current = true;
@@ -1840,28 +2170,7 @@ export default function NestRemnantsPage() {
     const endpoints = nestNowEndpoints(nestUiSettings.directNestNowUrl);
     nestActiveEndpointsRef.current = endpoints;
 
-    const selectedRemnants = remnants.filter(
-      (r) => r.db_id && selectedSheetIds.includes(r.db_id),
-    );
-    const sheetsSource =
-      selectedRemnants.length > 0
-        ? selectedRemnants
-        : [
-            remnants.find((r) => r.status === "Available") ??
-              remnants[0],
-          ];
-
-    const sheets: NestApiSheetPayload[] =
-      sheetsSource.map(remnantToNestSheet);
-
-    const nestPartsPayload = mapPartsToApiPayload(parts);
     setNestRunPreviewGeometry({ sheets, parts: nestPartsPayload });
-
-    const placementLane = selectNestPlacementLane(
-      nestUiSettings.nestStrategy,
-      parts,
-      sheets,
-    );
 
     const attempts = Math.min(
       NEST_UI_MAX_SEPARATE_ATTEMPTS,
@@ -1879,6 +2188,7 @@ export default function NestRemnantsPage() {
       parts: NestApiPartPayload[];
       config: typeof apiConfig;
       requestTimeoutMs: number;
+      chromosome?: NestChromosome;
     } | null = null;
     let lastAttemptError: string | null = null;
     let lastAttemptAdmin: string | null = null;
@@ -2029,6 +2339,7 @@ export default function NestRemnantsPage() {
           attempts: 1,
           requestTimeoutSec,
           nestStrategy: nestUiSettings.nestStrategy,
+          nestSearchPhase: nestUiSettings.nestSearchPhase,
           gridStampsPlaced: expanded.meta.stampsPlaced,
           gridCapacity: expanded.meta.gridCapacity,
           gridPitchX: expanded.meta.pitchX,
@@ -2054,11 +2365,21 @@ export default function NestRemnantsPage() {
           setNestProgressLabel(`Attempt ${attempt} / ${attempts}`);
         }
 
+        const seedChromosomeForRun =
+          placementLane.kind === "full" &&
+          nestUiSettings.nestSearchPhase === "refine" &&
+          nestSelectedSeedIndex != null
+            ? nestTopSeeds[nestSelectedSeedIndex]?.chromosome
+            : undefined;
+
         const payload = {
           sheets,
           parts: nestPartsPayload,
           config: apiConfig,
           requestTimeoutMs,
+          ...(seedChromosomeForRun
+            ? { chromosome: seedChromosomeForRun }
+            : {}),
         };
 
         if (nestRunVersionRef.current !== myVersion) {
@@ -2152,6 +2473,26 @@ export default function NestRemnantsPage() {
         }
 
         const data = stripNestApiDiagnostics(raw);
+        if (
+          placementLane.kind === "full" &&
+          (nestUiSettings.nestSearchPhase === "explore" ||
+            nestUiSettings.nestSearchPhase === "refine")
+        ) {
+          const label =
+            nestUiSettings.nestSearchPhase === "refine"
+              ? attempts > 1
+                ? `Refine · try ${attempt}`
+                : "Refine"
+              : attempts > 1
+                ? `Attempt ${attempt}`
+                : undefined;
+          setNestTopSeeds((prev) => {
+            const next = mergeTopNestSeeds(prev, data, label);
+            const fp = nestJobCtxFingerprint.fingerprint;
+            if (fp) saveNestSeedsToStorage(fp, next);
+            return next;
+          });
+        }
         if (nestAttemptBetter(data, bestResult)) {
           bestResult = data;
           bestPayloadBody = payload;
@@ -2181,6 +2522,7 @@ export default function NestRemnantsPage() {
           attempts,
           requestTimeoutSec,
           nestStrategy: nestUiSettings.nestStrategy,
+          nestSearchPhase: nestUiSettings.nestSearchPhase,
         };
         setNestResult(bestResult);
         setLastNestPayload({
@@ -2432,6 +2774,183 @@ export default function NestRemnantsPage() {
     setIsModalOpen(false);
   };
 
+  const safePreviewSheetIndex = useMemo(() => {
+    const n = displayedNestResult?.placements?.length ?? 0;
+    if (n <= 0) return 0;
+    return Math.min(Math.max(0, previewSheetIndex), n - 1);
+  }, [displayedNestResult?.placements?.length, previewSheetIndex]);
+
+  const liveSafePreviewSheetIndex = useMemo(() => {
+    const n = nestLiveBestSoFar?.placements?.length ?? 0;
+    if (n <= 0) return 0;
+    return Math.min(Math.max(0, previewSheetIndex), n - 1);
+  }, [nestLiveBestSoFar?.placements?.length, previewSheetIndex]);
+
+  const liveNestPreviewWorld = useMemo(() => {
+    if (
+      !nestRunPreviewGeometry?.parts?.length ||
+      !nestLiveBestSoFar?.placements?.length
+    ) {
+      return { worldW: 96, worldH: 48 };
+    }
+    const sheet = nestRunPreviewGeometry.sheets[liveSafePreviewSheetIndex];
+    const dim = sheet
+      ? nestSheetPreviewDimensions(sheet)
+      : { width: 96, height: 48 };
+    const sw = dim.width;
+    const sh = dim.height;
+    const sheetOutlineNest = sheet
+      ? nestSheetPayloadToPreviewOutline(sheet)
+      : undefined;
+    const sheetplacements =
+      nestLiveBestSoFar.placements[liveSafePreviewSheetIndex]
+        ?.sheetplacements ?? [];
+    return computeNestPreviewWorld(
+      sw,
+      sh,
+      nestRunPreviewGeometry.parts as NestPreviewPart[],
+      sheetplacements,
+      sheetOutlineNest,
+    );
+  }, [
+    nestRunPreviewGeometry,
+    liveSafePreviewSheetIndex,
+    nestLiveBestSoFar,
+  ]);
+
+  const completedNestPreviewWorld = useMemo(() => {
+    if (
+      !lastNestPayload?.parts?.length ||
+      !displayedNestResult?.placements?.length
+    ) {
+      return { worldW: 96, worldH: 48 };
+    }
+    const sheet = lastNestPayload.sheets[safePreviewSheetIndex];
+    const dim = sheet
+      ? nestSheetPreviewDimensions(sheet)
+      : { width: 96, height: 48 };
+    const sw = dim.width;
+    const sh = dim.height;
+    const sheetOutlineNest = sheet
+      ? nestSheetPayloadToPreviewOutline(sheet)
+      : undefined;
+    const sheetplacements =
+      displayedNestResult.placements[safePreviewSheetIndex]
+        ?.sheetplacements ?? [];
+    return computeNestPreviewWorld(
+      sw,
+      sh,
+      lastNestPayload.parts as NestPreviewPart[],
+      sheetplacements,
+      sheetOutlineNest,
+    );
+  }, [lastNestPayload, safePreviewSheetIndex, displayedNestResult]);
+
+  const handleNestDxfExport = useCallback(async () => {
+    setNestDxfExportError("");
+    setNestDxfExporting(true);
+    try {
+      if (
+        nestLoading ||
+        !lastNestPayload?.parts?.length ||
+        !displayedNestResult?.placements?.length
+      ) {
+        setNestDxfExportError(
+          "Export is available only after nesting finishes.",
+        );
+        return;
+      }
+      const sheet = lastNestPayload.sheets[safePreviewSheetIndex];
+      if (!sheet) {
+        setNestDxfExportError("Sheet data missing for this preview.");
+        return;
+      }
+      const placementsRow =
+        displayedNestResult.placements[safePreviewSheetIndex];
+      const sheetplacements = placementsRow?.sheetplacements ?? [];
+      const th = parseFloat(nestDxfTextHeight.replace(",", "."));
+      const textHeight = Number.isFinite(th) && th > 0 ? th : 1;
+      const dxf = buildNestSheetDxf(
+        sheet,
+        lastNestPayload.parts,
+        sheetplacements,
+        {
+          includePartNames: nestDxfIncludeLabels,
+          includeSheetOutline: nestDxfIncludeSheetOutline,
+          textHeight,
+        },
+      );
+      const sheetNum = safePreviewSheetIndex + 1;
+      if (nestDxfExportMethod === "download") {
+        const filename = nestDxfFilename(sheetNum);
+        const blob = new Blob([dxf], {
+          type: "application/dxf;charset=utf-8",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.style.display = "none";
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        alert(`Downloaded: ${filename}`);
+        setNestDxfModalOpen(false);
+        return;
+      }
+      if (!nestDxfSelectedJob) {
+        setNestDxfExportError("Please select a job.");
+        return;
+      }
+      const selectedProject = nestDxfProjects.find(
+        (p) => p.project_number === nestDxfSelectedJob,
+      );
+      if (!selectedProject) {
+        setNestDxfExportError("Selected project not found.");
+        return;
+      }
+      const freshSessionRes = await fetch("/api/auth/session");
+      const freshSession = await freshSessionRes.json();
+      const freshToken = freshSession?.accessToken;
+      if (!freshToken) {
+        setNestDxfExportError(
+          "No access token. Please sign out and sign back in.",
+        );
+        return;
+      }
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const filename = `Nest_${nestDxfSelectedJob}_Sheet${sheetNum}_${stamp}.dxf`;
+      const path = await uploadDxfToProjectCad(
+        freshToken,
+        selectedProject.customer,
+        selectedProject.project_number,
+        selectedProject.project_name,
+        filename,
+        dxf,
+      );
+      alert(`Uploaded to OneDrive: ${path}`);
+      setNestDxfModalOpen(false);
+      setNestDxfSelectedJob("");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Export failed";
+      setNestDxfExportError(message);
+    } finally {
+      setNestDxfExporting(false);
+    }
+  }, [
+    nestLoading,
+    lastNestPayload,
+    displayedNestResult,
+    safePreviewSheetIndex,
+    nestDxfTextHeight,
+    nestDxfIncludeLabels,
+    nestDxfIncludeSheetOutline,
+    nestDxfExportMethod,
+    nestDxfSelectedJob,
+    nestDxfProjects,
+  ]);
+
   if (status === "loading") {
     return (
       <div className="flex h-screen items-center justify-center bg-zinc-950 text-white">
@@ -2522,78 +3041,6 @@ export default function NestRemnantsPage() {
     displayedNestResult != null
       ? `${(displayedNestResult.utilisation ?? 0).toFixed(2)}%`
       : "—";
-
-  const safePreviewSheetIndex = useMemo(() => {
-    const n = displayedNestResult?.placements?.length ?? 0;
-    if (n <= 0) return 0;
-    return Math.min(Math.max(0, previewSheetIndex), n - 1);
-  }, [displayedNestResult?.placements?.length, previewSheetIndex]);
-
-  const liveSafePreviewSheetIndex = useMemo(() => {
-    const n = nestLiveBestSoFar?.placements?.length ?? 0;
-    if (n <= 0) return 0;
-    return Math.min(Math.max(0, previewSheetIndex), n - 1);
-  }, [nestLiveBestSoFar?.placements?.length, previewSheetIndex]);
-
-  const liveNestPreviewWorld = useMemo(() => {
-    if (
-      !nestRunPreviewGeometry?.parts?.length ||
-      !nestLiveBestSoFar?.placements?.length
-    ) {
-      return { worldW: 96, worldH: 48 };
-    }
-    const sheet = nestRunPreviewGeometry.sheets[liveSafePreviewSheetIndex];
-    const dim = sheet
-      ? nestSheetPreviewDimensions(sheet)
-      : { width: 96, height: 48 };
-    const sw = dim.width;
-    const sh = dim.height;
-    const sheetOutlineNest = sheet
-      ? nestSheetPayloadToPreviewOutline(sheet)
-      : undefined;
-    const sheetplacements =
-      nestLiveBestSoFar.placements[liveSafePreviewSheetIndex]
-        ?.sheetplacements ?? [];
-    return computeNestPreviewWorld(
-      sw,
-      sh,
-      nestRunPreviewGeometry.parts as NestPreviewPart[],
-      sheetplacements,
-      sheetOutlineNest,
-    );
-  }, [
-    nestRunPreviewGeometry,
-    liveSafePreviewSheetIndex,
-    nestLiveBestSoFar,
-  ]);
-
-  const completedNestPreviewWorld = useMemo(() => {
-    if (
-      !lastNestPayload?.parts?.length ||
-      !displayedNestResult?.placements?.length
-    ) {
-      return { worldW: 96, worldH: 48 };
-    }
-    const sheet = lastNestPayload.sheets[safePreviewSheetIndex];
-    const dim = sheet
-      ? nestSheetPreviewDimensions(sheet)
-      : { width: 96, height: 48 };
-    const sw = dim.width;
-    const sh = dim.height;
-    const sheetOutlineNest = sheet
-      ? nestSheetPayloadToPreviewOutline(sheet)
-      : undefined;
-    const sheetplacements =
-      displayedNestResult.placements[safePreviewSheetIndex]
-        ?.sheetplacements ?? [];
-    return computeNestPreviewWorld(
-      sw,
-      sh,
-      lastNestPayload.parts as NestPreviewPart[],
-      sheetplacements,
-      sheetOutlineNest,
-    );
-  }, [lastNestPayload, safePreviewSheetIndex, displayedNestResult]);
 
   const showCompletedNestPreview =
     !nestLoading &&
@@ -3101,7 +3548,18 @@ export default function NestRemnantsPage() {
                     </div>
                     <button
                       type="button"
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-600/80 bg-zinc-800/80 px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-500 hover:bg-zinc-700 hover:text-white sm:text-sm"
+                      disabled={!showCompletedNestPreview}
+                      title={
+                        showCompletedNestPreview
+                          ? "Export the sheet shown in the preview (DXF)"
+                          : "Available when nesting has finished"
+                      }
+                      onClick={() => setNestDxfModalOpen(true)}
+                      className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-600/80 bg-zinc-800/80 px-2.5 py-1.5 text-xs font-medium transition-colors sm:text-sm ${
+                        showCompletedNestPreview
+                          ? "text-zinc-200 hover:border-zinc-500 hover:bg-zinc-700 hover:text-white"
+                          : "cursor-not-allowed text-zinc-500 opacity-50"
+                      }`}
                     >
                       Export .DXF
                     </button>
@@ -3987,7 +4445,110 @@ export default function NestRemnantsPage() {
                       >
                         Final (quality)
                       </button>
+                      <button
+                        type="button"
+                        disabled={nestLoading}
+                        onClick={() =>
+                          setNestUiSettings((s) => ({
+                            ...s,
+                            ...NEST_PRESET_EXPLORE_FIELDS,
+                          }))
+                        }
+                        className="rounded-lg border border-violet-700/50 bg-violet-950/35 px-2.5 py-1 text-[11px] font-medium text-violet-100/90 hover:bg-violet-900/45 disabled:opacity-50"
+                      >
+                        Explore (phase 1)
+                      </button>
+                      <button
+                        type="button"
+                        disabled={nestLoading}
+                        onClick={() =>
+                          setNestUiSettings((s) => ({
+                            ...s,
+                            ...NEST_PRESET_REFINE_FIELDS,
+                          }))
+                        }
+                        className="rounded-lg border border-fuchsia-800/50 bg-fuchsia-950/30 px-2.5 py-1 text-[11px] font-medium text-fuchsia-100/90 hover:bg-fuchsia-900/40 disabled:opacity-50"
+                      >
+                        Refine (phase 2)
+                      </button>
+                      <NestFieldHelp fieldId="nestExploreRefine" />
                     </div>
+                    <p className="text-[11px] text-zinc-500">
+                      Search phase:{" "}
+                      <span className="font-medium text-zinc-300">
+                        {nestUiSettings.nestSearchPhase === "refine"
+                          ? "Refine — pick a seed below, then Generate"
+                          : "Explore — seeds accumulate for Refine"}
+                      </span>
+                    </p>
+                    {nestTopSeeds.length > 0 && (
+                      <div className="rounded-xl border border-zinc-700/80 bg-zinc-950/40 p-3">
+                        <div className="mb-2 flex w-full min-w-0 flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-medium text-zinc-300">
+                            Top seeds (job)
+                          </span>
+                          <NestFieldHelp fieldId="nestSeeds" />
+                          <button
+                            type="button"
+                            disabled={nestLoading}
+                            onClick={clearNestTopSeedsForJob}
+                            className="ml-auto shrink-0 rounded-md border border-zinc-600 bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-zinc-300 hover:bg-zinc-800/80 disabled:pointer-events-none disabled:opacity-50"
+                          >
+                            Clear seeds
+                          </button>
+                        </div>
+                        <ul className="grid gap-2 sm:grid-cols-3">
+                          {nestTopSeeds.map((seed, i) => {
+                            const selected = nestSelectedSeedIndex === i;
+                            return (
+                              <li
+                                key={`${seed.fitness}-${i}`}
+                                className={`flex min-w-0 flex-col gap-1.5 rounded-lg border p-2.5 text-[11px] ${
+                                  selected
+                                    ? "border-fuchsia-500/60 bg-fuchsia-950/25"
+                                    : "border-zinc-700/70 bg-zinc-900/40"
+                                }`}
+                              >
+                                <div className="font-semibold tabular-nums text-zinc-200">
+                                  #{i + 1} · fitness {seed.fitness.toFixed(4)}{" "}
+                                  · util{" "}
+                                  {(seed.utilisation ?? 0).toFixed(1)}%
+                                </div>
+                                {seed.attemptLabel ? (
+                                  <div className="truncate text-zinc-500">
+                                    {seed.attemptLabel}
+                                  </div>
+                                ) : null}
+                                {!seed.chromosome ? (
+                                  <div className="text-amber-200/85">
+                                    No chromosome — update NestNow to enable
+                                    Refine seeding.
+                                  </div>
+                                ) : null}
+                                <div className="mt-auto flex flex-wrap gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={nestLoading}
+                                    onClick={() => applyNestSeedPreview(seed)}
+                                    className="rounded-md border border-zinc-600 bg-zinc-800/80 px-2 py-1 text-[10px] font-medium text-zinc-200 hover:bg-zinc-700/80 disabled:opacity-50"
+                                  >
+                                    Preview
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={nestLoading || !seed.chromosome}
+                                    onClick={() => setNestSelectedSeedIndex(i)}
+                                    className="rounded-md border border-fuchsia-700/50 bg-fuchsia-950/40 px-2 py-1 text-[10px] font-medium text-fuchsia-100 hover:bg-fuchsia-900/50 disabled:opacity-50"
+                                  >
+                                    Use for Refine
+                                  </button>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    )}
                     <div className="flex flex-wrap items-start gap-2 text-[11px] leading-snug text-zinc-400">
                       <p className="min-w-0 flex-1">
                         <span className="font-medium tabular-nums text-zinc-300">
@@ -5064,6 +5625,163 @@ export default function NestRemnantsPage() {
                   Add
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {nestDxfModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="mx-auto w-full max-w-md rounded-2xl border border-zinc-800/80 bg-zinc-900/95 p-6 shadow-2xl">
+            <h3 className="mb-1 text-lg font-semibold text-white">
+              Export nest as DXF
+            </h3>
+            <p className="mb-4 text-xs leading-relaxed text-zinc-500">
+              Exports the{" "}
+              <span className="text-zinc-400">
+                sheet {safePreviewSheetIndex + 1}
+              </span>{" "}
+              shown in the preview. Optional layers: SHEET (stock outline),
+              PARTS (cut paths), TEXT (part names). Turn off sheet and text to
+              export only nested part outlines. Coordinates match the nest
+              (inches, y-up).
+            </p>
+            <div className="mb-4 space-y-3">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-300">
+                <input
+                  type="checkbox"
+                  className="size-4 rounded border-zinc-600 bg-zinc-900 text-cyan-500 focus:ring-cyan-500/40"
+                  checked={nestDxfIncludeSheetOutline}
+                  onChange={(e) =>
+                    setNestDxfIncludeSheetOutline(e.target.checked)
+                  }
+                />
+                Include sheet outline (SHEET layer)
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-300">
+                <input
+                  type="checkbox"
+                  className="size-4 rounded border-zinc-600 bg-zinc-900 text-cyan-500 focus:ring-cyan-500/40"
+                  checked={nestDxfIncludeLabels}
+                  onChange={(e) => setNestDxfIncludeLabels(e.target.checked)}
+                />
+                Include part names (TEXT layer, wrapped)
+              </label>
+              <div>
+                <label
+                  htmlFor="nest-dxf-text-height"
+                  className="mb-1 block text-xs font-medium text-zinc-400"
+                >
+                  Label height (in)
+                </label>
+                <input
+                  id="nest-dxf-text-height"
+                  type="number"
+                  min={0.125}
+                  step={0.125}
+                  value={nestDxfTextHeight}
+                  onChange={(e) => setNestDxfTextHeight(e.target.value)}
+                  disabled={!nestDxfIncludeLabels}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950/50 px-3 py-2 font-mono text-sm text-white focus:border-cyan-500/50 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-40"
+                />
+              </div>
+            </div>
+            <div className="mb-6 grid grid-cols-2 gap-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-1">
+              <button
+                type="button"
+                onClick={() => setNestDxfExportMethod("download")}
+                className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                  nestDxfExportMethod === "download"
+                    ? "bg-cyan-600 text-white shadow-sm ring-1 ring-cyan-500/30"
+                    : "text-zinc-400 hover:bg-zinc-800/80 hover:text-white"
+                }`}
+              >
+                <HardDriveDownload className="size-4 shrink-0" aria-hidden />
+                Download
+              </button>
+              <button
+                type="button"
+                onClick={() => setNestDxfExportMethod("onedrive")}
+                className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                  nestDxfExportMethod === "onedrive"
+                    ? "bg-cyan-600 text-white shadow-sm ring-1 ring-cyan-500/30"
+                    : "text-zinc-400 hover:bg-zinc-800/80 hover:text-white"
+                }`}
+              >
+                <CloudUpload className="size-4 shrink-0" aria-hidden />
+                Job / OneDrive
+              </button>
+            </div>
+            {nestDxfExportMethod === "onedrive" ? (
+              <div className="mb-6">
+                <label className="mb-3 block font-medium text-zinc-300">
+                  Select job
+                </label>
+                <select
+                  value={nestDxfSelectedJob}
+                  onChange={(e) => setNestDxfSelectedJob(e.target.value)}
+                  disabled={nestDxfProjectsLoading}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950/50 px-4 py-3 text-base text-white focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                >
+                  {nestDxfProjectsLoading ? (
+                    <option>Loading projects…</option>
+                  ) : nestDxfProjects.length === 0 ? (
+                    <option>No active projects</option>
+                  ) : (
+                    nestDxfProjects.map((project) => (
+                      <option
+                        key={project.project_number}
+                        value={project.project_number}
+                      >
+                        {project.project_number} — {project.project_name} (
+                        {project.customer})
+                      </option>
+                    ))
+                  )}
+                </select>
+                <p className="mt-2 text-xs text-zinc-500">
+                  Files go to the job&apos;s{" "}
+                  <span className="text-zinc-400">{`{project}_CAD`}</span>{" "}
+                  folder.
+                </p>
+              </div>
+            ) : (
+              <p className="mb-6 text-sm text-zinc-400">
+                Saves a .dxf for the current preview sheet only.
+              </p>
+            )}
+            {nestDxfExportError ? (
+              <p className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+                {nestDxfExportError}
+              </p>
+            ) : null}
+            <div className="flex gap-3">
+              <button
+                type="button"
+                className="flex-1 rounded-xl border border-zinc-600 bg-zinc-800/80 px-4 py-2.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+                onClick={() => {
+                  setNestDxfModalOpen(false);
+                  setNestDxfSelectedJob("");
+                  setNestDxfExportError("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  nestDxfExporting ||
+                  (nestDxfExportMethod === "onedrive" &&
+                    (!nestDxfSelectedJob || nestDxfProjects.length === 0))
+                }
+                className="flex-1 rounded-xl border border-cyan-500/40 bg-cyan-600/90 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-45"
+                onClick={() => void handleNestDxfExport()}
+              >
+                {nestDxfExporting
+                  ? "Exporting…"
+                  : nestDxfExportMethod === "download"
+                    ? "Download"
+                    : "Upload to OneDrive"}
+              </button>
             </div>
           </div>
         </div>

@@ -177,3 +177,93 @@ export async function uploadTapeToDocs(
   console.log(`✅ Uploaded successfully: ${fullPath}`);
   return fullPath;
 }
+
+/** Upload nest DXF exports to `{projectNumber}_CAD` (same tree as `createProjectFolders`). */
+export async function uploadDxfToProjectCad(
+  accessToken: string,
+  customer: string,
+  projectNumber: string,
+  projectName: string,
+  filename: string,
+  content: string,
+) {
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    "Content-Type": "application/json",
+  };
+  const uploadHeaders = {
+    Authorization: `Bearer ${accessToken}`,
+  };
+
+  const customerUpper = customer
+    .toUpperCase()
+    .trim()
+    .replace(/[^A-Z0-9 ]/g, "");
+  const projectUpper = projectName
+    .toUpperCase()
+    .trim()
+    .replace(/[^A-Z0-9 ]/g, "");
+  const folderName = `${projectNumber} - ${projectUpper}`;
+
+  const baseSegments = ["0 PROJECT FOLDERS", customerUpper, folderName];
+  let currentPath = "Documents";
+  for (const segment of baseSegments) {
+    currentPath += "/" + segment;
+    await ensureFolder(headers, currentPath);
+  }
+
+  const cadFolderPath = `${currentPath}/${projectNumber}_CAD`;
+  await ensureFolder(headers, cadFolderPath);
+
+  const normalizedFilename = filename.replace(/ \(v\d+\)\.dxf$/i, ".dxf");
+  if (!normalizedFilename.toLowerCase().endsWith(".dxf")) {
+    throw new Error("Filename must end with .dxf");
+  }
+  const baseNoExt = normalizedFilename.slice(0, -4);
+  const plainFilename = normalizedFilename;
+  const listUrl = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(cadFolderPath)}:/children`;
+  const listRes = await fetch(listUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!listRes.ok) {
+    const listText = await listRes.text();
+    throw new Error(
+      `Failed to list ${cadFolderPath}: ${listRes.status} ${listText}`,
+    );
+  }
+  const listData = await listRes.json();
+  let highestVersion = 0;
+  let plainExists = false;
+  if (listData.value) {
+    for (const item of listData.value) {
+      if (item.name === plainFilename) {
+        plainExists = true;
+      } else if (item.name.toLowerCase().endsWith(".dxf")) {
+        const escapedBase = baseNoExt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(`^${escapedBase} \\(v(\\d+)\\)\\.dxf$`, "i");
+        const match = item.name.match(regex);
+        if (match) {
+          highestVersion = Math.max(highestVersion, parseInt(match[1], 10));
+        }
+      }
+    }
+  }
+  const version = plainExists || highestVersion > 0 ? highestVersion + 1 : 0;
+  const finalFilename =
+    version === 0 ? plainFilename : `${baseNoExt} (v${version}).dxf`;
+  const fullPath = `${cadFolderPath}/${finalFilename}`;
+  const url = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(fullPath)}:/content`;
+
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: uploadHeaders,
+    body: content,
+  });
+
+  const text = await res.text().catch(() => "no body");
+  if (!res.ok) {
+    throw new Error(`Upload failed for "${fullPath}": ${res.status} ${text}`);
+  }
+
+  return fullPath;
+}

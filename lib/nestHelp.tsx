@@ -28,7 +28,9 @@ export type NestHelpFieldId =
   | "partStatsHeavy"
   | "loadingNoProgress"
   | "advancedDefaults"
-  | "nestStrategy";
+  | "nestStrategy"
+  | "nestExploreRefine"
+  | "nestSeeds";
 
 const nestAdvancedDefaultsHelp: ReactNode = (() => {
   const d = DEFAULT_NEST_UI_SETTINGS;
@@ -193,7 +195,7 @@ export const NEST_FIELD_HELP: Record<NestHelpFieldId, ReactNode> = {
       fast layout instead of multi-layout search.{" "}
       <code className="text-cyan-400/90">NESTNOW_GA_MAX_EVALS</code> (default
       500) caps genetic evaluations per request.{" "}
-      <code className="text-cyan-400/90">NESTNOW_TOP_K</code> (default 5, max 20)
+      <code className="text-cyan-400/90">NESTNOW_TOP_K</code> (default 3, max 20)
       controls how many alternate layouts are returned in{" "}
       <code className="text-cyan-400/90">candidates</code> on a successful nest.
       Set these on the NestNow process / container, not in the browser.
@@ -305,6 +307,34 @@ export const NEST_FIELD_HELP: Record<NestHelpFieldId, ReactNode> = {
       <strong className="text-zinc-200">Tight (full search)</strong> sends all
       part quantities through the full genetic / NFP nest (best for organic
       shapes and dense packing).
+    </>
+  ),
+  nestExploreRefine: (
+    <>
+      <strong className="text-zinc-200">Explore</strong> runs several cheaper
+      searches (more attempts, smaller population, higher mutation) and keeps
+      up to three distinct good layouts as <strong className="text-zinc-200">seeds</strong>{" "}
+      for the next step. <strong className="text-zinc-200">Refine</strong> runs
+      one heavy search seeded from the layout you select with{" "}
+      <em className="not-italic">Use for Refine</em> — the NestNow server must
+      return <code className="text-cyan-400/90">chromosome</code> on results
+      (recent NestNow).
+    </>
+  ),
+  nestSeeds: (
+    <>
+      Seeds <strong className="text-zinc-200">accumulate</strong> across Explore
+      runs on the same sheet/part mix (merged by fitness; very similar scores
+      dedupe, so a new run may not replace the list until you clear).{" "}
+      <strong className="text-zinc-200">Clear seeds</strong> empties the pool
+      and saved storage so the next Explore builds a fresh top three.
+      <br />
+      <br />
+      <strong className="text-zinc-200"> Preview</strong> shows the layout in
+      the viewer without re-running the server.{" "}
+      <strong className="text-zinc-200">Use for Refine</strong> picks which GA
+      individual seeds a <strong className="text-zinc-200">Refine</strong> run.
+      Seeds persist in this browser for the same job fingerprint.
     </>
   ),
 };

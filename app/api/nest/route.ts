@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
   const started = Date.now();
 
   try {
+    // Forward the client JSON verbatim (e.g. optional `chromosome` for Refine).
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
