@@ -1,20 +1,30 @@
 /** New project form; saves to Supabase and creates OneDrive folder structure via lib/onedrive. */
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, useState, useEffect, useCallback } from "react";
+import { signIn, signOut, useSession } from "next-auth/react";
 import { supabase } from "@/lib/supabaseClient";
 import { createProjectFolders } from "@/lib/onedrive";
 import { nextSequentialJobNumber } from "@/lib/projectNumber";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Save } from "lucide-react";
+import { Save, X } from "lucide-react";
 
+import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import { QuickLinksBar } from "@/components/dashboard/quick-links-bar";
+import { Button } from "@/components/ui/button";
 import { ProjectBasicsFields } from "@/components/projects/project-basics-fields";
 import type { ProjectBasicsField } from "@/lib/projectTypes";
 import { safeReturnToPath } from "@/lib/safeReturnTo";
+import {
+  aggregateDashboardMetrics,
+  type DashboardProjectRow,
+} from "@/lib/dashboardMetrics";
+import { PROJECT_SELECT } from "@/lib/projectQueries";
 
-function NewProjectForm({ backHref }: { backHref: string }) {
+function NewProjectForm() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [form, setForm] = useState({
     customer: "",
     project_name: "",
@@ -39,6 +49,7 @@ function NewProjectForm({ backHref }: { backHref: string }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     setLoading(true);
     try {
       const newProject = {
@@ -80,40 +91,42 @@ function NewProjectForm({ backHref }: { backHref: string }) {
         console.error("❌ No fresh token - re-login required");
       }
 
-      alert(
-        `✅ Job ${nextJob} created! Folders in Documents/0 PROJECT FOLDERS`,
-      );
       router.push(`/projects/${saved.id}`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      alert("Error: " + message);
+      setSubmitError(message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="p-8 max-w-2xl mx-auto">
-      <div className="flex items-center gap-4 mb-10">
-        <button
-          type="button"
-          onClick={() => router.push(backHref)}
-          className="flex items-center gap-2 text-zinc-400 hover:text-white"
+    <div className="mx-auto max-w-2xl">
+      {submitError ? (
+        <div
+          className="mb-6 flex items-start justify-between gap-3 rounded-2xl border border-red-500/35 bg-red-500/10 px-4 py-3 text-sm text-red-200"
+          role="alert"
         >
-          <ArrowLeft className="w-5 h-5" /> Back
-        </button>
-        <h1 className="text-4xl font-bold tracking-tight">New Project</h1>
-      </div>
-      <p className="text-zinc-500 text-sm mb-6 -mt-4">
-        Enter job identity here. Quotes, costs, and P&amp;L are filled in on the
-        project page after the job is created.
-      </p>
+          <p>
+            <span className="font-semibold text-red-100">Could not create job.</span>{" "}
+            {submitError}
+          </p>
+          <button
+            type="button"
+            onClick={() => setSubmitError(null)}
+            className="shrink-0 rounded-lg p-1 text-red-300 hover:bg-red-500/20 hover:text-white"
+            aria-label="Dismiss"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+      ) : null}
       <form
         onSubmit={handleSubmit}
-        className="bg-zinc-900 border border-zinc-800 rounded-3xl p-10 space-y-8"
+        className="space-y-8 rounded-3xl border border-zinc-800 bg-zinc-900 p-10"
       >
         <div>
-          <label className="text-xs text-zinc-500 block mb-2">
+          <label className="mb-2 block text-xs text-zinc-500">
             PROJECT # (auto)
           </label>
           <div className="font-mono text-5xl font-bold text-emerald-400">
@@ -121,14 +134,15 @@ function NewProjectForm({ backHref }: { backHref: string }) {
           </div>
         </div>
         <ProjectBasicsFields mode="create" value={form} onChange={setBasics} />
-        <button
+        <Button
           type="submit"
           disabled={loading}
-          className="w-full bg-black hover:bg-zinc-800 text-white py-5 rounded-3xl font-medium text-xl flex items-center justify-center gap-3 disabled:opacity-50"
+          size="lg"
+          className="h-auto w-full gap-3 py-5 text-xl"
         >
-          <Save className="w-6 h-6" />{" "}
-          {loading ? "Creating..." : "Create Job + Folders"}
-        </button>
+          <Save className="size-6" />
+          {loading ? "Creating…" : "Create Job + Folders"}
+        </Button>
       </form>
     </div>
   );
@@ -137,14 +151,88 @@ function NewProjectForm({ backHref }: { backHref: string }) {
 function NewProjectWithReturnTo() {
   const searchParams = useSearchParams();
   const backHref = safeReturnToPath(searchParams.get("returnTo"));
-  return <NewProjectForm backHref={backHref} />;
+  const rawReturn = searchParams.get("returnTo");
+  const newProjectHref =
+    rawReturn != null && rawReturn !== ""
+      ? `/new-project?returnTo=${encodeURIComponent(rawReturn)}`
+      : "/new-project";
+
+  const { data: session, status } = useSession();
+  const [openQuotesCount, setOpenQuotesCount] = useState(0);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  const fetchOpenQuotesCount = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("projects")
+      .select(PROJECT_SELECT);
+    if (error || !data) return;
+    setOpenQuotesCount(
+      aggregateDashboardMetrics(data as DashboardProjectRow[]).openQuotes,
+    );
+    setLastUpdated(new Date());
+  }, []);
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    void Promise.resolve().then(() => fetchOpenQuotesCount());
+  }, [status, fetchOpenQuotesCount]);
+
+  if (status === "loading") {
+    return (
+      <div className="flex h-screen items-center justify-center bg-zinc-950 text-white">
+        Loading…
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
+        <p className="mb-6 text-lg text-zinc-300">Sign in to create a project.</p>
+        <button
+          type="button"
+          onClick={() => signIn("azure-ad")}
+          className="rounded-2xl bg-blue-600 px-8 py-3 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Sign in with Microsoft
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-zinc-950 text-white">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
+        <DashboardHeader
+          userName={session.user?.name}
+          lastUpdated={lastUpdated}
+          onSignOut={() => signOut({ callbackUrl: "/" })}
+          title="New project"
+          subtitle="Enter job identity here. Quotes, costs, and P&amp;L are filled in on the project page after the job is created."
+          backHref={backHref}
+          backLabel="Back"
+        />
+
+        <div className="mt-8">
+          <QuickLinksBar
+            openQuotesCount={openQuotesCount}
+            newProjectHref={newProjectHref}
+          />
+        </div>
+
+        <div className="mt-10">
+          <NewProjectForm />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function NewProject() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-[40vh] items-center justify-center text-zinc-400">
+        <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-400">
           Loading…
         </div>
       }

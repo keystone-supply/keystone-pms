@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  Briefcase,
   FolderOpen,
   LayoutDashboard,
   Layers,
@@ -77,6 +78,19 @@ export function QuickLinksBar({
                 {openQuotesCount}
               </Badge>
             ) : null}
+          </Link>
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <Link
+            href="/sales"
+            className={cn(
+              "gap-2",
+              activeHref === "/sales" && quickLinkActiveClassName,
+            )}
+            aria-current={activeHref === "/sales" ? "page" : undefined}
+          >
+            <Briefcase className="size-4" />
+            Sales
           </Link>
         </Button>
         <Button variant="outline" size="sm" asChild>

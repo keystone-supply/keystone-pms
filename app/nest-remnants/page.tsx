@@ -3495,9 +3495,9 @@ export default function NestRemnantsPage() {
 
           {/* Nest Tool Tab */}
           {activeTab === "nest" && (
-            <div className="grid grid-cols-1 gap-6 p-6 sm:p-8 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] xl:items-start">
-              <div className="order-1 flex min-h-0 min-w-0 flex-col gap-4 xl:sticky xl:top-4 xl:max-h-[min(92dvh,980px)] xl:overflow-y-auto xl:self-start">
-                <div className="flex h-[min(50dvh,600px)] min-h-[min(280px,40dvh)] shrink-0 flex-col overflow-hidden rounded-2xl border-2 border-dashed border-cyan-700/50 bg-zinc-800/30 shadow-inner">
+            <div className="grid grid-cols-1 gap-6 p-6 sm:p-8 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] xl:items-stretch">
+              <div className="order-1 flex min-h-0 min-w-0 flex-col gap-4 xl:sticky xl:top-4 xl:h-full xl:max-h-[min(96dvh,1100px)] xl:overflow-y-auto xl:self-stretch">
+                <div className="flex min-h-[min(280px,40dvh)] max-xl:h-[min(50dvh,600px)] max-xl:shrink-0 flex-col overflow-hidden rounded-2xl border-2 border-dashed border-cyan-700/50 bg-zinc-800/30 shadow-inner xl:min-h-[min(50dvh,600px)] xl:flex-1 xl:shrink-0">
                   <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-cyan-800/40 bg-zinc-950/50 px-2 py-2 sm:px-3">
                     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
                       {showCompletedNestPreview || showLiveNestPreview ? (

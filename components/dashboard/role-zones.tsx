@@ -120,12 +120,18 @@ export function RoleZones({
           Pipeline sums <code className="text-zinc-500">total_quoted</code> for
           jobs where complete = false.
         </p>
-        <div className="pt-2">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 pt-2">
+          <Link
+            href="/sales"
+            className="text-xs font-medium text-blue-400 hover:text-blue-300"
+          >
+            Sales hub &amp; accounts →
+          </Link>
           <Link
             href="/projects"
             className="text-xs font-medium text-blue-400 hover:text-blue-300"
           >
-            View all projects →
+            All projects →
           </Link>
         </div>
       </ZoneCard>

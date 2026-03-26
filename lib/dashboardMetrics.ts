@@ -16,6 +16,7 @@ export type DashboardProjectRow = {
   project_number?: string | number | null;
   project_name?: string | null;
   customer?: string | null;
+  customer_id?: string | null;
   customer_approval?: CustomerApproval | null;
   project_complete?: boolean | null;
   /** Ops lifecycle: in_process, done, cancelled (distinct from customer_approval). */

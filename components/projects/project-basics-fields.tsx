@@ -8,8 +8,10 @@ type Props = {
   onChange: (field: ProjectBasicsField, value: string) => void;
 };
 
-const inputBase =
-  "w-full bg-zinc-800 border border-zinc-700 rounded-2xl uppercase";
+const controlFocus =
+  "text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
+
+const inputBase = `w-full rounded-xl border border-zinc-700 bg-zinc-900/80 uppercase placeholder:text-zinc-600 ${controlFocus}`;
 
 export function ProjectBasicsFields({ mode, value, onChange }: Props) {
   const cozy = mode === "create";
@@ -70,7 +72,7 @@ export function ProjectBasicsFields({ mode, value, onChange }: Props) {
           <select
             value={v.supply_industrial}
             onChange={(e) => onChange("supply_industrial", e.target.value)}
-            className={`w-full bg-zinc-800 border border-zinc-700 rounded-2xl ${cozy ? "px-5 py-4" : "px-4 py-3"}`}
+            className={`w-full rounded-xl border border-zinc-700 bg-zinc-900/80 ${cozy ? "px-5 py-4" : "px-4 py-3"} ${controlFocus}`}
           >
             <option value="SUPPLY">SUPPLY</option>
             <option value="INDUSTRIAL">INDUSTRIAL</option>

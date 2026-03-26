@@ -126,6 +126,30 @@
   html {
     @apply font-sans;
   }
+
+  /* Scrollbars: visible on dark UI (Firefox) */
+  .dark {
+    scrollbar-color: var(--chart-2) var(--muted);
+    scrollbar-width: thin;
+  }
+
+  /* Scrollbars: WebKit (Chrome, Safari, Edge) */
+  .dark *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .dark *::-webkit-scrollbar-track {
+    background: var(--muted);
+    border-radius: 9999px;
+  }
+  .dark *::-webkit-scrollbar-thumb {
+    background-color: var(--chart-2);
+    border-radius: 9999px;
+    border: 2px solid var(--muted);
+  }
+  .dark *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--chart-1);
+  }
 }
 
 @layer utilities {

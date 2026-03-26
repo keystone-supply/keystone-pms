@@ -41,10 +41,10 @@ Azure AD app must request scope `Files.ReadWrite.All` for OneDrive folder creati
 
 ## NestNow integration
 
-Nesting logic comes from [NestingNow/NestNow](https://github.com/NestingNow/NestNow) (a fork of deepnest-next). NestNow is developed in a **separate repo**. For local integration work:
+Nesting logic comes from [keystone-supply/NestNow](https://github.com/keystone-supply/NestNow) (a fork of deepnest-next). NestNow is developed in a **separate repo** under the Keystone Supply org. For local integration work:
 
 1. Clone NestNow as a **sibling folder** to this repo (e.g. `../NestNow`).
-2. Build and run it per NestNow’s [BUILD.md](https://github.com/NestingNow/NestNow/blob/main/BUILD.md) (`npm install`, `npm run build`, `npm run start`).
+2. Build and run it per NestNow’s [BUILD.md](https://github.com/keystone-supply/NestNow/blob/main/BUILD.md) (`npm install`, `npm run build`, `npm run start`).
 3. The **nesting UI** will live in Keystone PMS (in this repo); NestNow is the engine, to be called via CLI, local server, or npm package as integration progresses.
 4. With the NestNow **server** running (`npm run start:server` in NestNow), use the **Nest Tool** tab on the nest-remnants page to run a nest and view the result. Optional: set `NESTNOW_URL` in `.env.local` (default `http://127.0.0.1:3001`).
 
