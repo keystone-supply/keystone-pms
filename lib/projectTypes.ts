@@ -13,6 +13,8 @@ export interface ProjectRow {
   project_number?: string | null;
   project_name?: string | null;
   customer?: string | null;
+  /** Optional FK to `customers` for CRM-linked jobs. */
+  customer_id?: string | null;
   customer_po?: string | null;
   supply_industrial?: string | null;
   customer_approval?: string | null;

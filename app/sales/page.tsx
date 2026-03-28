@@ -10,6 +10,7 @@ import {
   FolderKanban,
   Percent,
   TrendingUp,
+  Truck,
   Users,
 } from "lucide-react";
 
@@ -20,6 +21,10 @@ import {
   CustomersDataTable,
   type CustomerStatusFilter,
 } from "@/components/sales/customers-data-table";
+import {
+  VendorsDataTable,
+  type VendorStatusFilter,
+} from "@/components/sales/vendors-data-table";
 import { SalesCommandBoard } from "@/components/sales/sales-command-board";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabaseClient";
@@ -27,6 +32,10 @@ import {
   CUSTOMER_LIST_SELECT,
   type CustomerRow,
 } from "@/lib/customerQueries";
+import {
+  VENDOR_LIST_SELECT,
+  type VendorRow,
+} from "@/lib/vendorQueries";
 import {
   aggregateDashboardMetrics,
   type AttentionItem,
@@ -63,6 +72,7 @@ function followUpBucket(
 
 export default function SalesPage() {
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
+  const [vendors, setVendors] = useState<VendorRow[]>([]);
   const [projectRows, setProjectRows] = useState<DashboardProjectRow[]>([]);
   const [metrics, setMetrics] = useState<DashboardMetrics>(() =>
     aggregateDashboardMetrics([]),
@@ -72,15 +82,22 @@ export default function SalesPage() {
   const [statusFilter, setStatusFilter] =
     useState<CustomerStatusFilter>("all");
   const [search, setSearch] = useState("");
+  const [vendorStatusFilter, setVendorStatusFilter] =
+    useState<VendorStatusFilter>("all");
+  const [vendorSearch, setVendorSearch] = useState("");
 
   const { data: session, status } = useSession();
 
   const fetchAll = useCallback(async () => {
-    const [projRes, custRes] = await Promise.all([
+    const [projRes, custRes, vendRes] = await Promise.all([
       supabase.from("projects").select(PROJECT_SELECT),
       supabase
         .from("customers")
         .select(CUSTOMER_LIST_SELECT)
+        .order("legal_name", { ascending: true }),
+      supabase
+        .from("vendors")
+        .select(VENDOR_LIST_SELECT)
         .order("legal_name", { ascending: true }),
     ]);
 
@@ -91,6 +108,9 @@ export default function SalesPage() {
     }
     if (!custRes.error && custRes.data) {
       setCustomers(custRes.data as CustomerRow[]);
+    }
+    if (!vendRes.error && vendRes.data) {
+      setVendors(vendRes.data as VendorRow[]);
     }
     setLastUpdated(new Date());
     setLoading(false);
@@ -112,6 +132,13 @@ export default function SalesPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "customers" },
+        () => {
+          void fetchAll();
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "vendors" },
         () => {
           void fetchAll();
         },
@@ -194,7 +221,7 @@ export default function SalesPage() {
           lastUpdated={lastUpdated}
           onSignOut={() => signOut({ callbackUrl: "/" })}
           title="Sales hub"
-          subtitle="Pipeline and quote metrics from jobs, plus customer master data, ship-tos, and AP terms — one place for commercial sales."
+          subtitle="Pipeline and quote metrics from jobs, plus customer and vendor master data — one place for commercial sales."
         />
 
         <div className="mt-8">
@@ -454,6 +481,62 @@ export default function SalesPage() {
               </ul>
             </aside>
           </div>
+        </section>
+
+        <section className="mt-14" aria-label="Vendor directory">
+          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex items-center gap-3">
+              <Truck className="size-8 text-amber-400" aria-hidden />
+              <div>
+                <h2 className="text-lg font-semibold text-white">
+                  Vendor directory
+                </h2>
+                <p className="text-sm text-zinc-500">
+                  {vendors.length} vendor{vendors.length === 1 ? "" : "s"} on file
+                  — for RFQs and purchase orders.
+                </p>
+              </div>
+            </div>
+            <Button variant="secondary" size="sm" asChild>
+              <Link href="/sales/vendors/new">Add vendor</Link>
+            </Button>
+          </div>
+
+          <div className="mb-6 grid gap-4 lg:grid-cols-3">
+            <div className="lg:col-span-2">
+              <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Search
+              </label>
+              <input
+                value={vendorSearch}
+                onChange={(e) => setVendorSearch(e.target.value)}
+                placeholder="Legal name, code, contact, city, terms…"
+                className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-zinc-100 placeholder:text-zinc-600"
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Status
+              </label>
+              <select
+                value={vendorStatusFilter}
+                onChange={(e) =>
+                  setVendorStatusFilter(e.target.value as VendorStatusFilter)
+                }
+                className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-zinc-100"
+              >
+                <option value="all">All</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+          </div>
+
+          <VendorsDataTable
+            data={vendors}
+            statusFilter={vendorStatusFilter}
+            search={vendorSearch}
+          />
         </section>
       </div>
     </div>

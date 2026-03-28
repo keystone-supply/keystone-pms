@@ -11,6 +11,7 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { QuickLinksBar } from "@/components/dashboard/quick-links-bar";
 import { Button } from "@/components/ui/button";
 import { ProjectBasicsFields } from "@/components/projects/project-basics-fields";
+import { ProjectDocumentsSection } from "@/components/projects/project-documents-section";
 import type { ProjectBasicsField, ProjectRow } from "@/lib/projectTypes";
 import {
   normalizeProjectLifecycle,
@@ -577,6 +578,13 @@ export default function ProjectDetail() {
           ))}
         </div>
       </div>
+
+            <ProjectDocumentsSection
+              projectId={id}
+              project={project}
+              supabase={supabase}
+              onProjectRefresh={() => void fetchProject("soft")}
+            />
 
             <div className="mt-12 text-center">
               <a
