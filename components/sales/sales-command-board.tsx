@@ -24,14 +24,17 @@ import type { DashboardProjectRow } from "@/lib/dashboardMetrics";
 import type { CustomerRow } from "@/lib/customerQueries";
 import { supabase } from "@/lib/supabaseClient";
 import { pickProjectUpdatePayload } from "@/lib/projectTypes";
+import type { SalesProjectColumn } from "@/lib/salesBoard";
 import {
   boardColumnForProject,
-  dropIdToProjectColumn,
+  dropIdToMoveTarget,
   isTouchBaseCustomer,
+  moveTargetFromRow,
   rowAfterMoveToColumn,
   SALES_BOARD_DROP,
   touchBaseSortKey,
 } from "@/lib/salesBoard";
+import { SALES_PROJECT_COLUMNS } from "@/lib/salesCommandBoardColumn";
 import { cn } from "@/lib/utils";
 
 const TOUCH_LIMIT = 20;
@@ -39,6 +42,114 @@ const TOUCH_LIMIT = 20;
 /** Scroll viewport height: fits ~3–4 cards (project rows) before vertical scroll. */
 const COLUMN_BODY_MAX_H = "max-h-[36rem]";
 const COLUMN_BODY_MIN_H = "min-h-[9rem]";
+
+const PIPELINE_COLUMNS: Array<{
+  key: Exclude<SalesProjectColumn, "lost">;
+  dropId: string;
+  title: string;
+  subtitle: string;
+}> = [
+  {
+    key: "rfq_customer",
+    dropId: SALES_BOARD_DROP.rfq_customer,
+    title: "RFQ",
+    subtitle: "From customer",
+  },
+  {
+    key: "rfq_vendors",
+    dropId: SALES_BOARD_DROP.rfq_vendors,
+    title: "RFQ → vendors",
+    subtitle: "Sent for quote",
+  },
+  {
+    key: "quote_sent",
+    dropId: SALES_BOARD_DROP.quote_sent,
+    title: "Quote sent",
+    subtitle: "Awaiting PO",
+  },
+  {
+    key: "po_issued",
+    dropId: SALES_BOARD_DROP.po_issued,
+    title: "Customer PO",
+    subtitle: "Accepted",
+  },
+  {
+    key: "in_process",
+    dropId: SALES_BOARD_DROP.in_process,
+    title: "In process",
+    subtitle: "Shop / ops",
+  },
+  {
+    key: "complete",
+    dropId: SALES_BOARD_DROP.complete,
+    title: "Complete",
+    subtitle: "Job done",
+  },
+  {
+    key: "delivered",
+    dropId: SALES_BOARD_DROP.delivered,
+    title: "Delivered",
+    subtitle: "Shipped / received",
+  },
+  {
+    key: "invoiced",
+    dropId: SALES_BOARD_DROP.invoiced,
+    title: "Invoiced",
+    subtitle: "Billing",
+  },
+];
+
+function formatShortDate(iso: string | null | undefined): string | null {
+  if (iso == null || String(iso).trim() === "") return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(d);
+}
+
+function milestoneHint(project: DashboardProjectRow): string | null {
+  const col = boardColumnForProject(project);
+  switch (col) {
+    case "rfq_customer": {
+      const d = formatShortDate(project.created_at);
+      return d ? `Logged ${d}` : null;
+    }
+    case "rfq_vendors": {
+      const d = formatShortDate(project.rfq_vendors_sent_at);
+      return d ? `Vendors ${d}` : null;
+    }
+    case "quote_sent": {
+      const d = formatShortDate(project.quote_sent_at);
+      return d ? `Quoted ${d}` : null;
+    }
+    case "po_issued": {
+      const d = formatShortDate(project.po_issued_at);
+      return d ? `PO ${d}` : null;
+    }
+    case "in_process": {
+      const d = formatShortDate(project.in_process_at);
+      return d ? `Started ${d}` : null;
+    }
+    case "complete": {
+      const d = formatShortDate(project.completed_at);
+      return d ? `Done ${d}` : null;
+    }
+    case "delivered": {
+      const d = formatShortDate(project.delivered_at);
+      return d ? `Delivered ${d}` : null;
+    }
+    case "invoiced": {
+      const d = formatShortDate(project.invoiced_at);
+      return d ? `Invoiced ${d}` : null;
+    }
+    case "lost":
+    default:
+      return null;
+  }
+}
 
 function dragIdProject(id: string) {
   return `project:${id}`;
@@ -91,7 +202,7 @@ function ColumnShell({
     <div
       ref={setNodeRef}
       className={cn(
-        "flex w-[min(100%,280px)] shrink-0 flex-col rounded-2xl border border-zinc-800/90 bg-zinc-900/40",
+        "flex w-[min(100%,240px)] shrink-0 flex-col rounded-2xl border border-zinc-800/90 bg-zinc-900/40",
         isOver && "ring-2 ring-blue-500/50 ring-offset-2 ring-offset-zinc-950",
         className,
       )}
@@ -120,6 +231,92 @@ function ColumnShell({
   );
 }
 
+function LostDropStrip({
+  id,
+  label,
+}: {
+  id: string;
+  label: string;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "min-h-10 flex-1 rounded-lg border border-dashed border-zinc-600 px-1 py-2 text-center text-[10px] font-medium leading-tight text-zinc-500",
+        isOver && "border-blue-500/50 bg-blue-950/25 text-zinc-300",
+      )}
+    >
+      {label}
+    </div>
+  );
+}
+
+function LostColumn({
+  projects,
+  attentionByProjectId,
+  formatUsd,
+  dragDisabled,
+}: {
+  projects: DashboardProjectRow[];
+  attentionByProjectId: Map<string, AttentionItem>;
+  formatUsd: (n: number) => string;
+  dragDisabled: boolean;
+}) {
+  const num = (n: string | number | null | undefined) => {
+    const x = typeof n === "number" ? n : parseInt(String(n ?? ""), 10);
+    return Number.isFinite(x) ? x : 0;
+  };
+  const sorted = [...projects].sort(
+    (a, b) => num(b.project_number) - num(a.project_number),
+  );
+
+  return (
+    <div
+      className={cn(
+        "flex w-[min(100%,260px)] shrink-0 flex-col rounded-2xl border border-zinc-800/90 bg-zinc-900/40",
+      )}
+    >
+      <div className="shrink-0 border-b border-zinc-800/80 px-3 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-white">Lost</h3>
+          <span className="font-mono text-xs tabular-nums text-zinc-500">
+            {projects.length}
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-zinc-500">Rejected or cancelled</p>
+        <div className="mt-2 flex gap-1.5">
+          <LostDropStrip
+            id={SALES_BOARD_DROP.lost_rejected}
+            label="Drop → rejected"
+          />
+          <LostDropStrip
+            id={SALES_BOARD_DROP.lost_cancelled}
+            label="Drop → cancelled"
+          />
+        </div>
+      </div>
+      <div
+        className={cn(
+          "min-h-0 flex flex-col gap-2 overflow-y-auto overflow-x-hidden overscroll-y-contain p-2",
+          COLUMN_BODY_MIN_H,
+          COLUMN_BODY_MAX_H,
+        )}
+      >
+        {sorted.map((p) => (
+          <DraggableProjectCard
+            key={p.id}
+            project={p}
+            attention={attentionByProjectId.get(p.id)}
+            formatUsd={formatUsd}
+            disabled={dragDisabled}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ProjectCardInner({
   project,
   attention,
@@ -133,6 +330,7 @@ function ProjectCardInner({
 }) {
   const si = classifySupplyIndustrial(project.supply_industrial);
   const quoted = project.total_quoted || 0;
+  const milestoneLine = milestoneHint(project);
 
   return (
     <div
@@ -169,7 +367,22 @@ function ProjectCardInner({
                 Industrial
               </Badge>
             ) : null}
+            {boardColumnForProject(project) === "lost" ? (
+              String(project.customer_approval || "").toUpperCase() ===
+              "CANCELLED" ? (
+                <Badge className="bg-zinc-500/15 text-[10px] text-zinc-300">
+                  Cancelled
+                </Badge>
+              ) : (
+                <Badge className="bg-red-500/15 text-[10px] text-red-300">
+                  Rejected
+                </Badge>
+              )
+            ) : null}
           </div>
+          {milestoneLine ? (
+            <p className="text-[10px] text-zinc-500">{milestoneLine}</p>
+          ) : null}
           {attention ? (
             <p className="flex items-start gap-1 text-xs text-amber-400/95">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
@@ -358,15 +571,8 @@ export function SalesCommandBoard({
   }, [customers, now]);
 
   const byColumn = useMemo(() => {
-    const cols: Record<
-      "quoted_pending" | "won_wip" | "done" | "no_bid",
-      DashboardProjectRow[]
-    > = {
-      quoted_pending: [],
-      won_wip: [],
-      done: [],
-      no_bid: [],
-    };
+    const cols = {} as Record<SalesProjectColumn, DashboardProjectRow[]>;
+    for (const c of SALES_PROJECT_COLUMNS) cols[c] = [];
     for (const p of projects) {
       cols[boardColumnForProject(p)].push(p);
     }
@@ -374,7 +580,7 @@ export function SalesCommandBoard({
       const x = typeof n === "number" ? n : parseInt(String(n ?? ""), 10);
       return Number.isFinite(x) ? x : 0;
     };
-    for (const k of Object.keys(cols) as (keyof typeof cols)[]) {
+    for (const k of SALES_PROJECT_COLUMNS) {
       cols[k].sort((a, b) => num(b.project_number) - num(a.project_number));
     }
     return cols;
@@ -426,15 +632,14 @@ export function SalesCommandBoard({
       }
 
       if (parsed.kind === "project") {
-        const targetCol = dropIdToProjectColumn(overId);
-        if (!targetCol) return;
+        const targetMove = dropIdToMoveTarget(overId);
+        if (!targetMove) return;
 
         const row = projects.find((p) => p.id === parsed.id);
         if (!row) return;
-        const fromCol = boardColumnForProject(row);
-        if (fromCol === targetCol) return;
+        if (moveTargetFromRow(row) === targetMove) return;
 
-        const nextLifecycle = rowAfterMoveToColumn(row, targetCol);
+        const nextLifecycle = rowAfterMoveToColumn(row, targetMove, new Date());
         const payload = pickProjectUpdatePayload(nextLifecycle);
         setError(null);
         setBusyId(parsed.id);
@@ -522,73 +727,32 @@ export function SalesCommandBoard({
             </p>
           </ColumnShell>
 
-          <ColumnShell
-            dropId={SALES_BOARD_DROP.quoted_pending}
-            title="Quoted"
-            subtitle="Pending approval"
-            count={byColumn.quoted_pending.length}
-          >
-            {byColumn.quoted_pending.map((p) => (
-              <DraggableProjectCard
-                key={p.id}
-                project={p}
-                attention={attentionByProjectId.get(p.id)}
-                formatUsd={formatUsd}
-                disabled={dragDisabled}
-              />
-            ))}
-          </ColumnShell>
+          {PIPELINE_COLUMNS.map((col) => (
+            <ColumnShell
+              key={col.key}
+              dropId={col.dropId}
+              title={col.title}
+              subtitle={col.subtitle}
+              count={byColumn[col.key].length}
+            >
+              {byColumn[col.key].map((p) => (
+                <DraggableProjectCard
+                  key={p.id}
+                  project={p}
+                  attention={attentionByProjectId.get(p.id)}
+                  formatUsd={formatUsd}
+                  disabled={dragDisabled}
+                />
+              ))}
+            </ColumnShell>
+          ))}
 
-          <ColumnShell
-            dropId={SALES_BOARD_DROP.won_wip}
-            title="Won (WIP)"
-            subtitle="Accepted, in flight"
-            count={byColumn.won_wip.length}
-          >
-            {byColumn.won_wip.map((p) => (
-              <DraggableProjectCard
-                key={p.id}
-                project={p}
-                attention={attentionByProjectId.get(p.id)}
-                formatUsd={formatUsd}
-                disabled={dragDisabled}
-              />
-            ))}
-          </ColumnShell>
-
-          <ColumnShell
-            dropId={SALES_BOARD_DROP.done}
-            title="Done"
-            subtitle="Complete / done"
-            count={byColumn.done.length}
-          >
-            {byColumn.done.map((p) => (
-              <DraggableProjectCard
-                key={p.id}
-                project={p}
-                attention={attentionByProjectId.get(p.id)}
-                formatUsd={formatUsd}
-                disabled={dragDisabled}
-              />
-            ))}
-          </ColumnShell>
-
-          <ColumnShell
-            dropId={SALES_BOARD_DROP.no_bid}
-            title="No bid"
-            subtitle="Rejected / cancelled"
-            count={byColumn.no_bid.length}
-          >
-            {byColumn.no_bid.map((p) => (
-              <DraggableProjectCard
-                key={p.id}
-                project={p}
-                attention={attentionByProjectId.get(p.id)}
-                formatUsd={formatUsd}
-                disabled={dragDisabled}
-              />
-            ))}
-          </ColumnShell>
+          <LostColumn
+            projects={byColumn.lost}
+            attentionByProjectId={attentionByProjectId}
+            formatUsd={formatUsd}
+            dragDisabled={dragDisabled}
+          />
         </div>
 
         <DragOverlay dropAnimation={null}>

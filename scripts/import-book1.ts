@@ -1,6 +1,8 @@
 /**
  * One-off: replace all `projects` rows from Book1.csv (repo root).
- * Requires: npm run db:push (migration with project_status + text project_number + unique index)
+ * Optional columns (if present): PAYMENT RECEIVED (Y/N), MATERIALS ORDERED, MATERIAL RECEIVED,
+ * LABOR COMPLETE — US short dates M/D/YY, same as CUSTOMER RFQ.
+ * Requires: npm run db:push (migrations including `projects` workflow columns)
  * Env: .env.local with NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE
  *
  * Usage: npx tsx scripts/import-book1.ts
@@ -51,6 +53,14 @@ function normApproval(raw: string | undefined): string {
   return "PENDING";
 }
 
+function parseBool(raw: string | undefined): boolean | null {
+  if (raw == null || raw === "") return null;
+  const u = raw.trim().toUpperCase();
+  if (["Y", "YES", "TRUE", "1", "PAID"].includes(u)) return true;
+  if (["N", "NO", "FALSE", "0"].includes(u)) return false;
+  return null;
+}
+
 function mapLifecycle(projectCompleteCol: string | undefined): {
   project_complete: boolean;
   project_status: "in_process" | "done" | "cancelled" | null;
@@ -99,7 +109,18 @@ function rowToPayload(
     additional_costs: parseMoney(row["ADDITIONAL COSTS"]),
     total_quoted: parseMoney(row["TOTAL QUOTED"]),
     invoiced_amount: parseMoney(row["INVOICED AMOUNT"]),
+    payment_received: parseBool(row["PAYMENT RECEIVED"]) ?? false,
     ...(created_at ? { created_at } : {}),
+    ...(() => {
+      const materials_ordered_at = parseUsShortDate(row["MATERIALS ORDERED"]);
+      const material_received_at = parseUsShortDate(row["MATERIAL RECEIVED"]);
+      const labor_completed_at = parseUsShortDate(row["LABOR COMPLETE"]);
+      return {
+        ...(materials_ordered_at ? { materials_ordered_at } : {}),
+        ...(material_received_at ? { material_received_at } : {}),
+        ...(labor_completed_at ? { labor_completed_at } : {}),
+      };
+    })(),
   };
 }
 

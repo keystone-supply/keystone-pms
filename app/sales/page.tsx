@@ -11,7 +11,6 @@ import {
   Percent,
   TrendingUp,
   Users,
-  Wallet,
 } from "lucide-react";
 
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
@@ -35,6 +34,10 @@ import {
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
 import { PROJECT_SELECT } from "@/lib/projectQueries";
+import {
+  PIPELINE_STAGE_LABELS,
+  SALES_PROJECT_COLUMNS,
+} from "@/lib/salesCommandBoardColumn";
 
 function formatUsd(n: number): string {
   return new Intl.NumberFormat(undefined, {
@@ -223,7 +226,7 @@ export default function SalesPage() {
           <KpiCard
             label="Win rate"
             value={winDisplay}
-            hint={`${metrics.quotesAccepted} accepted · ${metrics.quotesRejected} rejected`}
+            hint={`${metrics.quotesAccepted} accepted · ${metrics.quotesRejected} rejected · ${metrics.quotesCancelled} cancelled`}
             icon={Percent}
             href="/projects"
           />
@@ -264,6 +267,12 @@ export default function SalesPage() {
                   {metrics.quotesRejected}
                 </dd>
               </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-zinc-500">Cancelled</dt>
+                <dd className="font-mono tabular-nums text-zinc-400">
+                  {metrics.quotesCancelled}
+                </dd>
+              </div>
             </dl>
           </div>
 
@@ -297,20 +306,26 @@ export default function SalesPage() {
             </Link>
           </div>
 
-          <div className="rounded-2xl border border-dashed border-zinc-700 bg-zinc-900/40 p-5">
-            <div className="flex items-start gap-3">
-              <Wallet className="size-8 shrink-0 text-zinc-500" aria-hidden />
-              <div>
-                <h2 className="text-sm font-semibold text-white">
-                  AR & collections
-                </h2>
-                <p className="mt-2 text-sm text-zinc-500">
-                  Aging buckets and collection workflows are not wired yet. When
-                  invoicing syncs here, this panel can show open AR by account
-                  and terms.
-                </p>
-              </div>
-            </div>
+          <div className="rounded-2xl border border-zinc-800/90 bg-zinc-900/60 p-5">
+            <h2 className="text-sm font-semibold text-white">Command pipeline</h2>
+            <p className="mt-1 text-xs text-zinc-500">
+              Job counts by board column (all projects in database).
+            </p>
+            <dl className="mt-4 max-h-64 space-y-1.5 overflow-y-auto text-sm">
+              {SALES_PROJECT_COLUMNS.map((stage) => (
+                <div
+                  key={stage}
+                  className="flex justify-between gap-2 border-b border-zinc-800/80 py-1 last:border-0"
+                >
+                  <dt className="truncate text-zinc-500">
+                    {PIPELINE_STAGE_LABELS[stage]}
+                  </dt>
+                  <dd className="shrink-0 font-mono tabular-nums text-zinc-300">
+                    {metrics.pipelineColumnCounts[stage]}
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </div>
         </section>
 

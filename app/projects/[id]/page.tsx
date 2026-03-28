@@ -50,6 +50,46 @@ const detailFieldClass =
   "w-full rounded-xl border border-zinc-700 bg-zinc-900/80 px-4 py-3 text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
 const detailFieldMono = `${detailFieldClass} font-mono tabular-nums`;
 
+function isoToDatetimeLocal(iso: string | null | undefined): string {
+  if (iso == null || iso === "") return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function datetimeLocalToIso(local: string): string | null {
+  if (!local || local.trim() === "") return null;
+  const d = new Date(local);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+const OPS_MILESTONE_FIELDS: {
+  key:
+    | "rfq_vendors_sent_at"
+    | "quote_sent_at"
+    | "po_issued_at"
+    | "in_process_at"
+    | "materials_ordered_at"
+    | "material_received_at"
+    | "labor_completed_at"
+    | "completed_at"
+    | "delivered_at"
+    | "invoiced_at";
+  label: string;
+}[] = [
+  { key: "rfq_vendors_sent_at", label: "RFQ → vendors sent" },
+  { key: "quote_sent_at", label: "Quote sent" },
+  { key: "po_issued_at", label: "Customer PO" },
+  { key: "in_process_at", label: "In process (shop)" },
+  { key: "materials_ordered_at", label: "Materials ordered" },
+  { key: "material_received_at", label: "Material received" },
+  { key: "labor_completed_at", label: "Labor complete" },
+  { key: "completed_at", label: "Complete (sales board)" },
+  { key: "delivered_at", label: "Delivered" },
+  { key: "invoiced_at", label: "Invoiced" },
+];
+
 export default function ProjectDetail() {
   const params = useParams();
   const id = params.id as string;
@@ -378,10 +418,43 @@ export default function ProjectDetail() {
                 />
                 <span className="text-sm text-zinc-300">Project complete</span>
               </label>
+              <label className="flex items-center gap-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={!!project.payment_received}
+                  onChange={(e) =>
+                    updateField("payment_received", e.target.checked)
+                  }
+                  className="size-4 rounded border-zinc-600 bg-zinc-900 text-blue-500 focus:ring-2 focus:ring-blue-500/40"
+                />
+                <span className="text-sm text-zinc-300">Payment received</span>
+              </label>
               <p className="text-xs text-zinc-500">
                 Saving sets <strong className="text-zinc-400">complete</strong>{" "}
                 to match status: Done → complete, Cancelled → not complete.
               </p>
+              <div className="border-t border-zinc-800 pt-6 mt-2">
+                <h3 className="text-sm font-medium text-zinc-400 mb-4">
+                  Milestones (date/time, optional)
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {OPS_MILESTONE_FIELDS.map(({ key, label }) => (
+                    <div key={key}>
+                      <label className="text-xs text-zinc-500 block mb-1">
+                        {label}
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={isoToDatetimeLocal(project[key])}
+                        onChange={(e) =>
+                          updateField(key, datetimeLocalToIso(e.target.value))
+                        }
+                        className={detailFieldClass}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>

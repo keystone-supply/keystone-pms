@@ -1,26 +1,36 @@
 /**
- * Sales command board: classify projects into columns and compute Supabase patches.
- * Priority when fields conflict: no_bid (cancelled / rejected / lost) beats done beats active pipeline.
+ * Sales command board: dnd-kit drop ids and Supabase row patches after a column move.
+ * Column classification lives in salesCommandBoardColumn.ts (shared with metrics).
  */
 
 import type { DashboardProjectRow } from "@/lib/dashboardMetrics";
-import { isCancelledProject } from "@/lib/dashboardMetrics";
+import { boardColumnForProject, type SalesProjectColumn } from "@/lib/salesCommandBoardColumn";
 import { normalizeProjectLifecycle, type ProjectRow } from "@/lib/projectTypes";
 
-export type SalesProjectColumn =
-  | "quoted_pending"
-  | "won_wip"
-  | "done"
-  | "no_bid";
+export type { SalesProjectColumn };
+
+/** Drag target includes two Lost drop zones (rejected vs cancelled). */
+export type SalesBoardMoveTarget =
+  | Exclude<SalesProjectColumn, "lost">
+  | "lost_rejected"
+  | "lost_cancelled";
+
+export { boardColumnForProject };
 
 /** Droppable ids for dnd-kit (projects + CRM qualify lane). */
 export const SALES_BOARD_DROP = {
   touch: "sb-touch",
   qualify: "sb-qualify",
-  quoted_pending: "sb-quoted",
-  won_wip: "sb-won",
-  done: "sb-done",
-  no_bid: "sb-nobid",
+  rfq_customer: "sb-rfq",
+  rfq_vendors: "sb-vendors",
+  quote_sent: "sb-quote",
+  po_issued: "sb-po",
+  in_process: "sb-wip",
+  complete: "sb-complete",
+  delivered: "sb-delivered",
+  invoiced: "sb-invoiced",
+  lost_rejected: "sb-lost-rejected",
+  lost_cancelled: "sb-lost-cancelled",
 } as const;
 
 export type SalesBoardDropId =
@@ -60,65 +70,123 @@ export function touchBaseSortKey(
   return [tier, Number.isNaN(t) ? Number.POSITIVE_INFINITY : t, c.legal_name];
 }
 
-export function boardColumnForProject(p: DashboardProjectRow): SalesProjectColumn {
-  const approval = String(p.customer_approval || "PENDING").toUpperCase();
-
-  if (isCancelledProject(p) || approval === "REJECTED" || approval === "CANCELLED") {
-    return "no_bid";
-  }
-  if (p.project_complete || p.project_status === "done") {
-    return "done";
-  }
-  if (approval === "ACCEPTED") {
-    return "won_wip";
-  }
-  return "quoted_pending";
-}
-
 function toProjectRow(p: DashboardProjectRow): ProjectRow {
   return { ...p } as ProjectRow;
 }
 
+function stamp(
+  row: ProjectRow,
+  key: keyof ProjectRow,
+  iso: string,
+): void {
+  const cur = row[key];
+  if (cur == null || String(cur).trim() === "") {
+    (row as Record<string, unknown>)[key as string] = iso;
+  }
+}
+
 /**
- * Apply column semantics to a row, then align complete flag with status (project detail contract).
+ * Apply column semantics to a row, stamp milestone timestamps once, then normalize lifecycle.
  */
 export function rowAfterMoveToColumn(
   row: DashboardProjectRow,
-  target: SalesProjectColumn,
+  target: SalesBoardMoveTarget,
+  now: Date = new Date(),
 ): ProjectRow {
-  let next: ProjectRow = { ...toProjectRow(row) };
+  const iso = now.toISOString();
+  const next: ProjectRow = { ...toProjectRow(row) };
+
+  const clearLostStatus = () => {
+    if (next.project_status === "cancelled") {
+      next.project_status = "in_process";
+    }
+  };
 
   switch (target) {
-    case "quoted_pending":
+    case "rfq_customer":
+      next.sales_command_stage = "rfq_customer";
       next.customer_approval = "PENDING";
       next.project_complete = false;
-      if (next.project_status === "done" || next.project_status === "cancelled") {
-        next.project_status = "in_process";
-      }
+      clearLostStatus();
+      if (next.project_status === "done") next.project_status = "in_process";
       break;
-    case "won_wip":
+
+    case "rfq_vendors":
+      next.sales_command_stage = "rfq_vendors";
+      stamp(next, "rfq_vendors_sent_at", iso);
+      next.customer_approval = "PENDING";
+      next.project_complete = false;
+      clearLostStatus();
+      if (next.project_status === "done") next.project_status = "in_process";
+      break;
+
+    case "quote_sent":
+      next.sales_command_stage = "quote_sent";
+      stamp(next, "quote_sent_at", iso);
+      next.customer_approval = "PENDING";
+      next.project_complete = false;
+      clearLostStatus();
+      if (next.project_status === "done") next.project_status = "in_process";
+      break;
+
+    case "po_issued":
+      next.sales_command_stage = "po_issued";
+      stamp(next, "po_issued_at", iso);
       next.customer_approval = "ACCEPTED";
       next.project_complete = false;
-      if (next.project_status === "done" || next.project_status === "cancelled") {
-        next.project_status = "in_process";
-      }
+      clearLostStatus();
+      if (next.project_status === "done") next.project_status = "in_process";
       break;
-    case "done":
-      if (
-        next.customer_approval === "REJECTED" ||
-        next.customer_approval === "CANCELLED"
-      ) {
-        next.customer_approval = "ACCEPTED";
-      }
+
+    case "in_process":
+      next.sales_command_stage = "in_process";
+      stamp(next, "in_process_at", iso);
+      next.customer_approval = "ACCEPTED";
+      next.project_complete = false;
+      clearLostStatus();
+      next.project_status = "in_process";
+      break;
+
+    case "complete":
+      next.sales_command_stage = "complete";
+      stamp(next, "completed_at", iso);
+      next.customer_approval = "ACCEPTED";
+      clearLostStatus();
       next.project_status = "done";
       break;
-    case "no_bid":
+
+    case "delivered":
+      next.sales_command_stage = "delivered";
+      stamp(next, "delivered_at", iso);
+      next.customer_approval = "ACCEPTED";
+      clearLostStatus();
+      break;
+
+    case "invoiced":
+      next.sales_command_stage = "invoiced";
+      stamp(next, "invoiced_at", iso);
+      next.customer_approval = "ACCEPTED";
+      clearLostStatus();
+      break;
+
+    case "lost_rejected":
+      next.sales_command_stage = "lost";
       next.customer_approval = "REJECTED";
       next.project_complete = false;
       if (next.project_status === "cancelled") {
         next.project_status = "in_process";
       }
       break;
+
+    case "lost_cancelled":
+      next.sales_command_stage = "lost";
+      next.customer_approval = "CANCELLED";
+      next.project_complete = false;
+      if (next.project_status === "cancelled") {
+        next.project_status = "in_process";
+      }
+      break;
+
     default:
       break;
   }
@@ -126,19 +194,44 @@ export function rowAfterMoveToColumn(
   return normalizeProjectLifecycle(next);
 }
 
-export function dropIdToProjectColumn(
+/** Effective drag target for a row (lost is split into rejected vs cancelled). */
+export function moveTargetFromRow(row: DashboardProjectRow): SalesBoardMoveTarget {
+  const col = boardColumnForProject(row);
+  if (col !== "lost") {
+    return col as Exclude<SalesProjectColumn, "lost">;
+  }
+  const a = String(row.customer_approval || "").toUpperCase();
+  if (a === "CANCELLED" || row.project_status === "cancelled") {
+    return "lost_cancelled";
+  }
+  return "lost_rejected";
+}
+
+export function dropIdToMoveTarget(
   id: string | undefined | null,
-): SalesProjectColumn | null {
+): SalesBoardMoveTarget | null {
   if (!id) return null;
   switch (id) {
-    case SALES_BOARD_DROP.quoted_pending:
-      return "quoted_pending";
-    case SALES_BOARD_DROP.won_wip:
-      return "won_wip";
-    case SALES_BOARD_DROP.done:
-      return "done";
-    case SALES_BOARD_DROP.no_bid:
-      return "no_bid";
+    case SALES_BOARD_DROP.rfq_customer:
+      return "rfq_customer";
+    case SALES_BOARD_DROP.rfq_vendors:
+      return "rfq_vendors";
+    case SALES_BOARD_DROP.quote_sent:
+      return "quote_sent";
+    case SALES_BOARD_DROP.po_issued:
+      return "po_issued";
+    case SALES_BOARD_DROP.in_process:
+      return "in_process";
+    case SALES_BOARD_DROP.complete:
+      return "complete";
+    case SALES_BOARD_DROP.delivered:
+      return "delivered";
+    case SALES_BOARD_DROP.invoiced:
+      return "invoiced";
+    case SALES_BOARD_DROP.lost_rejected:
+      return "lost_rejected";
+    case SALES_BOARD_DROP.lost_cancelled:
+      return "lost_cancelled";
     default:
       return null;
   }

@@ -18,6 +18,20 @@ export interface ProjectRow {
   customer_approval?: string | null;
   project_status?: ProjectStatus;
   project_complete?: boolean | null;
+  /** Sales command board column id (see salesCommandBoardColumn). */
+  sales_command_stage?: string | null;
+  /** Cash received flag; see also invoiced_at / invoiced_amount. */
+  payment_received?: boolean | null;
+  rfq_vendors_sent_at?: string | null;
+  quote_sent_at?: string | null;
+  po_issued_at?: string | null;
+  in_process_at?: string | null;
+  materials_ordered_at?: string | null;
+  material_received_at?: string | null;
+  labor_completed_at?: string | null;
+  completed_at?: string | null;
+  delivered_at?: string | null;
+  invoiced_at?: string | null;
   total_quoted?: number | null;
   materials_quoted?: number | null;
   labor_quoted?: number | null;
@@ -50,6 +64,18 @@ export const PROJECT_UPDATE_KEYS = [
   "customer_approval",
   "project_status",
   "project_complete",
+  "sales_command_stage",
+  "payment_received",
+  "rfq_vendors_sent_at",
+  "quote_sent_at",
+  "po_issued_at",
+  "in_process_at",
+  "materials_ordered_at",
+  "material_received_at",
+  "labor_completed_at",
+  "completed_at",
+  "delivered_at",
+  "invoiced_at",
   "total_quoted",
   "materials_quoted",
   "labor_quoted",

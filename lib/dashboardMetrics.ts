@@ -3,6 +3,12 @@
  * Definitions are documented inline so Finance / Sales interpret numbers consistently.
  */
 
+import {
+  boardColumnForProject,
+  SALES_PROJECT_COLUMNS,
+  type SalesProjectColumn,
+} from "@/lib/salesCommandBoardColumn";
+
 export type CustomerApproval =
   | "PENDING"
   | "ACCEPTED"
@@ -37,12 +43,28 @@ export type DashboardProjectRow = {
   equipment_quoted?: number | null;
   logistics_quoted?: number | null;
   taxes_quoted?: number | null;
+  sales_command_stage?: string | null;
+  rfq_vendors_sent_at?: string | null;
+  quote_sent_at?: string | null;
+  po_issued_at?: string | null;
+  in_process_at?: string | null;
+  payment_received?: boolean | null;
+  materials_ordered_at?: string | null;
+  material_received_at?: string | null;
+  labor_completed_at?: string | null;
+  completed_at?: string | null;
+  delivered_at?: string | null;
+  invoiced_at?: string | null;
 };
 
 export type AttentionItem = {
   id: string;
   project_number: string;
   project_name: string;
+  /** Free-text customer on the job row */
+  customer: string;
+  /** RFQ / job created time from `projects.created_at` */
+  created_at: string | null;
   /** Human-readable reason shown on dashboard */
   reason: string;
   /** Estimated margin % on quoted basis (matches project detail “estimated” P&L) */
@@ -62,10 +84,17 @@ export type DashboardMetrics = {
   avgMarginPct: number | null;
   /** Sum total_quoted for rows where project_complete is false (open / WIP pipeline) */
   pipelineDollars: number;
-  /** 100 * ACCEPTED / (ACCEPTED + REJECTED); null if denominator is 0 */
+  /**
+   * 100 * ACCEPTED / (ACCEPTED + REJECTED). Cancellations are excluded from the denominator.
+   * null if denominator is 0.
+   */
   winRatePct: number | null;
   quotesAccepted: number;
   quotesRejected: number;
+  /** customer_approval === "CANCELLED" (distinct from rejected quotes). */
+  quotesCancelled: number;
+  /** Count of projects per sales command board column (includes lost). */
+  pipelineColumnCounts: Record<SalesProjectColumn, number>;
   activeProjects: number;
   completedProjects: number;
   /** Rows where supply_industrial (uppercased) starts with or equals "SUPPLY" */
@@ -74,7 +103,9 @@ export type DashboardMetrics = {
   industrialActiveCount: number;
   /** Sum engineering_quoted for active (incomplete) jobs — proxy for engineering load */
   engineeringLoadQuoted: number;
+  /** Invoiced revenue by customer, calendar YTD (same `created_at` window as ytdInvoiced). */
   topCustomers: Array<{ rank: number; customer: string; revenue: number }>;
+  /** Open quotes: non-cancelled rows with customer_approval PENDING (oldest created_at first). */
   needsAttention: AttentionItem[];
 };
 
@@ -169,6 +200,10 @@ export function aggregateDashboardMetrics(
   let pipelineDollars = 0;
   let quotesAccepted = 0;
   let quotesRejected = 0;
+  let quotesCancelled = 0;
+
+  const pipelineColumnCounts = {} as Record<SalesProjectColumn, number>;
+  for (const c of SALES_PROJECT_COLUMNS) pipelineColumnCounts[c] = 0;
   let activeProjects = 0;
   let completedProjects = 0;
   let supplyActiveCount = 0;
@@ -177,11 +212,13 @@ export function aggregateDashboardMetrics(
 
   const marginSamples: number[] = [];
   const customerMap = new Map<string, number>();
-  const attentionCandidates: AttentionItem[] = [];
 
   for (const p of projects) {
-    const approval = p.customer_approval || "";
-    if (approval === "PENDING" && !isCancelledProject(p)) openQuotes += 1;
+    const approval = String(p.customer_approval || "");
+    const approvalU = approval.toUpperCase();
+    pipelineColumnCounts[boardColumnForProject(p)] += 1;
+
+    if (approvalU === "PENDING" && !isCancelledProject(p)) openQuotes += 1;
 
     const created = p.created_at || "";
     if (created >= ytdCutoff) {
@@ -199,43 +236,19 @@ export function aggregateDashboardMetrics(
       const si = classifySupplyIndustrial(p.supply_industrial);
       if (si === "supply") supplyActiveCount += 1;
       else if (si === "industrial") industrialActiveCount += 1;
-
-      const estPct = estimatedMarginPctQuoted(p);
-      if (estPct !== null && estPct < 15) {
-        attentionCandidates.push({
-          id: p.id,
-          project_number: String(p.project_number ?? ""),
-          project_name: (p.project_name || "").toUpperCase() || "—",
-          reason: "Low quoted margin (< 15%)",
-          estimatedMarginPct: Math.round(estPct * 10) / 10,
-        });
-      }
-
-      if (approval === "PENDING" && p.created_at) {
-        const ageDays =
-          (now.getTime() - new Date(p.created_at).getTime()) / MS_PER_DAY;
-        if (ageDays >= STALE_QUOTE_DAYS) {
-          attentionCandidates.push({
-            id: p.id,
-            project_number: String(p.project_number ?? ""),
-            project_name: (p.project_name || "").toUpperCase() || "—",
-            reason: `Quote pending > ${STALE_QUOTE_DAYS} days`,
-            estimatedMarginPct: estimatedMarginPctQuoted(p) ?? 0,
-          });
-        }
-      }
     } else if (p.project_complete) {
       completedProjects += 1;
     }
 
-    if (approval === "ACCEPTED") quotesAccepted += 1;
-    if (approval === "REJECTED") quotesRejected += 1;
+    if (approvalU === "ACCEPTED") quotesAccepted += 1;
+    if (approvalU === "REJECTED") quotesRejected += 1;
+    if (approvalU === "CANCELLED") quotesCancelled += 1;
 
     const m = realizedMarginPct(p);
     if (m !== null) marginSamples.push(m);
 
     const rev = p.invoiced_amount || 0;
-    if (rev > 0 && p.customer) {
+    if (rev > 0 && p.customer && created >= ytdCutoff) {
       const c = p.customer.toUpperCase();
       customerMap.set(c, (customerMap.get(c) || 0) + rev);
     }
@@ -261,25 +274,38 @@ export function aggregateDashboardMetrics(
       revenue,
     }));
 
-  const byAttentionId = new Map<string, AttentionItem>();
-  for (const c of attentionCandidates) {
-    const prev = byAttentionId.get(c.id);
-    if (!prev) {
-      byAttentionId.set(c.id, { ...c });
-    } else {
-      byAttentionId.set(c.id, {
-        ...prev,
-        reason:
-          prev.reason === c.reason
-            ? prev.reason
-            : `${prev.reason}; ${c.reason}`,
-        estimatedMarginPct: Math.min(prev.estimatedMarginPct, c.estimatedMarginPct),
-      });
-    }
+  const pendingOpenQuotes: {
+    p: DashboardProjectRow;
+    item: AttentionItem;
+  }[] = [];
+  for (const p of projects) {
+    const au = String(p.customer_approval || "").toUpperCase();
+    if (au !== "PENDING" || isCancelledProject(p)) continue;
+    const est = estimatedMarginPctQuoted(p);
+    pendingOpenQuotes.push({
+      p,
+      item: {
+        id: p.id,
+        project_number: String(p.project_number ?? ""),
+        project_name: (p.project_name || "").toUpperCase() || "—",
+        customer: (p.customer || "").toUpperCase() || "—",
+        created_at: p.created_at ?? null,
+        reason: "Pending approval",
+        estimatedMarginPct:
+          est !== null ? Math.round(est * 10) / 10 : 0,
+      },
+    });
   }
-  const needsAttention = Array.from(byAttentionId.values())
-    .sort((a, b) => a.estimatedMarginPct - b.estimatedMarginPct)
-    .slice(0, 8);
+  pendingOpenQuotes.sort((a, b) => {
+    const ta = a.p.created_at
+      ? new Date(a.p.created_at).getTime()
+      : Number.POSITIVE_INFINITY;
+    const tb = b.p.created_at
+      ? new Date(b.p.created_at).getTime()
+      : Number.POSITIVE_INFINITY;
+    return ta - tb;
+  });
+  const needsAttention = pendingOpenQuotes.map((r) => r.item);
 
   return {
     openQuotes,
@@ -291,6 +317,8 @@ export function aggregateDashboardMetrics(
     winRatePct,
     quotesAccepted,
     quotesRejected,
+    quotesCancelled,
+    pipelineColumnCounts,
     activeProjects,
     completedProjects,
     supplyActiveCount,
