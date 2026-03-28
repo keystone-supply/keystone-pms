@@ -35,8 +35,20 @@ export interface ProjectRow {
   delivered_at?: string | null;
   invoiced_at?: string | null;
   total_quoted?: number | null;
+  /** Raw vendor / materials spend (before internal markup helper). */
+  materials_vendor_cost?: number | null;
+  /** Internal markup on materials, percent; UI defaults to 30 when null. */
+  material_markup_pct?: number | null;
+  engineering_markup_pct?: number | null;
+  equipment_markup_pct?: number | null;
+  logistics_markup_pct?: number | null;
   materials_quoted?: number | null;
   labor_quoted?: number | null;
+  labor_hours_quoted?: number | null;
+  labor_cost_per_hr?: number | null;
+  labor_sell_per_hr?: number | null;
+  labor_hours_actual?: number | null;
+  labor_cost_per_hr_actual?: number | null;
   engineering_quoted?: number | null;
   equipment_quoted?: number | null;
   logistics_quoted?: number | null;
@@ -79,8 +91,18 @@ export const PROJECT_UPDATE_KEYS = [
   "delivered_at",
   "invoiced_at",
   "total_quoted",
+  "materials_vendor_cost",
+  "material_markup_pct",
+  "engineering_markup_pct",
+  "equipment_markup_pct",
+  "logistics_markup_pct",
   "materials_quoted",
   "labor_quoted",
+  "labor_hours_quoted",
+  "labor_cost_per_hr",
+  "labor_sell_per_hr",
+  "labor_hours_actual",
+  "labor_cost_per_hr_actual",
   "engineering_quoted",
   "equipment_quoted",
   "logistics_quoted",

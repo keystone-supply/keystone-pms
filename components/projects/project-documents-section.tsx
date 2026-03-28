@@ -16,6 +16,7 @@ import {
   PROJECT_DOCUMENT_SELECT,
   type ProjectDocumentRow,
 } from "@/lib/projectDocumentDb";
+import { buildDefaultDocumentMetaFromProject } from "@/lib/projectDocumentDefaults";
 import type { ProjectRow } from "@/lib/projectTypes";
 import { CUSTOMER_DETAIL_SELECT, type CustomerWithShipping } from "@/lib/customerQueries";
 import { VENDOR_LIST_SELECT, type VendorRow } from "@/lib/vendorQueries";
@@ -31,23 +32,6 @@ function emptyMeta(): ProjectDocumentDraftMeta {
     lines: [],
     packingLines: [],
     bolRows: [],
-  };
-}
-
-function defaultMetaFromProject(project: ProjectRow): ProjectDocumentDraftMeta {
-  const total = project.total_quoted ?? 0;
-  const name = (project.project_name ?? "").toUpperCase() || "PROJECT";
-  return {
-    lines: [
-      {
-        lineNo: 1,
-        description: `Fabrication / materials — ${name}`,
-        qty: 1,
-        uom: "EA",
-        unitPrice: total,
-        extended: total,
-      },
-    ],
   };
 }
 
@@ -176,7 +160,7 @@ export function ProjectDocumentsSection({
     setKind("quote");
     setDocNumber(suggestDocNumber(project, "quote"));
     setVendorId("");
-    setMeta(defaultMetaFromProject(project));
+    setMeta(buildDefaultDocumentMetaFromProject(project));
     setSaveError(null);
     setEditorOpen(true);
   };
@@ -512,11 +496,27 @@ export function ProjectDocumentsSection({
             </div>
 
             <div className="mt-6">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs font-medium uppercase text-zinc-500">Line items</p>
-                <Button type="button" variant="outline" size="sm" onClick={addLine}>
-                  Add line
-                </Button>
+              <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Line items
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {kind === "quote" || kind === "invoice" ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() =>
+                        setMeta(buildDefaultDocumentMetaFromProject(project))
+                      }
+                    >
+                      Sync from project totals
+                    </Button>
+                  ) : null}
+                  <Button type="button" variant="outline" size="sm" onClick={addLine}>
+                    Add line
+                  </Button>
+                </div>
               </div>
               <div className="space-y-3">
                 {meta.lines.map((line) => (

@@ -8,6 +8,7 @@ import {
   SALES_PROJECT_COLUMNS,
   type SalesProjectColumn,
 } from "@/lib/salesCommandBoardColumn";
+import { computeQuotedInternalCostTotal } from "@/lib/projectFinancials";
 
 export type CustomerApproval =
   | "PENDING"
@@ -37,8 +38,18 @@ export type DashboardProjectRow = {
   equipment_cost?: number | null;
   logistics_cost?: number | null;
   additional_costs?: number | null;
+  materials_vendor_cost?: number | null;
+  material_markup_pct?: number | null;
+  engineering_markup_pct?: number | null;
+  equipment_markup_pct?: number | null;
+  logistics_markup_pct?: number | null;
   materials_quoted?: number | null;
   labor_quoted?: number | null;
+  labor_hours_quoted?: number | null;
+  labor_cost_per_hr?: number | null;
+  labor_sell_per_hr?: number | null;
+  labor_hours_actual?: number | null;
+  labor_cost_per_hr_actual?: number | null;
   engineering_quoted?: number | null;
   equipment_quoted?: number | null;
   logistics_quoted?: number | null;
@@ -125,14 +136,7 @@ function totalCostActual(p: DashboardProjectRow): number {
 }
 
 function totalCostQuoted(p: DashboardProjectRow): number {
-  return (
-    (p.materials_quoted || 0) +
-    (p.labor_quoted || 0) +
-    (p.engineering_quoted || 0) +
-    (p.equipment_quoted || 0) +
-    (p.logistics_quoted || 0) +
-    (p.taxes_quoted || 0)
-  );
+  return computeQuotedInternalCostTotal(p);
 }
 
 /** Realized P&L (matches project detail live P&L). */

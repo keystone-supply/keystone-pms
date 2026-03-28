@@ -5,13 +5,17 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { useParams } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
-import { Save, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Save, X } from "lucide-react";
 
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { QuickLinksBar } from "@/components/dashboard/quick-links-bar";
 import { Button } from "@/components/ui/button";
 import { ProjectBasicsFields } from "@/components/projects/project-basics-fields";
 import { ProjectDocumentsSection } from "@/components/projects/project-documents-section";
+import {
+  ProjectActualsFinancialsPanel,
+  ProjectQuoteFinancialsPanel,
+} from "@/components/projects/project-financials-panel";
 import type { ProjectBasicsField, ProjectRow } from "@/lib/projectTypes";
 import {
   normalizeProjectLifecycle,
@@ -22,34 +26,14 @@ import {
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
 import { PROJECT_SELECT } from "@/lib/projectQueries";
+import {
+  syncActualLaborCost,
+  syncQuoteDerivations,
+} from "@/lib/projectFinancials";
 import { supabase as supabaseMetrics } from "@/lib/supabaseClient";
-
-const QUOTED_FIELDS = [
-  "total_quoted",
-  "materials_quoted",
-  "labor_quoted",
-  "engineering_quoted",
-  "equipment_quoted",
-  "logistics_quoted",
-  "taxes_quoted",
-] as const;
-
-const REALIZED_COST_FIELDS = [
-  "material_cost",
-  "labor_cost",
-  "engineering_cost",
-  "equipment_cost",
-  "logistics_cost",
-  "additional_costs",
-] as const;
-
-function quotedLabel(field: string): string {
-  return field.replace(/_/g, " ");
-}
 
 const detailFieldClass =
   "w-full rounded-xl border border-zinc-700 bg-zinc-900/80 px-4 py-3 text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
-const detailFieldMono = `${detailFieldClass} font-mono tabular-nums`;
 
 function isoToDatetimeLocal(iso: string | null | undefined): string {
   if (iso == null || iso === "") return "";
@@ -104,6 +88,7 @@ export default function ProjectDetail() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [milestonesOpen, setMilestonesOpen] = useState(false);
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -126,7 +111,12 @@ export default function ProjectDetail() {
         setProject(null);
         setLastUpdated(null);
       } else {
-        setProject(data as ProjectRow);
+        const row = data as ProjectRow;
+        setProject({
+          ...row,
+          ...syncQuoteDerivations(row),
+          ...syncActualLaborCost(row),
+        });
         setLastUpdated(new Date());
       }
       if (mode === "full") setLoading(false);
@@ -153,43 +143,29 @@ export default function ProjectDetail() {
     void Promise.resolve().then(() => fetchOpenQuotesCount());
   }, [sessionStatus, fetchOpenQuotesCount]);
 
-  const pl = project
-    ? (project.invoiced_amount || 0) -
-      ((project.material_cost || 0) +
-        (project.labor_cost || 0) +
-        (project.engineering_cost || 0) +
-        (project.equipment_cost || 0) +
-        (project.logistics_cost || 0) +
-        (project.additional_costs || 0))
-    : 0;
-
-  const plMargin =
-    project && (project.invoiced_amount || 0) > 0
-      ? Math.round((pl / (project.invoiced_amount || 0)) * 100)
-      : 0;
-
-  const totalQuoted = project?.total_quoted || 0;
-  const totalQuotedCosts = project
-    ? (project.materials_quoted || 0) +
-      (project.labor_quoted || 0) +
-      (project.engineering_quoted || 0) +
-      (project.equipment_quoted || 0) +
-      (project.logistics_quoted || 0) +
-      (project.taxes_quoted || 0)
-    : 0;
-
-  const estimatedPl = project ? totalQuoted - totalQuotedCosts : 0;
-  const estimatedMarginPct =
-    project && totalQuoted > 0
-      ? Math.round((estimatedPl / totalQuoted) * 100)
-      : 0;
+  const applyFinancialPatch = useCallback((patch: Partial<ProjectRow>) => {
+    setProject((prev) => {
+      if (!prev) return null;
+      const next = { ...prev, ...patch };
+      return {
+        ...next,
+        ...syncQuoteDerivations(next),
+        ...syncActualLaborCost(next),
+      };
+    });
+  }, []);
 
   const handleSave = async () => {
     if (!project) return;
     setSaving(true);
     setSaveMessage(null);
     setSaveError(null);
-    const normalized = normalizeProjectLifecycle(project);
+    const synced = {
+      ...project,
+      ...syncQuoteDerivations(project),
+      ...syncActualLaborCost(project),
+    };
+    const normalized = normalizeProjectLifecycle(synced);
     const payload = pickProjectUpdatePayload(normalized);
     const { error } = await supabase
       .from("projects")
@@ -292,7 +268,7 @@ export default function ProjectDetail() {
             Project not found
           </div>
         ) : (
-          <div className="mx-auto mt-10 max-w-5xl">
+          <div className="mx-auto mt-10 max-w-7xl">
             <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end">
               <Button
                 type="button"
@@ -343,9 +319,8 @@ export default function ProjectDetail() {
               </div>
             ) : null}
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        <div className="space-y-6">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8">
+      <div className="space-y-8">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8">
             <h2 className="text-xl font-semibold mb-6">Project Info</h2>
             <div className="space-y-4">
               <div>
@@ -434,151 +409,70 @@ export default function ProjectDetail() {
                 Saving sets <strong className="text-zinc-400">complete</strong>{" "}
                 to match status: Done → complete, Cancelled → not complete.
               </p>
-              <div className="border-t border-zinc-800 pt-6 mt-2">
-                <h3 className="text-sm font-medium text-zinc-400 mb-4">
+              <div className="mt-6 rounded-2xl border border-zinc-800/50 bg-zinc-950/30 p-4">
+                <button
+                  type="button"
+                  onClick={() => setMilestonesOpen((o) => !o)}
+                  className="flex w-full items-center gap-1.5 text-left text-xs font-medium text-zinc-400 hover:text-zinc-200"
+                  aria-expanded={milestonesOpen}
+                  id="project-milestones-toggle"
+                >
+                  {milestonesOpen ? (
+                    <ChevronDown className="size-4 shrink-0 text-zinc-500" />
+                  ) : (
+                    <ChevronRight className="size-4 shrink-0 text-zinc-500" />
+                  )}
                   Milestones (date/time, optional)
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {OPS_MILESTONE_FIELDS.map(({ key, label }) => (
-                    <div key={key}>
-                      <label className="text-xs text-zinc-500 block mb-1">
-                        {label}
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={isoToDatetimeLocal(project[key])}
-                        onChange={(e) =>
-                          updateField(key, datetimeLocalToIso(e.target.value))
-                        }
-                        className={detailFieldClass}
-                      />
+                </button>
+                {milestonesOpen ? (
+                  <div
+                    className="mt-4 space-y-4 text-sm"
+                    role="region"
+                    aria-labelledby="project-milestones-toggle"
+                  >
+                    <p className="text-[11px] leading-snug text-zinc-500">
+                      Optional ops timestamps for this job. Hidden until you
+                      expand this section.
+                    </p>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      {OPS_MILESTONE_FIELDS.map(({ key, label }) => (
+                        <div key={key}>
+                          <label className="mb-1 block text-xs text-zinc-500">
+                            {label}
+                          </label>
+                          <input
+                            type="datetime-local"
+                            value={isoToDatetimeLocal(project[key])}
+                            onChange={(e) =>
+                              updateField(
+                                key,
+                                datetimeLocalToIso(e.target.value),
+                              )
+                            }
+                            className={detailFieldClass}
+                          />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-8">
-          <h2 className="text-xl font-semibold">
-            Live P&amp;L (updates instantly)
-          </h2>
-
-          <div className="grid grid-cols-2 gap-6 text-lg">
-            <div className="bg-zinc-950 rounded-2xl p-6 border border-zinc-700">
-              <div className="text-zinc-500 text-sm">INVOICED AMOUNT</div>
-              <input
-                type="number"
-                value={project.invoiced_amount || 0}
-                onChange={(e) =>
-                  updateField(
-                    "invoiced_amount",
-                    parseFloat(e.target.value) || 0,
-                  )
-                }
-                className="w-full bg-transparent text-4xl font-mono font-bold mt-2 focus:outline-none"
-              />
-            </div>
-            <div className="bg-zinc-950 rounded-2xl p-6 border border-zinc-700">
-              <div className="text-zinc-500 text-sm">TOTAL COSTS</div>
-              <div className="text-4xl font-mono font-bold mt-2 text-red-400">
-                $
-                {(
-                  (project.material_cost || 0) +
-                  (project.labor_cost || 0) +
-                  (project.engineering_cost || 0) +
-                  (project.equipment_cost || 0) +
-                  (project.logistics_cost || 0) +
-                  (project.additional_costs || 0)
-                ).toLocaleString()}
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
 
-          <div className="bg-emerald-950 border border-emerald-800 rounded-3xl p-8">
-            <div className="text-emerald-400 text-sm font-medium">
-              Realized P&amp;L
-            </div>
-            <div className="text-6xl font-mono font-bold mt-2 text-emerald-300">
-              ${pl.toLocaleString()}
-            </div>
-            <div className="text-emerald-400 text-2xl mt-1">
-              {plMargin}% MARGIN
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            {REALIZED_COST_FIELDS.map((field) => (
-              <div key={field}>
-                <label className="text-zinc-500 block mb-1 capitalize">
-                  {quotedLabel(field)}
-                </label>
-                <input
-                  type="number"
-                  value={project[field] ?? 0}
-                  onChange={(e) =>
-                    updateField(field, parseFloat(e.target.value) || 0)
-                  }
-                  className={detailFieldMono}
-                />
-              </div>
-            ))}
-          </div>
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-start">
+          <ProjectQuoteFinancialsPanel
+            project={project}
+            applyFinancialPatch={applyFinancialPatch}
+          />
+          <ProjectActualsFinancialsPanel
+            project={project}
+            applyFinancialPatch={applyFinancialPatch}
+          />
         </div>
       </div>
 
-      <div className="mt-8 bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-8">
-        <h2 className="text-xl font-semibold">Quote &amp; estimate (live)</h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-          <div className="bg-zinc-950 rounded-2xl p-5 border border-zinc-700 lg:col-span-2">
-            <div className="text-zinc-500 text-sm">TOTAL QUOTED</div>
-            <input
-              type="number"
-              value={project.total_quoted ?? 0}
-              onChange={(e) =>
-                updateField("total_quoted", parseFloat(e.target.value) || 0)
-              }
-              className="w-full bg-transparent text-3xl font-mono font-bold mt-2 focus:outline-none"
-            />
-          </div>
-          <div className="bg-zinc-950 rounded-2xl p-5 border border-zinc-700 lg:col-span-2">
-            <div className="text-zinc-500 text-sm">TOTAL QUOTED COSTS</div>
-            <div className="text-3xl font-mono font-bold mt-2 text-zinc-200">
-              ${totalQuotedCosts.toLocaleString()}
-            </div>
-          </div>
-        </div>
-        <div className="bg-sky-950 border border-sky-800 rounded-3xl p-8">
-          <div className="text-sky-400 text-sm font-medium">
-            Estimated P&amp;L (quoted − quoted costs)
-          </div>
-          <div className="text-5xl font-mono font-bold mt-2 text-sky-200">
-            ${estimatedPl.toLocaleString()}
-          </div>
-          <div className="text-sky-400 text-xl mt-1">
-            {estimatedMarginPct}% MARGIN ON QUOTE
-          </div>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-          {QUOTED_FIELDS.filter((f) => f !== "total_quoted").map((field) => (
-            <div key={field}>
-              <label className="text-zinc-500 block mb-1 capitalize">
-                {quotedLabel(field)}
-              </label>
-              <input
-                type="number"
-                value={project[field] ?? 0}
-                onChange={(e) =>
-                  updateField(field, parseFloat(e.target.value) || 0)
-                }
-                className={detailFieldMono}
-              />
-            </div>
-          ))}
-        </div>
-      </div>
-
+            <div className="mt-8">
             <ProjectDocumentsSection
               projectId={id}
               project={project}
@@ -595,6 +489,7 @@ export default function ProjectDetail() {
               >
                 Open this job’s folder in OneDrive (Documents/0 PROJECT FOLDERS)
               </a>
+            </div>
             </div>
           </div>
         )}

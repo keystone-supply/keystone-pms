@@ -16,6 +16,7 @@
     "import:book1": "npx tsx scripts/import-book1.ts",
     "nest:estimate-payload": "node scripts/estimate-nest-payload-size.mjs",
     "test:sales-board": "node --import tsx --test lib/salesBoard.test.ts",
+    "test:project-financials": "node --import tsx --test lib/projectFinancials.test.ts",
     "test:document-milestones": "node --import tsx --test lib/documentMilestones.test.ts",
     "test:nest-dual-lane": "npx tsx scripts/verify-nest-dual-lane.ts",
     "test:nest-dxf-export": "npx tsx scripts/verify-nest-dxf-export.ts"
