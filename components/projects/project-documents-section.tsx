@@ -2,7 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { CloudUpload, Eye, FileText, HardDriveDownload, Plus } from "lucide-react";
+import {
+  CloudUpload,
+  CornerDownLeft,
+  Eye,
+  FileText,
+  HardDriveDownload,
+  Plus,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { DOCUMENT_KIND_LABEL, PROJECT_DOCUMENT_KINDS } from "@/lib/documentTypes";
@@ -26,6 +33,12 @@ import {
 } from "@/lib/documents/buildProjectDocumentPdf";
 import { generateProjectDocumentPdfBuffer } from "@/lib/documents/composePdfInput";
 import { uploadPdfToDocs } from "@/lib/onedrive";
+import {
+  buildQuoteFinancialsSnapshot,
+  documentKindSupportsQuoteFinancialsSnapshot,
+  readQuoteFinancialsSnapshotFromMetadata,
+  snapshotToProjectPatch,
+} from "@/lib/quoteFinancialsSnapshot";
 
 function emptyMeta(): ProjectDocumentDraftMeta {
   return {
@@ -38,13 +51,17 @@ function emptyMeta(): ProjectDocumentDraftMeta {
 function normalizeMeta(raw: unknown): ProjectDocumentDraftMeta {
   if (!raw || typeof raw !== "object") return emptyMeta();
   const m = raw as ProjectDocumentDraftMeta;
-  return {
+  const base: ProjectDocumentDraftMeta = {
     ...emptyMeta(),
     ...m,
     lines: Array.isArray(m.lines) ? m.lines : [],
     packingLines: Array.isArray(m.packingLines) ? m.packingLines : [],
     bolRows: Array.isArray(m.bolRows) ? m.bolRows : [],
   };
+  const snap = readQuoteFinancialsSnapshotFromMetadata(raw);
+  if (snap) base.quoteFinancialsSnapshot = snap;
+  else delete base.quoteFinancialsSnapshot;
+  return base;
 }
 
 function suggestDocNumber(project: ProjectRow, kind: ProjectDocumentKind): string {
@@ -71,11 +88,13 @@ export function ProjectDocumentsSection({
   project,
   supabase,
   onProjectRefresh,
+  onApplyQuoteFinancialsSnapshot,
 }: {
   projectId: string;
   project: ProjectRow;
   supabase: SupabaseClient;
   onProjectRefresh: () => void;
+  onApplyQuoteFinancialsSnapshot?: (patch: Partial<ProjectRow>) => void;
 }) {
   const [rows, setRows] = useState<ProjectDocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -179,12 +198,19 @@ export function ProjectDocumentsSection({
     setSaveError(null);
     setSaveBusy(true);
     try {
+      const metaToSave: ProjectDocumentDraftMeta = { ...meta };
+      if (documentKindSupportsQuoteFinancialsSnapshot(kind)) {
+        metaToSave.quoteFinancialsSnapshot =
+          buildQuoteFinancialsSnapshot(project);
+      } else {
+        delete metaToSave.quoteFinancialsSnapshot;
+      }
       const payload = {
         project_id: projectId,
         kind,
         status: "draft",
         number: docNumber.trim() || null,
-        metadata: meta,
+        metadata: metaToSave,
         vendor_id:
           kind === "rfq" || kind === "purchase_order"
             ? vendorId.trim() || null
@@ -403,6 +429,29 @@ export function ProjectDocumentsSection({
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
+                {documentKindSupportsQuoteFinancialsSnapshot(r.kind) &&
+                readQuoteFinancialsSnapshotFromMetadata(r.metadata) &&
+                onApplyQuoteFinancialsSnapshot ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    title="Restore Project financials from values stored when this document was saved. Save the project to persist."
+                    onClick={() => {
+                      const snap = readQuoteFinancialsSnapshotFromMetadata(
+                        r.metadata,
+                      );
+                      if (!snap) return;
+                      onApplyQuoteFinancialsSnapshot(
+                        snapshotToProjectPatch(snap),
+                      );
+                    }}
+                  >
+                    <CornerDownLeft className="size-4" />
+                    Use as reference
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   variant="outline"

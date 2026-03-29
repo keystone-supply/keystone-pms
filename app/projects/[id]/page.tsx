@@ -478,6 +478,7 @@ export default function ProjectDetail() {
               project={project}
               supabase={supabase}
               onProjectRefresh={() => void fetchProject("soft")}
+              onApplyQuoteFinancialsSnapshot={applyFinancialPatch}
             />
 
             <div className="mt-12 text-center">

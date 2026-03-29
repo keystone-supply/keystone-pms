@@ -1,5 +1,7 @@
 /** Project PDF document kinds (matches `project_documents.kind` in Supabase). */
 
+import type { QuoteFinancialsSnapshotV1 } from "@/lib/quoteFinancialsSnapshot";
+
 export type ProjectDocumentKind =
   | "rfq"
   | "quote"
@@ -92,4 +94,6 @@ export type ProjectDocumentDraftMeta = {
   bolNumber?: string;
   notes?: string;
   internalNotes?: string;
+  /** Captured project financial fields when the quote/invoice draft was saved. */
+  quoteFinancialsSnapshot?: QuoteFinancialsSnapshotV1;
 };
