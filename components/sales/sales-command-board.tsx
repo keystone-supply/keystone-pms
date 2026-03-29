@@ -1,4 +1,4 @@
-/** Horizontal sales command board: CRM touch + project pipeline with dnd-kit. */
+/** Horizontal sales command board: project pipeline with dnd-kit. */
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
@@ -15,29 +15,24 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { AlertTriangle, GripVertical, User } from "lucide-react";
+import { AlertTriangle, GripVertical } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import type { AttentionItem } from "@/lib/dashboardMetrics";
 import { classifySupplyIndustrial } from "@/lib/dashboardMetrics";
 import type { DashboardProjectRow } from "@/lib/dashboardMetrics";
-import type { CustomerRow } from "@/lib/customerQueries";
 import { supabase } from "@/lib/supabaseClient";
 import { pickProjectUpdatePayload } from "@/lib/projectTypes";
 import type { SalesProjectColumn } from "@/lib/salesBoard";
 import {
   boardColumnForProject,
   dropIdToMoveTarget,
-  isTouchBaseCustomer,
   moveTargetFromRow,
   rowAfterMoveToColumn,
   SALES_BOARD_DROP,
-  touchBaseSortKey,
 } from "@/lib/salesBoard";
 import { SALES_PROJECT_COLUMNS } from "@/lib/salesCommandBoardColumn";
 import { cn } from "@/lib/utils";
-
-const TOUCH_LIMIT = 20;
 
 /** Scroll viewport height: fits ~3–4 cards (project rows) before vertical scroll. */
 const COLUMN_BODY_MAX_H = "max-h-[36rem]";
@@ -155,28 +150,15 @@ function dragIdProject(id: string) {
   return `project:${id}`;
 }
 
-function dragIdCustomer(id: string) {
-  return `customer:${id}`;
-}
-
-function parseDragId(
-  raw: string | number,
-): { kind: "project" | "customer"; id: string } | null {
+function parseProjectDragId(raw: string | number): string | null {
   const s = String(raw);
-  if (s.startsWith("project:")) {
-    return { kind: "project", id: s.slice("project:".length) };
-  }
-  if (s.startsWith("customer:")) {
-    return { kind: "customer", id: s.slice("customer:".length) };
-  }
-  return null;
+  if (!s.startsWith("project:")) return null;
+  return s.slice("project:".length);
 }
 
 type SalesCommandBoardProps = {
   projects: DashboardProjectRow[];
   setProjects: React.Dispatch<React.SetStateAction<DashboardProjectRow[]>>;
-  customers: CustomerRow[];
-  setCustomers: React.Dispatch<React.SetStateAction<CustomerRow[]>>;
   attentionByProjectId: Map<string, AttentionItem>;
   formatUsd: (n: number) => string;
 };
@@ -448,127 +430,19 @@ function DraggableProjectCard({
   );
 }
 
-function CustomerCardInner({
-  customer,
-  now,
-  dragging,
-}: {
-  customer: CustomerRow;
-  now: Date;
-  dragging?: boolean;
-}) {
-  const bucket = (() => {
-    const t = customer.follow_up_at ? new Date(customer.follow_up_at).getTime() : NaN;
-    if (Number.isNaN(t)) return null as "overdue" | "week" | null;
-    if (t < now.getTime()) return "overdue" as const;
-    if (t <= now.getTime() + 7 * 86400000) return "week" as const;
-    return null;
-  })();
-
-  return (
-    <div
-      className={cn(
-        "rounded-xl border border-zinc-700/90 bg-zinc-950/80 p-3 shadow-sm",
-        dragging && "opacity-90 shadow-lg",
-      )}
-    >
-      <div className="flex items-start gap-2">
-        <User className="mt-0.5 size-4 shrink-0 text-zinc-500" aria-hidden />
-        <div className="min-w-0 flex-1 space-y-1">
-          <p className="truncate text-sm font-medium text-zinc-100">
-            {customer.legal_name}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            <Badge
-              className={cn(
-                "text-[10px]",
-                customer.status === "prospect" && "bg-amber-500/15 text-amber-300",
-                customer.status === "active" && "bg-emerald-500/15 text-emerald-300",
-                customer.status === "inactive" && "bg-zinc-500/15 text-zinc-400",
-              )}
-            >
-              {customer.status}
-            </Badge>
-            {bucket === "overdue" ? (
-              <span className="text-[10px] text-red-400">Overdue</span>
-            ) : bucket === "week" ? (
-              <span className="text-[10px] text-amber-400">This week</span>
-            ) : null}
-          </div>
-          <Link
-            href={`/sales/customers/${customer.id}`}
-            className="inline-block text-xs font-medium text-blue-400 hover:text-blue-300"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            Open account →
-          </Link>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DraggableCustomerCard({
-  customer,
-  now,
-  disabled,
-}: {
-  customer: CustomerRow;
-  now: Date;
-  disabled: boolean;
-}) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({
-      id: dragIdCustomer(customer.id),
-      disabled,
-      data: { kind: "customer" as const, customer },
-    });
-
-  const style = transform
-    ? { transform: CSS.Translate.toString(transform) }
-    : undefined;
-
-  return (
-    <div ref={setNodeRef} style={style} className={cn(isDragging && "opacity-40")}>
-      <div {...listeners} {...attributes} className={cn(disabled && "cursor-not-allowed")}>
-        <CustomerCardInner customer={customer} now={now} />
-      </div>
-    </div>
-  );
-}
-
 export function SalesCommandBoard({
   projects,
   setProjects,
-  customers,
-  setCustomers,
   attentionByProjectId,
   formatUsd,
 }: SalesCommandBoardProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [active, setActive] = useState<{
-    kind: "project" | "customer";
-    id: string;
-  } | null>(null);
-
-  const now = useMemo(() => new Date(), []);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
-
-  const touchCustomers = useMemo(() => {
-    const list = customers.filter((c) => isTouchBaseCustomer(c, now));
-    list.sort((a, b) => {
-      const ka = touchBaseSortKey(a, now);
-      const kb = touchBaseSortKey(b, now);
-      if (ka[0] !== kb[0]) return ka[0] - kb[0];
-      if (ka[1] !== kb[1]) return ka[1] - kb[1];
-      return ka[2].localeCompare(kb[2]);
-    });
-    return list.slice(0, TOUCH_LIMIT);
-  }, [customers, now]);
 
   const byColumn = useMemo(() => {
     const cols = {} as Record<SalesProjectColumn, DashboardProjectRow[]>;
@@ -587,84 +461,54 @@ export function SalesCommandBoard({
   }, [projects]);
 
   const activeProject =
-    active?.kind === "project"
-      ? projects.find((p) => p.id === active.id)
-      : undefined;
-  const activeCustomer =
-    active?.kind === "customer"
-      ? customers.find((c) => c.id === active.id)
+    activeProjectId != null
+      ? projects.find((p) => p.id === activeProjectId)
       : undefined;
 
   const onDragStart = useCallback((e: DragStartEvent) => {
-    const parsed = parseDragId(e.active.id);
-    if (parsed) setActive({ kind: parsed.kind, id: parsed.id });
+    const id = parseProjectDragId(e.active.id);
+    if (id) setActiveProjectId(id);
   }, []);
 
   const onDragEnd = useCallback(
     async (e: DragEndEvent) => {
-      const parsed = parseDragId(e.active.id);
-      setActive(null);
-      if (!parsed || !e.over) return;
+      const projectId = parseProjectDragId(e.active.id);
+      setActiveProjectId(null);
+      if (!projectId || !e.over) return;
 
       const overId = String(e.over.id);
+      const targetMove = dropIdToMoveTarget(overId);
+      if (!targetMove) return;
 
-      if (parsed.kind === "customer") {
-        if (overId !== SALES_BOARD_DROP.qualify) return;
-        const row = customers.find((c) => c.id === parsed.id);
-        if (!row || row.status !== "prospect") return;
+      const row = projects.find((p) => p.id === projectId);
+      if (!row) return;
+      if (moveTargetFromRow(row) === targetMove) return;
 
-        setError(null);
-        setBusyId(parsed.id);
-        const prev = customers;
-        setCustomers((cs) =>
-          cs.map((c) => (c.id === parsed.id ? { ...c, status: "active" } : c)),
-        );
-        const { error: upErr } = await supabase
-          .from("customers")
-          .update({ status: "active" })
-          .eq("id", parsed.id);
-        setBusyId(null);
-        if (upErr) {
-          setCustomers(prev);
-          setError(upErr.message);
-        }
-        return;
-      }
+      const nextLifecycle = rowAfterMoveToColumn(row, targetMove, new Date());
+      const payload = pickProjectUpdatePayload(nextLifecycle);
+      setError(null);
+      setBusyId(projectId);
+      const prev = projects;
+      const nextRow = { ...row, ...nextLifecycle } as DashboardProjectRow;
+      setProjects((ps) =>
+        ps.map((p) => (p.id === projectId ? nextRow : p)),
+      );
 
-      if (parsed.kind === "project") {
-        const targetMove = dropIdToMoveTarget(overId);
-        if (!targetMove) return;
+      const { error: upErr } = await supabase
+        .from("projects")
+        .update(payload)
+        .eq("id", projectId);
 
-        const row = projects.find((p) => p.id === parsed.id);
-        if (!row) return;
-        if (moveTargetFromRow(row) === targetMove) return;
-
-        const nextLifecycle = rowAfterMoveToColumn(row, targetMove, new Date());
-        const payload = pickProjectUpdatePayload(nextLifecycle);
-        setError(null);
-        setBusyId(parsed.id);
-        const prev = projects;
-        const nextRow = { ...row, ...nextLifecycle } as DashboardProjectRow;
-        setProjects((ps) =>
-          ps.map((p) => (p.id === parsed.id ? nextRow : p)),
-        );
-
-        const { error: upErr } = await supabase
-          .from("projects")
-          .update(payload)
-          .eq("id", parsed.id);
-
-        setBusyId(null);
-        if (upErr) {
-          setProjects(prev);
-          setError(upErr.message);
-        }
+      setBusyId(null);
+      if (upErr) {
+        setProjects(prev);
+        setError(upErr.message);
       }
     },
-    [customers, projects, setCustomers, setProjects],
+    [projects, setProjects],
   );
 
-  const onDragCancel = useCallback(() => setActive(null), []);
+  const onDragCancel = useCallback(() => setActiveProjectId(null), []);
 
   const dragDisabled = busyId !== null;
 
@@ -677,8 +521,7 @@ export function SalesCommandBoard({
         <div>
           <h2 className="text-lg font-semibold text-white">Command board</h2>
           <p className="text-sm text-zinc-500">
-            Drag accounts to <strong className="font-medium text-zinc-400">Qualify</strong>{" "}
-            (prospects → active). Drag jobs between pipeline columns; changes save to Supabase.
+            Drag jobs between pipeline columns; changes save to Supabase.
           </p>
         </div>
       </div>
@@ -699,34 +542,6 @@ export function SalesCommandBoard({
         onDragCancel={onDragCancel}
       >
         <div className="flex gap-3 overflow-x-auto pb-2">
-          <ColumnShell
-            dropId={SALES_BOARD_DROP.touch}
-            title="Touch base"
-            subtitle="Prospects & follow-ups"
-            count={touchCustomers.length}
-          >
-            {touchCustomers.map((c) => (
-              <DraggableCustomerCard
-                key={c.id}
-                customer={c}
-                now={now}
-                disabled={dragDisabled}
-              />
-            ))}
-          </ColumnShell>
-
-          <ColumnShell
-            dropId={SALES_BOARD_DROP.qualify}
-            title="Qualify"
-            subtitle="Drop a prospect here → active"
-            count={0}
-            className="w-[min(100%,200px)]"
-          >
-            <p className="px-1 text-xs text-zinc-600">
-              Prospect cards only. Drops update account status.
-            </p>
-          </ColumnShell>
-
           {PIPELINE_COLUMNS.map((col) => (
             <ColumnShell
               key={col.key}
@@ -763,8 +578,6 @@ export function SalesCommandBoard({
               formatUsd={formatUsd}
               dragging
             />
-          ) : activeCustomer ? (
-            <CustomerCardInner customer={activeCustomer} now={now} dragging />
           ) : null}
         </DragOverlay>
       </DndContext>

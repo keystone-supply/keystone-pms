@@ -378,8 +378,6 @@ export default function SalesPage() {
         <SalesCommandBoard
           projects={projectRows}
           setProjects={setProjectRows}
-          customers={customers}
-          setCustomers={setCustomers}
           attentionByProjectId={attentionByProjectId}
           formatUsd={formatUsd}
         />

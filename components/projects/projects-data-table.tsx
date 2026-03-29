@@ -113,6 +113,22 @@ function healthBadgeClass(health: string): string {
 const columnHelper = createColumnHelper<DashboardProjectRow>();
 
 const baseColumns = [
+  columnHelper.display({
+    id: "actions",
+    header: "",
+    cell: ({ row }) => (
+      <Link
+        href={`/projects/${row.original.id}`}
+        className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-400 hover:text-blue-300"
+      >
+        <Eye className="size-4" aria-hidden />
+        View
+      </Link>
+    ),
+    enableSorting: false,
+    enableHiding: false,
+    meta: { sticky: true },
+  }),
   columnHelper.accessor((row) => row.project_number, {
     id: "project_number",
     header: "Project #",
@@ -122,7 +138,6 @@ const baseColumns = [
       </span>
     ),
     sortingFn: (a, b) => compareProjectNumber(a.original, b.original),
-    meta: { sticky: true },
     enableHiding: false,
   }),
   columnHelper.accessor((row) => row.customer, {
@@ -312,21 +327,6 @@ const baseColumns = [
         </span>
       );
     },
-  }),
-  columnHelper.display({
-    id: "actions",
-    header: "",
-    cell: ({ row }) => (
-      <Link
-        href={`/projects/${row.original.id}`}
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-400 hover:text-blue-300"
-      >
-        <Eye className="size-4" aria-hidden />
-        View
-      </Link>
-    ),
-    enableSorting: false,
-    enableHiding: false,
   }),
 ];
 

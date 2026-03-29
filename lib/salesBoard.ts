@@ -17,10 +17,8 @@ export type SalesBoardMoveTarget =
 
 export { boardColumnForProject };
 
-/** Droppable ids for dnd-kit (projects + CRM qualify lane). */
+/** Droppable ids for dnd-kit (project pipeline + lost zones). */
 export const SALES_BOARD_DROP = {
-  touch: "sb-touch",
-  qualify: "sb-qualify",
   rfq_customer: "sb-rfq",
   rfq_vendors: "sb-vendors",
   quote_sent: "sb-quote",
@@ -35,40 +33,6 @@ export const SALES_BOARD_DROP = {
 
 export type SalesBoardDropId =
   (typeof SALES_BOARD_DROP)[keyof typeof SALES_BOARD_DROP];
-
-const MS_DAY = 86400000;
-
-export function followUpBucket(
-  followUpAt: string | null,
-  now: Date,
-): "overdue" | "week" | null {
-  if (!followUpAt) return null;
-  const t = new Date(followUpAt).getTime();
-  if (Number.isNaN(t)) return null;
-  if (t < now.getTime()) return "overdue";
-  if (t <= now.getTime() + 7 * MS_DAY) return "week";
-  return null;
-}
-
-/** Touch column: prospects ∪ accounts with follow-up overdue or within 7 days. */
-export function isTouchBaseCustomer(
-  c: { status: string; follow_up_at: string | null },
-  now: Date,
-): boolean {
-  if (c.status === "prospect") return true;
-  return followUpBucket(c.follow_up_at, now) !== null;
-}
-
-export function touchBaseSortKey(
-  c: { status: string; follow_up_at: string | null; legal_name: string },
-  now: Date,
-): [number, number, string] {
-  const bucket = followUpBucket(c.follow_up_at, now);
-  const tier =
-    bucket === "overdue" ? 0 : bucket === "week" ? 1 : c.status === "prospect" ? 2 : 3;
-  const t = c.follow_up_at ? new Date(c.follow_up_at).getTime() : Number.POSITIVE_INFINITY;
-  return [tier, Number.isNaN(t) ? Number.POSITIVE_INFINITY : t, c.legal_name];
-}
 
 function toProjectRow(p: DashboardProjectRow): ProjectRow {
   return { ...p } as ProjectRow;
