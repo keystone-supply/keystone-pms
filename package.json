@@ -18,6 +18,8 @@
     "test:sales-board": "node --import tsx --test lib/salesBoard.test.ts",
     "test:project-financials": "node --import tsx --test lib/projectFinancials.test.ts",
     "test:quote-financials-snapshot": "node --import tsx --test lib/quoteFinancialsSnapshot.test.ts",
+    "test:project-document-totals": "node --import tsx --test lib/projectDocumentTotalsPolicy.test.ts",
+    "test:project-lifecycle": "node --import tsx --test lib/projectTypes.lifecycle.test.ts",
     "test:document-milestones": "node --import tsx --test lib/documentMilestones.test.ts",
     "test:nest-dual-lane": "npx tsx scripts/verify-nest-dual-lane.ts",
     "test:nest-dxf-export": "npx tsx scripts/verify-nest-dxf-export.ts"

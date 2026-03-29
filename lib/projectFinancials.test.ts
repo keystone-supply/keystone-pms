@@ -129,6 +129,7 @@ describe("syncQuoteDerivations", () => {
         taxes_quoted: 0,
       }),
     );
+    assert.equal(patch.materials_quoted, 130);
     assert.equal(patch.labor_quoted, 100);
     assert.equal(patch.total_quoted, 130 + 240);
   });

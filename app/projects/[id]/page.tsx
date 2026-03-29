@@ -25,8 +25,10 @@ import {
   aggregateDashboardMetrics,
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
+import { CUSTOMER_LIST_SELECT, type CustomerRow } from "@/lib/customerQueries";
 import { PROJECT_SELECT } from "@/lib/projectQueries";
 import {
+  normalizeProjectMarkupPctsForEditor,
   syncActualLaborCost,
   syncQuoteDerivations,
 } from "@/lib/projectFinancials";
@@ -89,6 +91,7 @@ export default function ProjectDetail() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [milestonesOpen, setMilestonesOpen] = useState(false);
+  const [customersList, setCustomersList] = useState<CustomerRow[]>([]);
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -112,10 +115,11 @@ export default function ProjectDetail() {
         setLastUpdated(null);
       } else {
         const row = data as ProjectRow;
+        const withMarkups = normalizeProjectMarkupPctsForEditor(row);
         setProject({
-          ...row,
-          ...syncQuoteDerivations(row),
-          ...syncActualLaborCost(row),
+          ...withMarkups,
+          ...syncQuoteDerivations(withMarkups),
+          ...syncActualLaborCost(withMarkups),
         });
         setLastUpdated(new Date());
       }
@@ -143,6 +147,22 @@ export default function ProjectDetail() {
     void Promise.resolve().then(() => fetchOpenQuotesCount());
   }, [sessionStatus, fetchOpenQuotesCount]);
 
+  useEffect(() => {
+    if (sessionStatus !== "authenticated") return;
+    let cancelled = false;
+    void supabase
+      .from("customers")
+      .select(CUSTOMER_LIST_SELECT)
+      .order("legal_name", { ascending: true })
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        setCustomersList(data as CustomerRow[]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionStatus, supabase]);
+
   const applyFinancialPatch = useCallback((patch: Partial<ProjectRow>) => {
     setProject((prev) => {
       if (!prev) return null;
@@ -160,11 +180,11 @@ export default function ProjectDetail() {
     setSaving(true);
     setSaveMessage(null);
     setSaveError(null);
-    const synced = {
+    const synced = normalizeProjectMarkupPctsForEditor({
       ...project,
       ...syncQuoteDerivations(project),
       ...syncActualLaborCost(project),
-    };
+    });
     const normalized = normalizeProjectLifecycle(synced);
     const payload = pickProjectUpdatePayload(normalized);
     const { error } = await supabase
@@ -341,6 +361,39 @@ export default function ProjectDetail() {
                 }}
                 onChange={onBasicsChange}
               />
+              <div>
+                <label className="mb-1 block text-xs text-zinc-500">
+                  CRM account (optional)
+                </label>
+                <select
+                  value={project.customer_id ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    updateField("customer_id", v === "" ? null : v);
+                  }}
+                  className={detailFieldClass}
+                >
+                  <option value="">None — free-text customer only</option>
+                  {customersList.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.legal_name}
+                      {c.account_code
+                        ? ` (${c.account_code})`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+                {project.customer_id ? (
+                  <p className="mt-1 text-[11px] text-zinc-500">
+                    <a
+                      href={`/sales/customers/${project.customer_id}`}
+                      className="text-blue-400 hover:underline"
+                    >
+                      Open account in Sales
+                    </a>
+                  </p>
+                ) : null}
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs text-zinc-500 block mb-1">

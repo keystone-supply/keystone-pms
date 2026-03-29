@@ -39,6 +39,7 @@ import {
   readQuoteFinancialsSnapshotFromMetadata,
   snapshotToProjectPatch,
 } from "@/lib/quoteFinancialsSnapshot";
+import { projectPatchFromSavedQuoteOrInvoice } from "@/lib/projectDocumentTotalsPolicy";
 
 function emptyMeta(): ProjectDocumentDraftMeta {
   return {
@@ -231,6 +232,17 @@ export function ProjectDocumentsSection({
         const { error } = await supabase.from("project_documents").insert(payload);
         if (error) throw error;
       }
+
+      const financialPatch = projectPatchFromSavedQuoteOrInvoice(kind, metaToSave);
+      if (financialPatch && Object.keys(financialPatch).length > 0) {
+        const { error: projErr } = await supabase
+          .from("projects")
+          .update(financialPatch)
+          .eq("id", projectId);
+        if (projErr) throw projErr;
+        onProjectRefresh();
+      }
+
       setEditorOpen(false);
       await loadDocs();
     } catch (e: unknown) {

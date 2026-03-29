@@ -10,6 +10,7 @@ export const QUOTE_FINANCIALS_SNAPSHOT_VERSION = 1 as const;
 /** Financial fields captured when saving a quote or invoice draft. */
 const SNAPSHOT_KEYS = [
   "materials_vendor_cost",
+  "materials_quoted",
   "material_markup_pct",
   "engineering_markup_pct",
   "equipment_markup_pct",

@@ -4,7 +4,8 @@
  * Canonical fields (avoid drifting sheet-era vs board-era data):
  * - Customer quote outcome: `customer_approval`.
  * - Pipeline position: `sales_command_stage` and milestone `*_at` timestamps (board updates in `lib/salesBoard.ts`).
- * - Ops sheet parity: `project_status` and `project_complete` — align on save via `normalizeProjectLifecycle` in `lib/projectTypes.ts`.
+ * - Ops sheet parity: `project_status` and `project_complete` — align on save via
+ *   `normalizeProjectLifecycle` / `syncLifecycleFromNonLostStage` in `lib/projectTypes.ts`.
  * When `sales_command_stage` is null, `inferLegacyBoardColumn` mirrors the SQL backfill in migrations.
  *
  * Type-only imports from dashboardMetrics to avoid runtime circular deps.

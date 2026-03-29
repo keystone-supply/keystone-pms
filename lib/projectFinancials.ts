@@ -25,6 +25,29 @@ export type ProjectFinancialsInput = Pick<
 
 export const DEFAULT_MATERIAL_MARKUP_PCT = 30;
 
+/** Markup % columns that use `DEFAULT_MATERIAL_MARKUP_PCT` when null in DB. */
+export const PROJECT_MARKUP_PCT_KEYS = [
+  "material_markup_pct",
+  "engineering_markup_pct",
+  "equipment_markup_pct",
+  "logistics_markup_pct",
+] as const satisfies readonly (keyof ProjectRow)[];
+
+export type ProjectMarkupPctKey = (typeof PROJECT_MARKUP_PCT_KEYS)[number];
+
+/** Align stored markups with what the project detail UI displays (30 when null/NaN). */
+export function normalizeProjectMarkupPctsForEditor(row: ProjectRow): ProjectRow {
+  const next = { ...row };
+  for (const k of PROJECT_MARKUP_PCT_KEYS) {
+    const v = next[k];
+    if (v == null || Number.isNaN(v)) {
+      (next as Record<string, number | null | undefined>)[k] =
+        DEFAULT_MATERIAL_MARKUP_PCT;
+    }
+  }
+  return next;
+}
+
 export function effectiveMaterialMarkupPct(
   pct: number | null | undefined,
 ): number {
@@ -143,13 +166,20 @@ export function computeLaborCostFromActualBreakdown(
   return Math.max(0, num(project.labor_cost));
 }
 
-export type QuoteDerivationPatch = Pick<ProjectRow, "total_quoted" | "labor_quoted">;
+export type QuoteDerivationPatch = Pick<
+  ProjectRow,
+  "total_quoted" | "labor_quoted" | "materials_quoted"
+>;
 
 /** Patches to persist so aggregates and Supabase stay aligned with formulas. */
 export function syncQuoteDerivations(project: ProjectFinancialsInput): QuoteDerivationPatch {
+  const matPct = effectiveMaterialMarkupPct(project.material_markup_pct);
+  const matBasis = quotedMaterialsInternalBasis(project);
+  const materialsCustomerLine = customerLineFromBasis(matBasis, matPct);
   return {
     labor_quoted: quotedLaborInternalCost(project),
     total_quoted: computeQuoteCustomerTotal(project),
+    materials_quoted: materialsCustomerLine,
   };
 }
 

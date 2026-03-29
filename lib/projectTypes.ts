@@ -72,6 +72,7 @@ export type ProjectBasicsField = keyof ProjectBasics;
 /** Columns sent on PATCH (no id/created_at). */
 export const PROJECT_UPDATE_KEYS = [
   "customer",
+  "customer_id",
   "project_name",
   "customer_po",
   "supply_industrial",
@@ -129,10 +130,67 @@ export function pickProjectUpdatePayload(
   return out;
 }
 
-/** Align completion flag with ops status on save. */
+function isLostOrCancelledLifecycle(row: ProjectRow): boolean {
+  if (row.project_status === "cancelled") return true;
+  if (row.sales_command_stage === "lost") return true;
+  const a = String(row.customer_approval || "").toUpperCase();
+  return a === "REJECTED" || a === "CANCELLED";
+}
+
+/**
+ * When the job is still in an active pipeline stage, align ops flags with the sales board stage
+ * so `project_status` / `project_complete` do not drift from `sales_command_stage` on project save.
+ * Does not run for lost or cancelled rows so manual ops status stays authoritative there.
+ */
+export function syncLifecycleFromNonLostStage(row: ProjectRow): ProjectRow {
+  const stage = row.sales_command_stage;
+  if (stage == null || String(stage).trim() === "" || stage === "lost") {
+    return row;
+  }
+
+  const next = { ...row };
+
+  switch (stage) {
+    case "rfq_customer":
+    case "rfq_vendors":
+    case "quote_sent":
+    case "po_issued":
+      next.project_complete = false;
+      if (next.project_status !== "cancelled") {
+        next.project_status = "in_process";
+      }
+      break;
+    case "in_process":
+      next.project_complete = false;
+      next.project_status = "in_process";
+      break;
+    case "complete":
+      next.project_complete = true;
+      next.project_status = "done";
+      break;
+    case "delivered":
+    case "invoiced":
+      next.project_complete = true;
+      next.project_status = "done";
+      break;
+    default:
+      break;
+  }
+
+  return next;
+}
+
+/** Align completion flag with ops status on save; reconcile board stage vs ops when applicable. */
 export function normalizeProjectLifecycle(row: ProjectRow): ProjectRow {
-  let project_complete = !!row.project_complete;
-  if (row.project_status === "done") project_complete = true;
-  if (row.project_status === "cancelled") project_complete = false;
-  return { ...row, project_complete };
+  let next = { ...row };
+  let project_complete = !!next.project_complete;
+  if (next.project_status === "done") project_complete = true;
+  if (next.project_status === "cancelled") project_complete = false;
+  next = { ...next, project_complete };
+
+  if (!isLostOrCancelledLifecycle(next)) {
+    next = syncLifecycleFromNonLostStage(next);
+  }
+
+  return next;
 }
