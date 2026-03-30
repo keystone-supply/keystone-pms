@@ -162,6 +162,7 @@ export default function SalesPage() {
     const now = new Date();
     const out: { row: CustomerRow; kind: "overdue" | "week" }[] = [];
     for (const c of customers) {
+      if (c.follow_up_active === false) continue;
       const b = followUpBucket(c.follow_up_at, now);
       if (b) out.push({ row: c, kind: b });
     }

@@ -5,9 +5,13 @@ import type { VendorRow } from "@/lib/vendorQueries";
 import {
   DOCUMENT_KIND_ACCENT,
   DOCUMENT_KIND_LABEL,
-  type ProjectDocumentDraftMeta,
   type ProjectDocumentKind,
 } from "@/lib/documentTypes";
+import {
+  KEYSTONE_QUOTE_TERMS_BODY_FOR_PDF,
+  KEYSTONE_QUOTE_TERMS_EFFECTIVE_DATE,
+  KEYSTONE_QUOTE_TERMS_TITLE,
+} from "@/lib/documents/keystoneQuoteTerms";
 
 import { formatCompanyMultiline, type CompanyBlock } from "@/lib/documents/company";
 
@@ -24,6 +28,15 @@ export type PdfParty = {
   lines: string[];
 };
 
+/** Pre-resolved customer-facing strings for quote PDFs (set in compose). */
+export type QuotePdfResolved = {
+  paymentTerms: string;
+  customerContact: string;
+  accountManager: string;
+  quoteDescription: string;
+  shippingMethod: string;
+};
+
 export type BuildProjectDocumentPdfInput = {
   kind: ProjectDocumentKind;
   documentNumber: string;
@@ -38,11 +51,42 @@ export type BuildProjectDocumentPdfInput = {
   /** Optional second column under “to” (e.g. ship-to) */
   toPartySecondary?: PdfParty;
   meta: ProjectDocumentDraftMeta;
+  /** Export-time `project_documents.version` (before the post-export +1); PDF `REV.` via `pdfRevFromDocumentVersion`. */
+  documentVersion?: number;
+  quoteResolved?: QuotePdfResolved;
 };
 
 const MARGIN = 18;
 const PAGE_W = 215.9;
 const PAGE_H = 279.4;
+const TERMS_LINE_HEIGHT = 3.5;
+const FOOTER_GAP = 16;
+
+/**
+ * REV index (`REV. N` / OneDrive `(vN)`) for a PDF built with **export-time**
+ * `documentVersion` (the row value **before** the post-export bump).
+ * Examples: `1` → `0`, `2` → `1`.
+ */
+export function pdfRevFromDocumentVersion(version?: number): number {
+  const v = version ?? 1;
+  return Math.max(0, v - 1);
+}
+
+/**
+ * REV / `(vK)` index of the **most recent** export, from **stored**
+ * `project_documents.version` (after the usual `+1` bump following each export).
+ * Matches the last PDF header and OneDrive suffix for that row.
+ */
+export function lastExportedFileRevisionIndex(storedVersion?: number): number {
+  return pdfRevFromDocumentVersion((storedVersion ?? 1) - 1);
+}
+
+export function formatPdfJobRevLine(
+  projectNumber: string,
+  documentVersion?: number,
+): string {
+  return `${projectNumber} REV. ${pdfRevFromDocumentVersion(documentVersion)}`;
+}
 
 function fmtMoney(n: number): string {
   return new Intl.NumberFormat(undefined, {
@@ -51,7 +95,7 @@ function fmtMoney(n: number): string {
   }).format(n);
 }
 
-function fmtDate(d: Date): string {
+function fmtDateLong(d: Date): string {
   return new Intl.DateTimeFormat(undefined, {
     year: "numeric",
     month: "short",
@@ -96,19 +140,339 @@ function partyBlockText(p: PdfParty): string {
   return [p.name, ...p.lines].filter(Boolean).join("\n");
 }
 
-function drawFooter(doc: jsPDF, page: number, total: number): void {
+type FooterKind = "default" | "quote_cover" | "quote_terms";
+
+function drawFooter(doc: jsPDF, page: number, total: number, footerKind: FooterKind): void {
   doc.setFontSize(8);
   doc.setTextColor(100, 100, 100);
-  const disclaimer =
-    "Commercial document — subject to Keystone Supply standard terms. Quantities and pricing exclude tax unless noted.";
-  doc.text(disclaimer, MARGIN, PAGE_H - 14, { maxWidth: PAGE_W - 2 * MARGIN });
+  let disclaimer: string;
+  if (footerKind === "quote_cover") {
+    disclaimer =
+      "SEE ATTACHED TERMS AND CONDITIONS. AN ADDITIONAL COPY OR FURTHER DETAILS CAN BE PROVIDED UPON REQUEST.";
+  } else if (footerKind === "quote_terms") {
+    disclaimer = "";
+  } else {
+    disclaimer =
+      "Commercial document — subject to Keystone Supply standard terms. Quantities and pricing exclude tax unless noted.";
+  }
+  if (disclaimer) {
+    doc.text(disclaimer, MARGIN, PAGE_H - 14, { maxWidth: PAGE_W - 2 * MARGIN });
+  }
   doc.text(`Page ${page} of ${total}`, PAGE_W - MARGIN, PAGE_H - 10, {
     align: "right",
   });
   doc.setTextColor(0, 0, 0);
 }
 
+function appendQuoteTermsPages(doc: jsPDF, accent: [number, number, number]): void {
+  doc.addPage();
+  doc.setFillColor(accent[0], accent[1], accent[2]);
+  doc.rect(0, 0, PAGE_W, 5, "F");
+  doc.setFillColor(255, 255, 255);
+
+  let y = MARGIN + 4;
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(25, 25, 25);
+  doc.text(KEYSTONE_QUOTE_TERMS_TITLE, MARGIN, y);
+  y += 7;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(70, 70, 70);
+  doc.text(`Effective Date: ${KEYSTONE_QUOTE_TERMS_EFFECTIVE_DATE}`, MARGIN, y);
+  y += 9;
+  doc.setFontSize(7.5);
+  doc.setTextColor(25, 25, 25);
+  const maxW = PAGE_W - 2 * MARGIN;
+  const blocks = KEYSTONE_QUOTE_TERMS_BODY_FOR_PDF.split(/\n\n+/);
+  for (const block of blocks) {
+    const chunk = block.trim();
+    if (!chunk) continue;
+    const lines = doc.splitTextToSize(chunk, maxW);
+    for (const line of lines) {
+      if (y > PAGE_H - FOOTER_GAP) {
+        doc.addPage();
+        doc.setFillColor(accent[0], accent[1], accent[2]);
+        doc.rect(0, 0, PAGE_W, 5, "F");
+        doc.setFillColor(255, 255, 255);
+        y = MARGIN;
+      }
+      doc.text(line, MARGIN, y);
+      y += TERMS_LINE_HEIGHT;
+    }
+    y += 1.5;
+  }
+}
+
+function defaultQuoteResolved(
+  input: BuildProjectDocumentPdfInput,
+): QuotePdfResolved {
+  const projName = (input.project.project_name ?? "").trim();
+  return {
+    quoteDescription:
+      input.meta.quoteDescription?.trim() ||
+      (projName ? projName.toUpperCase() : "PROJECT"),
+    shippingMethod:
+      input.meta.shippingMethod?.trim() ||
+      input.meta.freightTerms?.trim() ||
+      "",
+    paymentTerms: input.meta.paymentTerms?.trim() || "",
+    customerContact: input.meta.customerContactDisplay?.trim() || "",
+    accountManager: input.meta.accountManagerDisplay?.trim() || "",
+  };
+}
+
+function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer {
+  const doc = new jsPDF({ unit: "mm", format: "letter" });
+  const accent = DOCUMENT_KIND_ACCENT.quote;
+  const qr = input.quoteResolved ?? defaultQuoteResolved(input);
+
+  doc.setFillColor(accent[0], accent[1], accent[2]);
+  doc.rect(0, 0, PAGE_W, 5, "F");
+  doc.setFillColor(255, 255, 255);
+
+  let y = MARGIN + 2;
+
+  if (input.logoDataUrl) {
+    try {
+      doc.addImage(input.logoDataUrl, "PNG", MARGIN, y, 42, 20);
+    } catch {
+      /* ignore bad image */
+    }
+  }
+
+  doc.setFontSize(9);
+  doc.setTextColor(55, 55, 55);
+  const companyText = formatCompanyMultiline(input.company);
+  doc.text(companyText.split("\n"), input.logoDataUrl ? MARGIN + 48 : MARGIN, y + 4, {
+    lineHeightFactor: 1.25,
+  });
+
+  y = Math.max(y + 22, MARGIN + 28);
+
+  doc.setFontSize(13);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(30, 30, 30);
+  doc.text(
+    formatPdfJobRevLine(
+      input.project.project_number,
+      input.documentVersion,
+    ),
+    MARGIN,
+    y,
+  );
+  doc.setFont("helvetica", "normal");
+
+  y += 7;
+  doc.setFontSize(11);
+  doc.setTextColor(accent[0], accent[1], accent[2]);
+  doc.text("QUOTATION", MARGIN, y);
+  doc.setFontSize(9);
+  doc.setTextColor(45, 45, 45);
+  doc.text(`No. ${input.documentNumber}`, PAGE_W - MARGIN, y, { align: "right" });
+  y += 7;
+  doc.setFontSize(9);
+  doc.setTextColor(40, 40, 40);
+  doc.text(`Date: ${fmtDateLong(input.issuedDate)}`, PAGE_W - MARGIN, y, {
+    align: "right",
+  });
+  y += 5;
+
+  if (input.meta.validUntil) {
+    doc.setFontSize(8);
+    doc.setTextColor(90, 90, 90);
+    doc.text(`Valid through: ${input.meta.validUntil}`, PAGE_W - MARGIN, y, {
+      align: "right",
+    });
+    y += 4;
+  }
+
+  y += 4;
+  doc.setDrawColor(220, 220, 220);
+  doc.line(MARGIN, y, PAGE_W - MARGIN, y);
+  y += 5;
+
+  const colW = (PAGE_W - 2 * MARGIN - 8) / 2;
+  doc.setFontSize(8);
+  doc.setTextColor(120, 120, 120);
+  doc.text(input.toParty.label.toUpperCase(), MARGIN, y);
+  if (input.toPartySecondary) {
+    doc.text(input.toPartySecondary.label.toUpperCase(), MARGIN + colW + 8, y);
+  }
+  y += 4;
+  doc.setFontSize(9);
+  doc.setTextColor(30, 30, 30);
+  doc.text(partyBlockText(input.toParty).split("\n"), MARGIN, y, {
+    lineHeightFactor: 1.2,
+  });
+  if (input.toPartySecondary) {
+    doc.text(
+      partyBlockText(input.toPartySecondary).split("\n"),
+      MARGIN + colW + 8,
+      y,
+      { lineHeightFactor: 1.2 },
+    );
+  }
+
+  const partyRows = Math.max(
+    input.toParty.lines.length + 2,
+    input.toPartySecondary ? input.toPartySecondary.lines.length + 2 : 2,
+  );
+  y += Math.max(partyRows * 4.2, 16);
+
+  y += 3;
+  doc.setFontSize(8);
+  doc.setTextColor(120, 120, 120);
+  doc.text("QUOTE DESCRIPTION", MARGIN, y);
+  doc.text("SHIPPING METHOD", MARGIN + colW + 8, y);
+  y += 4;
+  doc.setFontSize(9);
+  doc.setTextColor(35, 35, 35);
+  const qDesc = doc.splitTextToSize(qr.quoteDescription, colW - 2);
+  doc.text(qDesc, MARGIN, y);
+  const shipM = doc.splitTextToSize(
+    qr.shippingMethod || "—",
+    colW - 2,
+  );
+  doc.text(shipM, MARGIN + colW + 8, y);
+  y += Math.max(qDesc.length, shipM.length) * 3.6 + 4;
+
+  if (input.project.customer_po) {
+    doc.setFontSize(8);
+    doc.setTextColor(90, 90, 90);
+    doc.text(`Customer PO: ${input.project.customer_po}`, MARGIN, y);
+    y += 4;
+  }
+
+  y += 2;
+
+  const body = input.meta.lines.map((l) => [
+    l.partRef?.trim() ? l.partRef.trim() : String(l.lineNo),
+    l.description.slice(0, 100),
+    fmtMoney(l.extended),
+  ]);
+
+  autoTable(doc, {
+    startY: y,
+    head: [["ITEM #", "DESCRIPTION", "TOTAL"]],
+    body,
+    margin: { left: MARGIN, right: MARGIN },
+    styles: { fontSize: 8, cellPadding: 2 },
+    columnStyles: {
+      2: { halign: "right" },
+    },
+    headStyles: {
+      fillColor: [accent[0], accent[1], accent[2]],
+      textColor: [255, 255, 255],
+    },
+  });
+
+  const tSlot = doc as jsPDF & { lastAutoTable?: { finalY: number } };
+  y = (tSlot.lastAutoTable?.finalY ?? y) + 6;
+
+  const subtotal = input.meta.lines.reduce((s, l) => s + (l.extended || 0), 0);
+  const labelX = PAGE_W - MARGIN - 44;
+  const amtX = PAGE_W - MARGIN;
+
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(40, 40, 40);
+  doc.text("SUBTOTAL", labelX, y, { align: "right" });
+  doc.text(fmtMoney(subtotal), amtX, y, { align: "right" });
+  y += 5;
+
+  let running = subtotal;
+  const meta = input.meta;
+  const taxPct = meta.quotePdfTaxRatePct;
+  const taxAmt = meta.quotePdfTaxAmount;
+
+  if (taxPct != null && Number.isFinite(taxPct)) {
+    doc.text(`(TAX RATE) ${taxPct}%`, labelX, y, { align: "right" });
+    y += 5;
+  }
+  if (taxAmt != null && Number.isFinite(taxAmt)) {
+    doc.text("TAX", labelX, y, { align: "right" });
+    doc.text(fmtMoney(taxAmt), amtX, y, { align: "right" });
+    running += taxAmt;
+    y += 5;
+  }
+
+  const logAmt = meta.quotePdfLogisticsAmount;
+  if (logAmt != null && Number.isFinite(logAmt)) {
+    doc.text("LOGISTICS", labelX, y, { align: "right" });
+    doc.text(fmtMoney(logAmt), amtX, y, { align: "right" });
+    running += logAmt;
+    y += 5;
+  }
+
+  const otherAmt = meta.quotePdfOtherAmount;
+  if (otherAmt != null && Number.isFinite(otherAmt)) {
+    doc.text("OTHER", labelX, y, { align: "right" });
+    doc.text(fmtMoney(otherAmt), amtX, y, { align: "right" });
+    running += otherAmt;
+    y += 5;
+  }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("TOTAL", labelX, y, { align: "right" });
+  doc.text(fmtMoney(running), amtX, y, { align: "right" });
+  doc.setFont("helvetica", "normal");
+  y += 8;
+
+  doc.setFontSize(8);
+  doc.setTextColor(45, 45, 45);
+  if (qr.paymentTerms.trim()) {
+    doc.text(`PAYMENT TERMS — ${qr.paymentTerms}`, MARGIN, y);
+    y += 4;
+  }
+  const lead = input.meta.leadTime?.trim() ?? "";
+  const parts: string[] = [];
+  if (lead) parts.push(`Lead time (following P.O.): ${lead}`);
+  if (qr.customerContact.trim()) parts.push(`Customer contact: ${qr.customerContact}`);
+  if (parts.length) {
+    const line = doc.splitTextToSize(parts.join("    •    "), PAGE_W - 2 * MARGIN);
+    doc.text(line, MARGIN, y);
+    y += line.length * 3.5 + 2;
+  }
+  if (qr.accountManager.trim()) {
+    doc.text(`ACCOUNT MANAGER: ${qr.accountManager}`, MARGIN, y);
+    y += 5;
+  }
+
+  if (input.meta.notes?.trim()) {
+    y += 2;
+    doc.setFontSize(9);
+    doc.setTextColor(50, 50, 50);
+    doc.text("Notes:", MARGIN, y);
+    y += 4;
+    doc.setFontSize(8);
+    const noteLines = doc.splitTextToSize(
+      input.meta.notes.trim(),
+      PAGE_W - 2 * MARGIN,
+    );
+    doc.text(noteLines, MARGIN, y);
+    y += noteLines.length * 3.5 + 4;
+  }
+
+  appendQuoteTermsPages(doc, accent);
+
+  const totalPages = doc.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    const fk: FooterKind =
+      i === 1 ? "quote_cover" : "quote_terms";
+    drawFooter(doc, i, totalPages, fk);
+  }
+
+  return doc.output("arraybuffer");
+}
+
 export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer {
+  if (input.kind === "quote") {
+    return buildQuoteDocumentPdf(input);
+  }
+
   const doc = new jsPDF({ unit: "mm", format: "letter" });
   const accent = DOCUMENT_KIND_ACCENT[input.kind];
   const title = DOCUMENT_KIND_LABEL[input.kind];
@@ -136,6 +500,20 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
 
   y = Math.max(y + 22, MARGIN + 28);
 
+  doc.setFontSize(13);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(30, 30, 30);
+  doc.text(
+    formatPdfJobRevLine(
+      input.project.project_number,
+      input.documentVersion,
+    ),
+    MARGIN,
+    y,
+  );
+  doc.setFont("helvetica", "normal");
+  y += 7;
+
   doc.setFontSize(16);
   doc.setTextColor(accent[0], accent[1], accent[2]);
   doc.text(title.toUpperCase(), MARGIN, y);
@@ -144,18 +522,11 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
   doc.text(`No. ${input.documentNumber}`, PAGE_W - MARGIN, y, { align: "right" });
   y += 7;
   doc.setFontSize(9);
-  doc.text(`Date: ${fmtDate(input.issuedDate)}`, PAGE_W - MARGIN, y, {
+  doc.text(`Date: ${fmtDateLong(input.issuedDate)}`, PAGE_W - MARGIN, y, {
     align: "right",
   });
   y += 2;
 
-  if (input.meta.validUntil && input.kind === "quote") {
-    y += 4;
-    doc.text(`Valid through: ${input.meta.validUntil}`, PAGE_W - MARGIN, y, {
-      align: "right",
-    });
-    y -= 4;
-  }
   if (input.meta.responseDue && input.kind === "rfq") {
     y += 4;
     doc.text(`Response requested by: ${input.meta.responseDue}`, PAGE_W - MARGIN, y, {
@@ -261,7 +632,6 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
   };
 
   if (
-    input.kind === "quote" ||
     input.kind === "invoice" ||
     input.kind === "rfq" ||
     input.kind === "purchase_order"
@@ -382,25 +752,52 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
   const totalPages = doc.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
-    drawFooter(doc, i, totalPages);
+    drawFooter(doc, i, totalPages, "default");
   }
 
   return doc.output("arraybuffer");
 }
 
+/** Short codes used in exported PDF basenames (e.g. `101363_Q-My_Job-03.29.2026.pdf`). */
+export const DOCUMENT_KIND_FILE_CODE: Record<ProjectDocumentKind, string> = {
+  quote: "Q",
+  invoice: "INV",
+  bol: "BOL",
+  packing_list: "PL",
+  rfq: "RFQ",
+  purchase_order: "PO",
+};
+
+function formatLocalDateMdY(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const y = String(d.getFullYear());
+  return `${m}.${day}.${y}`;
+}
+
+function sanitizeProjectNameForFilename(raw: string): string {
+  let s = raw
+    .trim()
+    .replace(/[/\\?%*:|"<>]/g, "-")
+    .replace(/\s+/g, "_")
+    .slice(0, 100);
+  s = s.replace(/^_+|_+$/g, "");
+  if (!s) return "PROJECT";
+  return s;
+}
+
 export function buildDocumentDownloadFilename(
   projectNumber: string,
   kind: ProjectDocumentKind,
-  documentNumber: string,
+  projectName: string,
+  issuedAt?: Date,
 ): string {
-  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const safeNum = documentNumber
-    .replace(/[/\\?%*:|"<>]/g, "-")
-    .replace(/\s+/g, "_")
-    .slice(0, 40);
-  const kindSlug = kind.replace(/_/g, "-");
+  const d = issuedAt ?? new Date();
+  const stamp = formatLocalDateMdY(d);
+  const safeName = sanitizeProjectNameForFilename(projectName);
+  const code = DOCUMENT_KIND_FILE_CODE[kind];
   const pn = String(projectNumber).replace(/\s+/g, "");
-  return `${pn}_${kindSlug}_${safeNum || "DRAFT"}_${stamp}.pdf`.replace(
+  return `${pn}_${code}-${safeName}-${stamp}.pdf`.replace(
     /[^a-zA-Z0-9._-]/g,
     "",
   );

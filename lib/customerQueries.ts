@@ -22,6 +22,7 @@ export type CustomerRow = {
   status: CustomerStatus;
   notes: string | null;
   follow_up_at: string | null;
+  follow_up_active?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -47,7 +48,7 @@ export type CustomerWithShipping = CustomerRow & {
 
 /** Columns for directory list (no embed). */
 export const CUSTOMER_LIST_SELECT =
-  "id, legal_name, account_code, contact_name, contact_email, contact_phone, billing_city, billing_state, payment_terms, status, follow_up_at, created_at, updated_at";
+  "id, legal_name, account_code, contact_name, contact_email, contact_phone, billing_city, billing_state, payment_terms, status, follow_up_at, follow_up_active, created_at, updated_at";
 
 /** Single-account fetch with nested ship-tos (PostgREST FK embed). */
 export const CUSTOMER_DETAIL_SELECT = `${CUSTOMER_LIST_SELECT}, customer_shipping_addresses (id, customer_id, label, line1, line2, city, state, postal_code, country, is_default, created_at, updated_at)`;
@@ -71,6 +72,7 @@ export type CustomerInsert = {
   status?: CustomerStatus;
   notes?: string | null;
   follow_up_at?: string | null;
+  follow_up_active?: boolean;
 };
 
 export type CustomerUpdate = Partial<Omit<CustomerRow, "id" | "created_at" | "updated_at">>;

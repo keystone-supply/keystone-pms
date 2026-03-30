@@ -36,7 +36,6 @@ export async function createProjectFolders(
     `${projectNumber}_VENDORS`,
     `${projectNumber}_PICS`,
     `${projectNumber}_DOCS`,
-    `${projectNumber}_MACHINING`,
     `${projectNumber}_G-CODE`,
   ];
 
@@ -323,25 +322,24 @@ export async function uploadPdfToDocs(
     );
   }
   const listData = await listRes.json();
-  let highestVersion = 0;
-  let plainExists = false;
+  /** Highest occupied slot: legacy `base.pdf` counts as 0; `base (vN).pdf` counts as N. Next upload is (v{max+1}). */
+  let maxOccupied = -1;
   if (listData.value) {
     for (const item of listData.value) {
       if (item.name === plainFilename) {
-        plainExists = true;
+        maxOccupied = Math.max(maxOccupied, 0);
       } else if (item.name.toLowerCase().endsWith(".pdf")) {
         const escapedBase = baseNoExt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const regex = new RegExp(`^${escapedBase} \\(v(\\d+)\\)\\.pdf$`, "i");
         const match = item.name.match(regex);
         if (match) {
-          highestVersion = Math.max(highestVersion, parseInt(match[1], 10));
+          maxOccupied = Math.max(maxOccupied, parseInt(match[1], 10));
         }
       }
     }
   }
-  const version = plainExists || highestVersion > 0 ? highestVersion + 1 : 0;
-  const finalFilename =
-    version === 0 ? plainFilename : `${baseNoExt} (v${version}).pdf`;
+  const nextVersion = maxOccupied + 1;
+  const finalFilename = `${baseNoExt} (v${nextVersion}).pdf`;
   const fullPath = `${docsFolderPath}/${finalFilename}`;
   const url = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(fullPath)}:/content`;
 

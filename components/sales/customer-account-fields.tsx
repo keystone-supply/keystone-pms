@@ -24,6 +24,7 @@ export type CustomerFormState = {
   status: CustomerStatus;
   notes: string;
   follow_up_at: string;
+  follow_up_active: boolean;
 };
 
 export const emptyCustomerFormState = (): CustomerFormState => ({
@@ -45,6 +46,7 @@ export const emptyCustomerFormState = (): CustomerFormState => ({
   status: "active",
   notes: "",
   follow_up_at: "",
+  follow_up_active: false,
 });
 
 export function CustomerAccountFields({
@@ -241,12 +243,28 @@ export function CustomerAccountFields({
           Sales hygiene
         </h3>
         <div className="grid gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <label className="flex cursor-pointer items-center gap-3 select-none">
+              <input
+                type="checkbox"
+                checked={value.follow_up_active}
+                onChange={(e) =>
+                  onChange({ follow_up_active: e.target.checked })
+                }
+                className="size-4 rounded border-zinc-600 bg-zinc-900 text-blue-500 focus:ring-2 focus:ring-blue-500/40"
+              />
+              <span className="text-sm text-zinc-300">
+                Enable follow-up (show on Sales dashboard when due)
+              </span>
+            </label>
+          </div>
           <div>
             <label className="mb-1 block text-xs text-zinc-500">Follow-up</label>
             <input
               value={value.follow_up_at}
               onChange={(e) => onChange({ follow_up_at: e.target.value })}
-              className={inputBase}
+              disabled={!value.follow_up_active}
+              className={`${inputBase} disabled:cursor-not-allowed disabled:opacity-50`}
               type="datetime-local"
             />
           </div>

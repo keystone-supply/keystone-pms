@@ -10,9 +10,10 @@ import {
   type BuildProjectDocumentPdfInput,
   type PdfParty,
   type PdfProjectContext,
+  type QuotePdfResolved,
   vendorToParty,
 } from "@/lib/documents/buildProjectDocumentPdf";
-import { getCompanyBlock } from "@/lib/documents/company";
+import { getCompanyBlock, getQuoteAccountManagerDefault } from "@/lib/documents/company";
 
 function linesFromCustomer(c: CustomerRow): string[] {
   const lines: string[] = [];
@@ -92,6 +93,8 @@ export function composeProjectDocumentPdfInput(args: {
   vendor: VendorRow | null;
   customer: CustomerRow | null;
   defaultShipTo: CustomerShippingRow | null;
+  /** Row `version` from `project_documents`; PDF `REV.` uses `pdfRevFromDocumentVersion`. */
+  documentVersion?: number;
 }): BuildProjectDocumentPdfInput {
   const company = getCompanyBlock();
   const fromParty = sellerParty();
@@ -127,7 +130,39 @@ export function composeProjectDocumentPdfInput(args: {
         );
       }
       break;
-    case "quote":
+    case "quote": {
+      const c = args.customer;
+      const legal = c?.legal_name ?? args.project.customer ?? "Customer";
+      toParty = c
+        ? { label: "Customer", name: c.legal_name, lines: linesFromCustomer(c) }
+        : {
+            label: "Customer",
+            name: legal,
+            lines: [
+              args.meta.billToLine1,
+              args.meta.billToLine2,
+              [args.meta.billToCity, args.meta.billToState]
+                .filter(Boolean)
+                .join(", "),
+            ].filter(Boolean) as string[],
+          };
+      const ship =
+        args.defaultShipTo && c
+          ? partyFromShippingRow("Ship to", c, args.defaultShipTo)
+          : null;
+      if (args.meta.shipToLine1 || args.meta.shipToCity) {
+        toPartySecondary = partyFromShipMeta("Ship to", args.meta, legal);
+      } else if (ship) {
+        toPartySecondary = ship;
+      } else {
+        toPartySecondary = {
+          label: "Ship to",
+          name: toParty.name,
+          lines: [...toParty.lines],
+        };
+      }
+      break;
+    }
     case "invoice": {
       const c = args.customer;
       const legal = c?.legal_name ?? args.project.customer ?? "Customer";
@@ -148,20 +183,10 @@ export function composeProjectDocumentPdfInput(args: {
         args.defaultShipTo && c
           ? partyFromShippingRow("Ship to", c, args.defaultShipTo)
           : null;
-      if (
-        args.meta.shipToLine1 ||
-        args.meta.shipToCity ||
-        (ship && args.kind === "quote")
-      ) {
-        if (args.meta.shipToLine1 || args.meta.shipToCity) {
-          toPartySecondary = partyFromShipMeta(
-            "Ship to",
-            args.meta,
-            legal,
-          );
-        } else if (ship) {
-          toPartySecondary = ship;
-        }
+      if (args.meta.shipToLine1 || args.meta.shipToCity) {
+        toPartySecondary = partyFromShipMeta("Ship to", args.meta, legal);
+      } else if (ship) {
+        toPartySecondary = ship;
       }
       break;
     }
@@ -179,6 +204,30 @@ export function composeProjectDocumentPdfInput(args: {
       toParty = { label: "To", name: "", lines: [] };
   }
 
+  let quoteResolved: QuotePdfResolved | undefined;
+  if (args.kind === "quote") {
+    const c = args.customer;
+    const projName = (args.project.project_name ?? "").trim();
+    quoteResolved = {
+      quoteDescription:
+        args.meta.quoteDescription?.trim() ||
+        (projName ? projName.toUpperCase() : "PROJECT"),
+      shippingMethod:
+        args.meta.shippingMethod?.trim() ||
+        args.meta.freightTerms?.trim() ||
+        "",
+      paymentTerms:
+        args.meta.paymentTerms?.trim() || c?.payment_terms?.trim() || "",
+      customerContact:
+        args.meta.customerContactDisplay?.trim() ||
+        [c?.contact_name, c?.contact_phone].filter(Boolean).join(" · ") ||
+        "",
+      accountManager:
+        args.meta.accountManagerDisplay?.trim() ||
+        getQuoteAccountManagerDefault(),
+    };
+  }
+
   return {
     kind: args.kind,
     documentNumber: args.documentNumber,
@@ -190,6 +239,8 @@ export function composeProjectDocumentPdfInput(args: {
     toParty,
     toPartySecondary,
     meta: args.meta,
+    documentVersion: args.documentVersion,
+    quoteResolved,
   };
 }
 
@@ -203,6 +254,7 @@ export function generateProjectDocumentPdfBuffer(args: {
   vendor: VendorRow | null;
   customer: CustomerRow | null;
   defaultShipTo: CustomerShippingRow | null;
+  documentVersion?: number;
 }): ArrayBuffer {
   const input = composeProjectDocumentPdfInput(args);
   return buildProjectDocumentPdf(input);

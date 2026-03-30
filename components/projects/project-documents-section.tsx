@@ -30,6 +30,7 @@ import { VENDOR_LIST_SELECT, type VendorRow } from "@/lib/vendorQueries";
 import {
   buildDocumentDownloadFilename,
   fetchLogoDataUrl,
+  lastExportedFileRevisionIndex,
 } from "@/lib/documents/buildProjectDocumentPdf";
 import { generateProjectDocumentPdfBuffer } from "@/lib/documents/composePdfInput";
 import { uploadPdfToDocs } from "@/lib/onedrive";
@@ -49,6 +50,13 @@ function emptyMeta(): ProjectDocumentDraftMeta {
   };
 }
 
+function finiteOrNull(v: unknown): number | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  return null;
+}
+
 function normalizeMeta(raw: unknown): ProjectDocumentDraftMeta {
   if (!raw || typeof raw !== "object") return emptyMeta();
   const m = raw as ProjectDocumentDraftMeta;
@@ -58,6 +66,10 @@ function normalizeMeta(raw: unknown): ProjectDocumentDraftMeta {
     lines: Array.isArray(m.lines) ? m.lines : [],
     packingLines: Array.isArray(m.packingLines) ? m.packingLines : [],
     bolRows: Array.isArray(m.bolRows) ? m.bolRows : [],
+    quotePdfTaxRatePct: finiteOrNull(m.quotePdfTaxRatePct),
+    quotePdfTaxAmount: finiteOrNull(m.quotePdfTaxAmount),
+    quotePdfLogisticsAmount: finiteOrNull(m.quotePdfLogisticsAmount),
+    quotePdfOtherAmount: finiteOrNull(m.quotePdfOtherAmount),
   };
   const snap = readQuoteFinancialsSnapshotFromMetadata(raw);
   if (snap) base.quoteFinancialsSnapshot = snap;
@@ -300,23 +312,28 @@ export function ProjectDocumentsSection({
         exportingRow.vendor_id
           ? (vendors.find((v) => v.id === exportingRow.vendor_id) ?? null)
           : null;
+      const issuedDate = new Date();
       const buffer = generateProjectDocumentPdfBuffer({
         kind: exportingRow.kind,
         documentNumber: exportingRow.number ?? docNumber,
-        issuedDate: new Date(),
+        issuedDate,
         logoDataUrl: logo,
         project,
         meta: normalizeMeta(exportingRow.metadata),
         vendor: vendorForRow,
         customer: crm,
         defaultShipTo,
+        documentVersion: exportingRow.version ?? 1,
       });
 
       const filename = buildDocumentDownloadFilename(
         String(project.project_number ?? "JOB"),
         exportingRow.kind,
-        exportingRow.number ?? "draft",
+        project.project_name ?? "",
+        issuedDate,
       );
+
+      const nextVersion = (exportingRow.version ?? 1) + 1;
 
       if (exportMethod === "download") {
         const blob = new Blob([buffer], { type: "application/pdf" });
@@ -326,6 +343,11 @@ export function ProjectDocumentsSection({
         a.download = filename;
         a.click();
         URL.revokeObjectURL(url);
+        const { error: verErr } = await supabase
+          .from("project_documents")
+          .update({ version: nextVersion })
+          .eq("id", exportingRow.id);
+        if (verErr) throw verErr;
       } else {
         const freshSessionRes = await fetch("/api/auth/session");
         const freshSession = await freshSessionRes.json();
@@ -339,10 +361,11 @@ export function ProjectDocumentsSection({
           filename,
           buffer,
         );
-        await supabase
+        const { error: upErr } = await supabase
           .from("project_documents")
-          .update({ pdf_path: path, version: (exportingRow.version ?? 1) + 1 })
+          .update({ pdf_path: path, version: nextVersion })
           .eq("id", exportingRow.id);
+        if (upErr) throw upErr;
       }
 
       if (updateMilestones) {
@@ -391,6 +414,7 @@ export function ProjectDocumentsSection({
             : null,
         customer: crm,
         defaultShipTo,
+        documentVersion: r.version ?? 1,
       });
       const blob = new Blob([buffer], { type: "application/pdf" });
       window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
@@ -421,7 +445,9 @@ export function ProjectDocumentsSection({
         <p className="text-zinc-500">No documents yet. Create one to get started.</p>
       ) : (
         <ul className="space-y-3">
-          {rows.map((r) => (
+          {rows.map((r) => {
+            const fileRev = lastExportedFileRevisionIndex(r.version);
+            return (
             <li
               key={r.id}
               className="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-950/50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
@@ -433,7 +459,7 @@ export function ProjectDocumentsSection({
                     {DOCUMENT_KIND_LABEL[r.kind]}
                   </p>
                   <p className="font-mono text-sm text-zinc-400">
-                    {r.number ?? "—"} · v{r.version}
+                    {r.number ?? "—"} · REV. {fileRev} (v{fileRev})
                     {r.pdf_path ? (
                       <span className="ml-2 text-emerald-500/90">· file saved</span>
                     ) : null}
@@ -493,7 +519,8 @@ export function ProjectDocumentsSection({
                 </Button>
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
 
@@ -556,6 +583,206 @@ export function ProjectDocumentsSection({
               />
             </div>
 
+            {kind === "quote" ? (
+              <div className="mt-4 space-y-3 rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4">
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Quote PDF fields
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Quote description
+                    </label>
+                    <input
+                      value={meta.quoteDescription ?? ""}
+                      onChange={(e) =>
+                        setMeta((m) => ({
+                          ...m,
+                          quoteDescription: e.target.value || undefined,
+                        }))
+                      }
+                      placeholder={(project.project_name ?? "").toUpperCase() || "Project name"}
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Shipping method
+                    </label>
+                    <input
+                      value={meta.shippingMethod ?? ""}
+                      onChange={(e) =>
+                        setMeta((m) => ({
+                          ...m,
+                          shippingMethod: e.target.value || undefined,
+                        }))
+                      }
+                      placeholder="e.g. prepaid, FOB, will call"
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Payment terms
+                    </label>
+                    <input
+                      value={meta.paymentTerms ?? ""}
+                      onChange={(e) =>
+                        setMeta((m) => ({
+                          ...m,
+                          paymentTerms: e.target.value || undefined,
+                        }))
+                      }
+                      placeholder={crm?.payment_terms ?? "e.g. Net 30"}
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Lead time (following P.O.)
+                    </label>
+                    <input
+                      value={meta.leadTime ?? ""}
+                      onChange={(e) =>
+                        setMeta((m) => ({
+                          ...m,
+                          leadTime: e.target.value || undefined,
+                        }))
+                      }
+                      placeholder="e.g. 1–2 weeks"
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Customer contact (override)
+                    </label>
+                    <input
+                      value={meta.customerContactDisplay ?? ""}
+                      onChange={(e) =>
+                        setMeta((m) => ({
+                          ...m,
+                          customerContactDisplay: e.target.value || undefined,
+                        }))
+                      }
+                      placeholder={
+                        [crm?.contact_name, crm?.contact_phone]
+                          .filter(Boolean)
+                          .join(" · ") || "From CRM if blank"
+                      }
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Account manager
+                    </label>
+                    <input
+                      value={meta.accountManagerDisplay ?? ""}
+                      onChange={(e) =>
+                        setMeta((m) => ({
+                          ...m,
+                          accountManagerDisplay: e.target.value || undefined,
+                        }))
+                      }
+                      placeholder="Name (phone) — or set NEXT_PUBLIC_QUOTE_ACCOUNT_MANAGER"
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Tax rate %
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={
+                        meta.quotePdfTaxRatePct == null ? "" : meta.quotePdfTaxRatePct
+                      }
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setMeta((m) => ({
+                          ...m,
+                          quotePdfTaxRatePct:
+                            v === "" ? null : parseFloat(v),
+                        }));
+                      }}
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Tax $
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={
+                        meta.quotePdfTaxAmount == null ? "" : meta.quotePdfTaxAmount
+                      }
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setMeta((m) => ({
+                          ...m,
+                          quotePdfTaxAmount:
+                            v === "" ? null : parseFloat(v),
+                        }));
+                      }}
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Logistics $
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={
+                        meta.quotePdfLogisticsAmount == null
+                          ? ""
+                          : meta.quotePdfLogisticsAmount
+                      }
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setMeta((m) => ({
+                          ...m,
+                          quotePdfLogisticsAmount:
+                            v === "" ? null : parseFloat(v),
+                        }));
+                      }}
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Other $
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={
+                        meta.quotePdfOtherAmount == null
+                          ? ""
+                          : meta.quotePdfOtherAmount
+                      }
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setMeta((m) => ({
+                          ...m,
+                          quotePdfOtherAmount:
+                            v === "" ? null : parseFloat(v),
+                        }));
+                      }}
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             <div className="mt-6">
               <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs font-medium uppercase text-zinc-500">
@@ -591,8 +818,24 @@ export function ProjectDocumentsSection({
                       readOnly
                       title="Line #"
                     />
+                    {kind === "quote" ? (
+                      <input
+                        className="sm:col-span-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white"
+                        value={line.partRef ?? ""}
+                        onChange={(e) =>
+                          patchLine(line.lineNo, {
+                            partRef: e.target.value.trim()
+                              ? e.target.value.trim()
+                              : undefined,
+                          })
+                        }
+                        placeholder="Item #"
+                      />
+                    ) : null}
                     <input
-                      className="sm:col-span-5 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white"
+                      className={`rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white ${
+                        kind === "quote" ? "sm:col-span-3" : "sm:col-span-5"
+                      }`}
                       value={line.description}
                       onChange={(e) =>
                         patchLine(line.lineNo, { description: e.target.value })

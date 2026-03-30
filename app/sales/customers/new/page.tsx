@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { ArrowLeft, Save } from "lucide-react";
 
@@ -21,14 +21,16 @@ import {
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
 import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { safeReturnToPath } from "@/lib/safeReturnTo";
 
 function trimOrNull(s: string): string | null {
   const t = s.trim();
   return t === "" ? null : t;
 }
 
-export default function NewCustomerPage() {
+function NewCustomerPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session, status } = useSession();
   const [form, setForm] = useState<CustomerFormState>(emptyCustomerFormState);
   const [busy, setBusy] = useState(false);
@@ -83,6 +85,7 @@ export default function NewCustomerPage() {
         status: form.status,
         notes: trimOrNull(form.notes),
         follow_up_at: datetimeLocalToIsoOrNull(form.follow_up_at),
+        follow_up_active: form.follow_up_active,
       };
       const { data, error: insErr } = await supabase
         .from("customers")
@@ -91,7 +94,12 @@ export default function NewCustomerPage() {
         .single();
       if (insErr) throw insErr;
       if (!data?.id) throw new Error("No id returned");
-      router.push(`/sales/customers/${data.id}`);
+      const rawReturn = searchParams.get("returnTo");
+      if (rawReturn != null && rawReturn !== "") {
+        router.push(safeReturnToPath(rawReturn));
+      } else {
+        router.push(`/sales/customers/${data.id}`);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not create account.");
     } finally {
@@ -181,5 +189,19 @@ export default function NewCustomerPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function NewCustomerPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-400">
+          Loading…
+        </div>
+      }
+    >
+      <NewCustomerPageInner />
+    </Suspense>
   );
 }

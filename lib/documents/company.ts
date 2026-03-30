@@ -39,3 +39,9 @@ export function formatCompanyMultiline(c: CompanyBlock): string {
   ].filter((s) => s && String(s).trim() !== "");
   return parts.join("\n");
 }
+
+/** Default “Account manager:” line on quote PDFs when metadata override is blank. */
+export function getQuoteAccountManagerDefault(): string {
+  const v = process.env.NEXT_PUBLIC_QUOTE_ACCOUNT_MANAGER?.trim();
+  return v ?? "";
+}

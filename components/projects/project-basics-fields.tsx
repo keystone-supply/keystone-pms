@@ -1,11 +1,17 @@
 "use client";
 
+import { CustomerSearchCombobox } from "@/components/projects/customer-search-combobox";
 import type { ProjectBasics, ProjectBasicsField } from "@/lib/projectTypes";
 
 type Props = {
   mode: "create" | "edit";
   value: ProjectBasics;
   onChange: (field: ProjectBasicsField, value: string) => void;
+  /** New project: CRM link for selected directory account */
+  createLinkedCustomerId?: string | null;
+  onCreateLinkedCustomerIdChange?: (id: string | null) => void;
+  /** Same-origin path for &returnTo= after creating a customer from the combobox */
+  newCustomerReturnTo?: string;
 };
 
 const controlFocus =
@@ -13,7 +19,14 @@ const controlFocus =
 
 const inputBase = `w-full rounded-xl border border-zinc-700 bg-zinc-900/80 uppercase placeholder:text-zinc-600 ${controlFocus}`;
 
-export function ProjectBasicsFields({ mode, value, onChange }: Props) {
+export function ProjectBasicsFields({
+  mode,
+  value,
+  onChange,
+  createLinkedCustomerId,
+  onCreateLinkedCustomerIdChange,
+  newCustomerReturnTo = "/new-project",
+}: Props) {
   const cozy = mode === "create";
   const labelMb = cozy ? "mb-2" : "mb-1";
   const inputPad = cozy ? "px-5 py-4 text-lg" : "px-4 py-3 text-lg";
@@ -33,13 +46,26 @@ export function ProjectBasicsFields({ mode, value, onChange }: Props) {
           <label className={`text-xs text-zinc-500 block ${labelMb}`}>
             CUSTOMER
           </label>
-          <input
-            required={cozy}
-            value={v.customer}
-            onChange={(e) => onChange("customer", e.target.value)}
-            className={`${inputBase} ${inputPad}`}
-            placeholder={cozy ? "TEST INC" : undefined}
-          />
+          {cozy &&
+          onCreateLinkedCustomerIdChange !== undefined &&
+          createLinkedCustomerId !== undefined ? (
+            <CustomerSearchCombobox
+              value={v.customer}
+              customerId={createLinkedCustomerId}
+              onCustomerChange={(name) => onChange("customer", name)}
+              onCustomerIdChange={onCreateLinkedCustomerIdChange}
+              cozy
+              returnToAfterNewCustomer={newCustomerReturnTo}
+            />
+          ) : (
+            <input
+              required={cozy}
+              value={v.customer}
+              onChange={(e) => onChange("customer", e.target.value)}
+              className={`${inputBase} ${inputPad}`}
+              placeholder={cozy ? "TEST INC" : undefined}
+            />
+          )}
         </div>
         <div>
           <label className={`text-xs text-zinc-500 block ${labelMb}`}>

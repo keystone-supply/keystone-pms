@@ -96,4 +96,21 @@ export type ProjectDocumentDraftMeta = {
   internalNotes?: string;
   /** Captured project financial fields when the quote/invoice draft was saved. */
   quoteFinancialsSnapshot?: QuoteFinancialsSnapshotV1;
+  /** Quote PDF: headline description (defaults to uppercase project name in compose). */
+  quoteDescription?: string;
+  /** Quote PDF: shipping method row (falls back to freightTerms if empty). */
+  shippingMethod?: string;
+  /** Quote PDF: payment terms (e.g. NET 30); CRM default when unset. */
+  paymentTerms?: string;
+  /** Quote PDF: lead time text. */
+  leadTime?: string;
+  /** Quote PDF: overrides auto-built customer contact line from CRM. */
+  customerContactDisplay?: string;
+  /** Quote PDF: account manager line (name / phone); company env default when unset. */
+  accountManagerDisplay?: string;
+  /** Quote PDF totals block: optional rows after line-item subtotal. */
+  quotePdfTaxRatePct?: number | null;
+  quotePdfTaxAmount?: number | null;
+  quotePdfLogisticsAmount?: number | null;
+  quotePdfOtherAmount?: number | null;
 };

@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import {
+  computeLaborCostFromActualBreakdown,
   customerLineFromBasis,
   computeQuotedInternalCostTotal,
   computeQuoteCustomerTotal,
@@ -15,7 +16,7 @@ import {
 import type { ProjectRow } from "@/lib/projectTypes";
 
 const detailFieldMono =
-  "w-full rounded-xl border border-zinc-700 bg-zinc-900/80 px-4 py-3 font-mono tabular-nums text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
+  "w-full rounded-xl border border-zinc-700 bg-zinc-900/80 px-4 py-3 font-mono tabular-nums text-white placeholder:text-zinc-500 focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
 
 type QuoteBasisBucketConfig = {
   basisKey: keyof ProjectRow;
@@ -322,13 +323,15 @@ export function ProjectQuoteFinancialsPanel({
             </label>
             <input
               type="number"
-              value={project.labor_quoted ?? 0}
-              onChange={(e) =>
+              value={project.labor_quoted ?? ""}
+              onChange={(e) => {
+                const raw = e.target.value;
                 applyFinancialPatch({
-                  labor_quoted: parseFloat(e.target.value) || 0,
-                })
-              }
+                  labor_quoted: raw === "" ? null : parseFloat(raw) || 0,
+                });
+              }}
               className={detailFieldMono}
+              placeholder="0"
             />
           </div>
         ) : null}
@@ -336,7 +339,8 @@ export function ProjectQuoteFinancialsPanel({
 
       <div className="grid grid-cols-1 gap-4 text-sm">
         {QUOTE_BASIS_BUCKETS.map(({ basisKey, markupKey, title }) => {
-          const basisRaw = (project[basisKey] as number) ?? 0;
+          const basisRaw =
+            (project[basisKey] as number | null | undefined) ?? 0;
           const basis = Math.max(0, basisRaw);
           const pct = effectiveMaterialMarkupPct(
             project[markupKey] as number | null | undefined,
@@ -357,13 +361,18 @@ export function ProjectQuoteFinancialsPanel({
                   </label>
                   <input
                     type="number"
-                    value={(project[basisKey] as number) ?? 0}
-                    onChange={(e) =>
-                      applyFinancialPatch({
-                        [basisKey]: parseFloat(e.target.value) || 0,
-                      } as Partial<ProjectRow>)
+                    value={
+                      (project[basisKey] as number | null | undefined) ?? ""
                     }
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      applyFinancialPatch({
+                        [basisKey]:
+                          raw === "" ? null : parseFloat(raw) || 0,
+                      } as Partial<ProjectRow>);
+                    }}
                     className={detailFieldMono}
+                    placeholder="0"
                   />
                 </div>
                 <div>
@@ -403,13 +412,15 @@ export function ProjectQuoteFinancialsPanel({
           </label>
           <input
             type="number"
-            value={project.taxes_quoted ?? 0}
-            onChange={(e) =>
+            value={project.taxes_quoted ?? ""}
+            onChange={(e) => {
+              const raw = e.target.value;
               applyFinancialPatch({
-                taxes_quoted: parseFloat(e.target.value) || 0,
-              })
-            }
+                taxes_quoted: raw === "" ? null : parseFloat(raw) || 0,
+              });
+            }}
             className={detailFieldMono}
+            placeholder="0"
           />
           <QuoteLineCostMarkupReadouts
             internalBasis={taxesBasis}
@@ -475,13 +486,15 @@ export function ProjectActualsFinancialsPanel({
           <div className="text-sm text-zinc-500">Invoiced amount</div>
           <input
             type="number"
-            value={project.invoiced_amount || 0}
-            onChange={(e) =>
+            value={project.invoiced_amount ?? ""}
+            onChange={(e) => {
+              const raw = e.target.value;
               applyFinancialPatch({
-                invoiced_amount: parseFloat(e.target.value) || 0,
-              })
-            }
-            className="mt-2 w-full bg-transparent text-3xl font-mono font-bold focus:outline-none sm:text-4xl"
+                invoiced_amount: raw === "" ? null : parseFloat(raw) || 0,
+              });
+            }}
+            className="mt-2 w-full bg-transparent text-3xl font-mono font-bold placeholder:text-zinc-500 focus:outline-none sm:text-4xl"
+            placeholder="0"
           />
           <Button
             type="button"
@@ -561,13 +574,15 @@ export function ProjectActualsFinancialsPanel({
             </label>
             <input
               type="number"
-              value={(project[field] as number) ?? 0}
-              onChange={(e) =>
+              value={(project[field] as number | null | undefined) ?? ""}
+              onChange={(e) => {
+                const raw = e.target.value;
                 applyFinancialPatch({
-                  [field]: parseFloat(e.target.value) || 0,
-                } as Partial<ProjectRow>)
-              }
+                  [field]: raw === "" ? null : parseFloat(raw) || 0,
+                } as Partial<ProjectRow>);
+              }}
               className={detailFieldMono}
+              placeholder="0"
             />
           </div>
         ))}
@@ -580,13 +595,20 @@ export function ProjectActualsFinancialsPanel({
           </label>
           <input
             type="number"
-            value={(project.labor_cost as number) ?? 0}
-            onChange={(e) =>
-              applyFinancialPatch({
-                labor_cost: parseFloat(e.target.value) || 0,
-              })
+            value={
+              laborCostComputed
+                ? computeLaborCostFromActualBreakdown(project)
+                : (project.labor_cost as number | null | undefined) ?? ""
             }
+            onChange={(e) => {
+              if (laborCostComputed) return;
+              const raw = e.target.value;
+              applyFinancialPatch({
+                labor_cost: raw === "" ? null : parseFloat(raw) || 0,
+              });
+            }}
             className={detailFieldMono}
+            placeholder={laborCostComputed ? undefined : "0"}
             readOnly={laborCostComputed}
             aria-readonly={laborCostComputed}
           />

@@ -55,6 +55,7 @@ function rowToForm(c: CustomerWithShipping): CustomerFormState {
     status: c.status,
     notes: c.notes ?? "",
     follow_up_at: isoToDatetimeLocal(c.follow_up_at),
+    follow_up_active: c.follow_up_active ?? false,
   };
 }
 
@@ -255,6 +256,7 @@ export default function CustomerDetailPage() {
         status: form.status,
         notes: trimOrNull(form.notes),
         follow_up_at: datetimeLocalToIsoOrNull(form.follow_up_at),
+        follow_up_active: form.follow_up_active,
       };
       const { error: uErr } = await supabase
         .from("customers")

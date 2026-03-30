@@ -21,6 +21,7 @@
     "test:project-document-totals": "node --import tsx --test lib/projectDocumentTotalsPolicy.test.ts",
     "test:project-lifecycle": "node --import tsx --test lib/projectTypes.lifecycle.test.ts",
     "test:document-milestones": "node --import tsx --test lib/documentMilestones.test.ts",
+    "test:document-pdf": "node --import tsx --test lib/documents/buildProjectDocumentPdf.test.ts",
     "test:nest-dual-lane": "npx tsx scripts/verify-nest-dual-lane.ts",
     "test:nest-dxf-export": "npx tsx scripts/verify-nest-dxf-export.ts"
   },

@@ -122,11 +122,22 @@ const columns = [
   columnHelper.accessor((row) => row.follow_up_at, {
     id: "follow_up_at",
     header: "Follow-up",
-    cell: (info) => (
-      <span className="whitespace-nowrap tabular-nums text-sm text-zinc-400">
-        {formatFollowUp(info.getValue() as string | null)}
-      </span>
-    ),
+    cell: (info) => {
+      const row = info.row.original;
+      const at = info.getValue() as string | null;
+      const paused =
+        at != null &&
+        at !== "" &&
+        row.follow_up_active === false;
+      return (
+        <span className="whitespace-nowrap tabular-nums text-sm text-zinc-400">
+          {formatFollowUp(at)}
+          {paused ? (
+            <span className="ml-1.5 text-zinc-600">(off)</span>
+          ) : null}
+        </span>
+      );
+    },
     sortingFn: (a, b) => {
       const ta = a.original.follow_up_at
         ? new Date(a.original.follow_up_at).getTime()

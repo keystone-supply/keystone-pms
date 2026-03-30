@@ -21,12 +21,17 @@ import {
 } from "@/lib/dashboardMetrics";
 import { PROJECT_SELECT } from "@/lib/projectQueries";
 
-function NewProjectForm() {
+function NewProjectForm({
+  newCustomerReturnTo,
+}: {
+  newCustomerReturnTo: string;
+}) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [form, setForm] = useState({
     customer: "",
+    customer_id: null as string | null,
     project_name: "",
     customer_po: "",
     supply_industrial: "SUPPLY",
@@ -55,6 +60,7 @@ function NewProjectForm() {
       const newProject = {
         project_number: nextJob,
         customer: form.customer.toUpperCase(),
+        customer_id: form.customer_id,
         project_name: form.project_name.toUpperCase(),
         customer_po: form.customer_po,
         supply_industrial: form.supply_industrial,
@@ -63,12 +69,12 @@ function NewProjectForm() {
         project_complete: false,
         project_status: "in_process",
         payment_received: false,
-        material_cost: 0,
-        labor_cost: 0,
-        engineering_cost: 0,
-        equipment_cost: 0,
-        logistics_cost: 0,
-        additional_costs: 0,
+        material_cost: null,
+        labor_cost: null,
+        engineering_cost: null,
+        equipment_cost: null,
+        logistics_cost: null,
+        additional_costs: null,
         invoiced_amount: 0,
       };
       const { data: saved, error } = await supabase
@@ -135,7 +141,16 @@ function NewProjectForm() {
             {nextJob}
           </div>
         </div>
-        <ProjectBasicsFields mode="create" value={form} onChange={setBasics} />
+        <ProjectBasicsFields
+          mode="create"
+          value={form}
+          onChange={setBasics}
+          createLinkedCustomerId={form.customer_id}
+          onCreateLinkedCustomerIdChange={(id) =>
+            setForm((f) => ({ ...f, customer_id: id }))
+          }
+          newCustomerReturnTo={newCustomerReturnTo}
+        />
         <Button
           type="submit"
           disabled={loading}
@@ -155,6 +170,10 @@ function NewProjectWithReturnTo() {
   const backHref = safeReturnToPath(searchParams.get("returnTo"));
   const rawReturn = searchParams.get("returnTo");
   const newProjectHref =
+    rawReturn != null && rawReturn !== ""
+      ? `/new-project?returnTo=${encodeURIComponent(rawReturn)}`
+      : "/new-project";
+  const newCustomerReturnTo =
     rawReturn != null && rawReturn !== ""
       ? `/new-project?returnTo=${encodeURIComponent(rawReturn)}`
       : "/new-project";
@@ -223,7 +242,7 @@ function NewProjectWithReturnTo() {
         </div>
 
         <div className="mt-10">
-          <NewProjectForm />
+          <NewProjectForm newCustomerReturnTo={newCustomerReturnTo} />
         </div>
       </div>
     </div>
