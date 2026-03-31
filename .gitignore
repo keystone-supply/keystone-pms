@@ -46,3 +46,8 @@ Book1.csv
 
 # Supabase CLI local cache
 supabase/.temp/
+
+# Cursor AI configuration (rules, skills, agents)
+# Committed intentionally for team AI consistency on this public repo.
+# See .cursorignore for what the AI should NOT see.
+# .cursorignore is explicitly allowed above in the positive pattern

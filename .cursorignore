@@ -1,0 +1,28 @@
+# Cursor AI ignore file - controls what the AI can see and index
+# This file should be committed to git.
+
+# Secrets and credentials
+.env*
+!.env.example
+*.key
+*.pem
+secrets/
+credentials/
+
+# Local Supabase and large files
+supabase/.temp/
+node_modules/
+.next/
+dist/
+build/
+coverage/
+*.log
+Book1.csv
+
+# Prevent self-referential indexing
+.cursor/cache/
+.cursor/tmp/
+
+# Explicitly include our configuration
+!.cursor/
+!.cursorignore
