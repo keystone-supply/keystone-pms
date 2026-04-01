@@ -1,5 +1,6 @@
 import {
   nestSheetPayloadToPreviewOutline,
+  nestSheetPreviewDimensions,
   type NestApiSheetPayload,
 } from "@/lib/remnantNestGeometry";
 import {
@@ -8,10 +9,8 @@ import {
   type OutlinePoint,
 } from "@/lib/utils";
 
-/** DXF layers: sheet reference, cut geometry, part labels. */
-export const NEST_DXF_LAYER_SHEET = "SHEET";
-export const NEST_DXF_LAYER_PARTS = "PARTS";
-export const NEST_DXF_LAYER_TEXT = "TEXT";
+/** Single layer DXF matching Fusion reference (AC1014, layer "0"). Sheet outline and text are optionally included on the same layer. */
+export const NEST_DXF_LAYER_0 = "0";
 
 export type NestDxfPlacement = {
   source?: number;
@@ -98,11 +97,10 @@ function pushAppIdAcad(out: string[], h: { n: number }) {
   );
 }
 
-/** Minimal OBJECTS graph (root dictionary + ACAD_GROUP / ACAD_MLINESTYLE children) for Autodesk importers. */
+/** OBJECTS section matching working Fusion-exported DXF (root dictionary + ACAD_GROUP + ACAD_MLINESTYLE). Removed dangling dictNested that caused TranslationWorker-InternalFailure. */
 function pushObjectsSection(out: string[], h: { n: number }) {
   const root = nextHandle(h);
   const dictGroup = nextHandle(h);
-  const dictNested = nextHandle(h);
   const dictMline = nextHandle(h);
   out.push(
     "0",
@@ -127,14 +125,6 @@ function pushObjectsSection(out: string[], h: { n: number }) {
     "DICTIONARY",
     "5",
     dictGroup,
-    "100",
-    "AcDbDictionary",
-    "0",
-    "DICTIONARY",
-    "5",
-    dictNested,
-    "330",
-    root,
     "100",
     "AcDbDictionary",
     "0",
@@ -297,6 +287,7 @@ function pushMtext(
   rotationDeg: number,
   columnWidth: number,
   display: string,
+  layer: string = NEST_DXF_LAYER_0,
 ) {
   const content = escapeMtextContent(display);
   const { leading, last } = mtextChunks(content);
@@ -310,7 +301,7 @@ function pushMtext(
     "100",
     "AcDbEntity",
     "8",
-    NEST_DXF_LAYER_TEXT,
+    layer,
     "100",
     "AcDbMText",
     "10",
@@ -341,9 +332,9 @@ function pushMtext(
 /**
  * Build an ASCII DXF (inches, y-up matching Nest) for one sheet: optional sheet outline,
  * part cut loops (outer + holes per instance), optional MTEXT labels at each part centroid.
- * Includes HEADER `$HANDSEED`, stub TABLES (VPORT, VIEW, UCS, APPID, DIMSTYLE), and an OBJECTS
- * dictionary graph for Autodesk-style importers. With both `includeSheetOutline` and
- * `includePartNames` false, only PARTS geometry is emitted in ENTITIES (plus required scaffolding).
+ * Uses AC1021 for better Autodesk online viewer compatibility. Includes enhanced HEADER
+ * ($ACADVER, $EXTMIN/$EXTMAX from sheet bounds, etc.), full LAYER table with colors,
+ * and OBJECTS dictionary. Layers: SHEET (boundary), PARTS (nested cut geometry), TEXT (labels).
  */
 export function buildNestSheetDxf(
   sheet: NestApiSheetPayload,
@@ -360,13 +351,60 @@ export function buildNestSheetDxf(
       ? options.textHeight
       : 1;
 
+  // Single layer "0" to match Fusion reference for maximum compatibility
+  const layerName = NEST_DXF_LAYER_0;
+
   const sheetOutline = nestSheetPayloadToPreviewOutline(sheet);
+  const sheetDim = nestSheetPreviewDimensions(sheet);
+  const sheetWidth = sheetDim.width;
+  const sheetHeight = sheetDim.height;
   const handleGen = { n: 0 };
   const body: string[] = [];
 
   body.push("0", "SECTION", "2", "TABLES");
 
-  pushEmptySymbolTable(body, handleGen, "VPORT", 0);
+  // Improved VPORT table with *Active entry to match working Fusion DXF
+  pushTableOpen(body, handleGen, "VPORT", 1);
+  body.push(
+    "0",
+    "VPORT",
+    "5",
+    nextHandle(handleGen),
+    "100",
+    "AcDbSymbolTableRecord",
+    "100",
+    "AcDbViewportTableRecord",
+    "2",
+    "*Active",
+    "70",
+    "0",
+    "10",
+    "0.0",
+    "20",
+    "0.0",
+    "11",
+    "1.0",
+    "21",
+    "1.0",
+    "12",
+    "0.0",
+    "22",
+    "0.0",
+    "13",
+    "0.0",
+    "23",
+    "0.0",
+    "14",
+    "1.0",
+    "24",
+    "1.0",
+    "40",
+    "1.0",
+    "41",
+    "1.0",
+    "0",
+    "ENDTAB",
+  );
 
   pushTableOpen(body, handleGen, "LTYPE", 3);
   body.push(
@@ -418,32 +456,29 @@ export function buildNestSheetDxf(
     "ENDTAB",
   );
 
-  const layerNames: string[] = [];
-  if (includeSheetOutline) layerNames.push(NEST_DXF_LAYER_SHEET);
-  layerNames.push(NEST_DXF_LAYER_PARTS);
-  if (includePartNames) layerNames.push(NEST_DXF_LAYER_TEXT);
-
-  pushTableOpen(body, handleGen, "LAYER", layerNames.length);
-  for (const name of layerNames) {
-    body.push(
-      "0",
-      "LAYER",
-      "5",
-      nextHandle(handleGen),
-      "100",
-      "AcDbSymbolTableRecord",
-      "100",
-      "AcDbLayerTableRecord",
-      "2",
-      name,
-      "70",
-      "0",
-      "62",
-      "7",
-      "6",
-      "CONTINUOUS",
-    );
-  }
+  // Single layer "0" to match Fusion reference
+  const layerNames = [NEST_DXF_LAYER_0];
+  pushTableOpen(body, handleGen, "LAYER", 1);
+  body.push(
+    "0",
+    "LAYER",
+    "5",
+    nextHandle(handleGen),
+    "100",
+    "AcDbSymbolTableRecord",
+    "100",
+    "AcDbLayerTableRecord",
+    "2",
+    NEST_DXF_LAYER_0,
+    "70",
+    "0",
+    "62",
+    "7",
+    "6",
+    "CONTINUOUS",
+    "370",
+    "0",
+  );
   body.push("0", "ENDTAB");
 
   pushTableOpen(body, handleGen, "STYLE", 1);
@@ -460,6 +495,10 @@ export function buildNestSheetDxf(
     "STANDARD",
     "70",
     "0",
+    "3",
+    "txt.shx", // font for MTEXT compatibility (matches common Autodesk DXFs)
+    "40",
+    "0.0",
     "0",
     "ENDTAB",
   );
@@ -544,7 +583,7 @@ export function buildNestSheetDxf(
   );
 
   if (includeSheetOutline && sheetOutline.length >= 3) {
-    pushLwpolyline(body, handleGen, NEST_DXF_LAYER_SHEET, sheetOutline);
+    pushLwpolyline(body, handleGen, layerName, sheetOutline);
   }
 
   for (const p of sheetplacements) {
@@ -556,11 +595,11 @@ export function buildNestSheetDxf(
     const px = p.x ?? 0;
     const py = p.y ?? 0;
     const outerPlaced = placeOutline(outline, rot, px, py);
-    pushLwpolyline(body, handleGen, NEST_DXF_LAYER_PARTS, outerPlaced);
+    pushLwpolyline(body, handleGen, layerName, outerPlaced);
     const holesPlaced = placeHoles(part.holes, rot, px, py);
     for (const hole of holesPlaced) {
       if (hole.length >= 3) {
-        pushLwpolyline(body, handleGen, NEST_DXF_LAYER_PARTS, hole);
+        pushLwpolyline(body, handleGen, layerName, hole);
       }
     }
 
@@ -585,6 +624,7 @@ export function buildNestSheetDxf(
         rot,
         colW,
         wrapped,
+        layerName,
       );
     }
   }
@@ -601,11 +641,33 @@ export function buildNestSheetDxf(
     "9",
     "$ACADVER",
     "1",
-    "AC1015",
+    "AC1014",
     "9",
     "$INSUNITS",
     "70",
-    "1",
+    "1", // inches
+    "9",
+    "$DWGCODEPAGE",
+    "3",
+    "ANSI_1252",
+    "9",
+    "$INSBASE",
+    "10",
+    "0.0",
+    "20",
+    "0.0",
+    "9",
+    "$EXTMIN",
+    "10",
+    "0.0",
+    "20",
+    "0.0",
+    "9",
+    "$EXTMAX",
+    "10",
+    dxfNum(sheetWidth),
+    "20",
+    dxfNum(sheetHeight),
     "9",
     "$HANDSEED",
     "5",

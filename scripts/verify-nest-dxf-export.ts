@@ -1,5 +1,6 @@
 /**
  * Smoke checks for nest DXF Autodesk-style scaffolding (run: npx tsx scripts/verify-nest-dxf-export.ts).
+ * Tests 3-layer output with SHEET/PARTS/TEXT for Autodesk viewer compatibility.
  */
 
 import assert from "node:assert/strict";
@@ -20,10 +21,12 @@ const parts = [
 const placements = [{ source: 0, x: 0.1, y: 0.1, rotation: 0 }];
 
 const dxf = buildNestSheetDxf(sheet, parts, placements, {
-  includePartNames: false,
-  includeSheetOutline: false,
+  includePartNames: true,
+  includeSheetOutline: true,
 });
 
+assert.match(dxf, /\$ACADVER\r\n1\r\nAC1014/, "HEADER should use AC1014");
+assert.match(dxf, /txt\.shx/, "STYLE should define font for MTEXT");
 assert.match(dxf, /\$HANDSEED\r\n5\r\n[0-9A-F]+\r\n/, "HEADER should include $HANDSEED");
 assert.match(
   dxf,
@@ -35,11 +38,13 @@ assert.match(
   /\r\nDICTIONARY\r\n5\r\n/,
   "OBJECTS should include DICTIONARY",
 );
+assert.match(dxf, /ACAD_GROUP/, "OBJECTS should reference ACAD_GROUP");
 assert.match(
   dxf,
   /\r\n70\r\n1\r\n43\r\n0\.0\r\n10\r\n/,
   "LWPOLYLINE should include closed flag then global width 43",
 );
+assert.match(dxf, /8\r\n0\r\n/, "should use layer 0");
 
 const lines = dxf.split(/\r\n/);
 const handles: string[] = [];
