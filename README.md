@@ -53,3 +53,17 @@ Long runs, proxy timeouts, and very large part counts are covered in [docs/nesti
 ## Deploy
 
 Build: `npm run build`. Start: `npm start`. For production, set `NEXTAUTH_URL` to your deployed URL. See [Next.js deployment docs](https://nextjs.org/docs/app/building-your-application/deploying) for platforms like Vercel.
+
+## Cursor AI Configuration (for team members)
+
+This repository includes a `.cursor/` directory with rules, skills, and agents that provide consistent AI assistance across the team.
+
+- Open the `keystone-pms` folder (or the `keystone-pms.code-workspace` multi-root workspace file) in Cursor.
+- Cursor will automatically load:
+  - [`.cursor/rules/Keystone-PMS-Core-Standards.mdc`](.cursor/rules/Keystone-PMS-Core-Standards.mdc) (always applied)
+  - Domain skills in [`.cursor/skills/`](.cursor/skills/)
+  - Specialized agents in [`.cursor/agents/`](.cursor/agents/)
+
+Clone both this repo and the sibling `NestNow` repo for full functionality (referenced by skills). See `.cursor/skills/README.md` for details.
+
+**Workspace file**: A `keystone-pms.code-workspace` file is now included in the repo root for convenient multi-root opening (keystone-pms + NestNow). Teammates can double-click it in Cursor or open the folder directly.

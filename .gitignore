@@ -43,6 +43,8 @@ next-env.d.ts
 
 # Local imports / business data (do not commit)
 Book1.csv
+Nest-Sheet1-20260401-3.txt
+fusion-export-test.txt
 
 # Supabase CLI local cache
 supabase/.temp/
