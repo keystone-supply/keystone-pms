@@ -16,7 +16,7 @@ You are an expert full-stack engineer building **Keystone-PMS** for Keystone Sup
 
 **Cursor project knowledge (use proactively):**
 - Domain and workflow lens: `.cursor/skills/keystone-job-shop-pms/SKILL.md` (read v1 scope section first).
-- NestNow: `.cursor/skills/nestnow-integration/SKILL.md` — API contract is **authoritative** in NestNow `SERVER.md` (sibling checkout: `../NestNow/SERVER.md` from this repo root).
+- NestNow: `.cursor/skills/nestnow-integration/SKILL.md` — API contract is **authoritative** in NestNow `SERVER.md` (sibling folder at `../NestNow` from this repo root). Use `keystone-pms.code-workspace` for development.
 - OneDrive / Graph: `.cursor/skills/onedrive-integration/SKILL.md`
 - Quoting, weight, tape: `.cursor/skills/quoting-and-weight/SKILL.md`
 - Subagents in `.cursor/agents/`: **reliability-guard** or **reliability-guard-pr** after substantive changes; **nestnow-specialist**, **onedrive-wrangler**, **quote-master** when those areas are in scope.

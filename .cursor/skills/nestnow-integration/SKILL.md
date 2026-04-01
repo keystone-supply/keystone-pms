@@ -13,7 +13,7 @@ Handle nesting job submission, result parsing, and UI feedback for the NestNow e
 
 ## Schema authority (read first)
 
-- **Authoritative contract:** NestNow [`SERVER.md`](../../../NestNow/SERVER.md) in the sibling **NestNow** repo (`../SERVER.md` from the Keystone-PMS repo root when both repos share a parent folder).
+- **Authoritative contract:** NestNow [`SERVER.md`](../NestNow/SERVER.md) in the sibling folder at `../NestNow` (from keystone-pms root). Use the `keystone-pms.code-workspace` file.
 - Do **not** invent JSON fields. Current implementation uses TypeScript types (`lib/nestPayload.ts`, `NestApiResponse`); Zod schemas are optional for new internal validation.
 - Use `NESTNOW_URL` (defaults to `http://127.0.0.1:3001/nest` via proxy in `app/api/nest/route.ts`); server binds **localhost only**; lifecycle includes `GET /progress` and `POST /stop`.
 - **Related:** fabrication assumptions (kerf, remnants, stock sizes) often belong to [quoting-and-weight](../quoting-and-weight/SKILL.md); keep nest payloads and quote assumptions consistent.

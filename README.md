@@ -54,6 +54,19 @@ Long runs, proxy timeouts, and very large part counts are covered in [docs/nesti
 
 Build: `npm run build`. Start: `npm start`. For production, set `NEXTAUTH_URL` to your deployed URL. See [Next.js deployment docs](https://nextjs.org/docs/app/building-your-application/deploying) for platforms like Vercel.
 
+## Dedicated Host Deployment (Planning)
+
+On a dedicated machine on the business local network:
+
+1. Clone both repositories as sibling folders (`keystone-pms/` and `NestNow/`).
+2. Use `keystone-pms.code-workspace` or open the `keystone-pms` folder in Cursor/VS Code.
+3. Build and run `keystone-pms` (Next.js production build).
+4. Run NestNow in server mode independently (`cd ../NestNow && npm run start:server`).
+5. Configure `NESTNOW_URL=http://127.0.0.1:3001` (or appropriate internal address).
+6. Ensure firewall allows traffic to the PMS web port and NestNow server port (3001).
+
+Both services run independently. The PMS app communicates with NestNow via the configured URL or direct browser connections for long-running nests. See [docs/nesting-scale-and-timeouts.md](docs/nesting-scale-and-timeouts.md) for timeout and proxy guidance.
+
 ## Cursor AI Configuration (for team members)
 
 This repository includes a `.cursor/` directory with rules, skills, and agents that provide consistent AI assistance across the team.

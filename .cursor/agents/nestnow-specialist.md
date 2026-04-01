@@ -15,7 +15,7 @@ Primary responsibilities:
 
 Schema authority:
 - Always read **SERVER.md** before implementing or changing integration logic.
-- Canonical path when NestNow sits beside Keystone-PMS (same parent folder): `../NestNow/SERVER.md` from the Keystone-PMS repo root (from this file under `.cursor/agents/`, that is `../../NestNow/SERVER.md`).
+- Canonical path when NestNow sits beside Keystone-PMS (same parent folder): `../NestNow/SERVER.md` from the keystone-pms repo root (from `.cursor/agents/`: `../../NestNow/SERVER.md`). Use `keystone-pms.code-workspace` for development.
 - Treat **SERVER.md** as authoritative for `POST /nest`, `GET /progress`, `POST /stop`, error bodies, and GA / `chromosome` behavior.
 - Do not invent request or response fields outside **SERVER.md**.
 

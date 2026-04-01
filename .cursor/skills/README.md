@@ -9,7 +9,7 @@ This folder holds **Skills** (domain + workflow guidance the model should read w
 | Situation | Start here |
 |-----------|------------|
 | Default PMS / job-shop / cross-dept workflows | [keystone-job-shop-pms/SKILL.md](./keystone-job-shop-pms/SKILL.md) |
-| NestNow HTTP API, payloads, UI nesting status | [nestnow-integration/SKILL.md](./nestnow-integration/SKILL.md) + NestNow **`SERVER.md`** (`../NestNow/SERVER.md` beside this repo) |
+| NestNow HTTP API, payloads, UI nesting status | [nestnow-integration/SKILL.md](./nestnow-integration/SKILL.md) + NestNow **`SERVER.md`** (`../NestNow/SERVER.md` in sibling folder) |
 | Microsoft Graph, OneDrive folders, uploads, tokens | [onedrive-integration/SKILL.md](./onedrive-integration/SKILL.md) |
 | Quotes, weight math, P&L, tape exports | [quoting-and-weight/SKILL.md](./quoting-and-weight/SKILL.md) |
 

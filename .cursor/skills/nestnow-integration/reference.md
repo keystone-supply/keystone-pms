@@ -4,7 +4,7 @@ _Last updated: 2026-03-31_
 
 ## Endpoint contract (see NestNow SERVER.md)
 
-- **Source of truth:** [`SERVER.md`](../../../NestNow/SERVER.md) (NestNow repo beside Keystone-PMS).
+- **Source of truth:** [`SERVER.md`](../NestNow/SERVER.md) (NestNow in sibling folder at `../NestNow`).
 - **Default submit:** proxy via `app/api/nest/route.ts` or direct `POST http://127.0.0.1:3001/nest` (use `NESTNOW_URL`).
 - **Also documented in SERVER.md:** `GET /progress`, `POST /stop`, error shapes (`400`/`404`/`500`), optional `candidates` and `chromosome` refine. Note extended fields like `failureKind`, `lastEvalError` in real responses.
 - Treat raw responses as engine output; map into **your** app model (TypeScript types today; Zod optional).
