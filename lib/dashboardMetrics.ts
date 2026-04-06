@@ -120,6 +120,15 @@ export type DashboardMetrics = {
   needsAttention: AttentionItem[];
 };
 
+/** TV / shop floor specific summary focused on command board job stages. */
+export type CommandBoardTVSummary = {
+  stageCounts: Record<SalesProjectColumn, number>;
+  inProcessCount: number;
+  activeProjects: number;
+  recentAttention: AttentionItem[];
+  lastUpdated: Date;
+};
+
 function ytdStartIso(year: number): string {
   return `${year}-01-01`;
 }
@@ -330,5 +339,25 @@ export function aggregateDashboardMetrics(
     engineeringLoadQuoted,
     topCustomers,
     needsAttention,
+  };
+}
+
+/**
+ * Creates TV/shop-floor focused summary emphasizing command board job stages.
+ * Reuses existing aggregation for consistency with sales command board.
+ */
+export function getCommandBoardTVSummary(
+  projects: DashboardProjectRow[],
+  now: Date = new Date(),
+): CommandBoardTVSummary {
+  const metrics = aggregateDashboardMetrics(projects, now);
+  const recentAttention = metrics.needsAttention.slice(0, 5);
+
+  return {
+    stageCounts: { ...metrics.pipelineColumnCounts },
+    inProcessCount: metrics.pipelineColumnCounts.in_process || 0,
+    activeProjects: metrics.activeProjects,
+    recentAttention,
+    lastUpdated: now,
   };
 }
