@@ -51,6 +51,12 @@ test("quote PDF builds without throw and produces non-empty output", () => {
       country: "USA",
       phone: "555-0100",
       email: "sales@example.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
     },
     logoDataUrl: null,
     project: {
@@ -84,24 +90,32 @@ test("quote PDF builds without throw and produces non-empty output", () => {
   assert.ok(buf instanceof ArrayBuffer);
   assert.ok(buf.byteLength > 8000);
   assert.ok(pdfBytesInclude(buf, "101365 REV. 0"));
+  assert.ok(pdfBytesInclude(buf, "QUOTATION"));
+  assert.ok(pdfBytesInclude(buf, "Doc No. Q-TEST-1"));
   assert.ok(pdfBytesInclude(buf, "Date: Mar 29, 2026"));
 });
 
-test("non-quote invoice PDF still builds", () => {
+test("non-quote documents use physical address for SELLER block and consistent VENDOR label (PO, RFQ, invoice, etc.)", () => {
   const input: BuildProjectDocumentPdfInput = {
-    kind: "invoice",
-    documentNumber: "INV-1",
+    kind: "purchase_order",
+    documentNumber: "PO-1",
     issuedDate: new Date("2026-03-29"),
     company: {
-      legalName: "Test Co",
-      line1: "",
+      legalName: "Keystone Supply",
+      line1: "P.O. Box 129",
       line2: "",
-      city: "",
-      state: "",
-      postalCode: "",
-      country: "",
-      phone: "",
-      email: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "(435) 720-3714",
+      email: "sales@keystone-supply.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
     },
     logoDataUrl: null,
     project: {
@@ -110,8 +124,8 @@ test("non-quote invoice PDF still builds", () => {
       customer: "Acme",
       customer_po: "PO-1",
     },
-    fromParty: { label: "From", name: "Test Co", lines: [] },
-    toParty: { label: "Bill to", name: "Acme", lines: [] },
+    fromParty: { label: "Seller", name: "Keystone Supply", lines: [] },
+    toParty: { label: "Vendor", name: "Acme", lines: [] },
     meta: {
       lines: [
         {
@@ -131,6 +145,13 @@ test("non-quote invoice PDF still builds", () => {
   const buf = buildProjectDocumentPdf(input);
   assert.ok(buf.byteLength > 2000);
   assert.ok(pdfBytesInclude(buf, "99 REV. 3"));
+  assert.ok(pdfBytesInclude(buf, "PURCHASE ORDER"));
+  assert.ok(pdfBytesInclude(buf, "Doc No. PO-1"));
+  assert.ok(pdfBytesInclude(buf, "VENDOR")); // consistent label for RFQ/PO (was "SUPPLIER (QUOTE TO)" for RFQ)
+  // Physical address must appear (Deweyville not Riverside PO Box)
+  assert.ok(pdfBytesInclude(buf, "12090 North Hwy 38"));
+  assert.ok(pdfBytesInclude(buf, "Deweyville"));
+  assert.ok(pdfBytesInclude(buf, "84309"));
 });
 
 test("buildDocumentDownloadFilename quote matches plan shape", () => {

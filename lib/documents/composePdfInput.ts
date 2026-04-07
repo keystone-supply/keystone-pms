@@ -83,6 +83,18 @@ function sellerParty(): PdfParty {
   return { label: "Seller", name: c.legalName, lines };
 }
 
+function requestingParty(): PdfParty {
+  const c = getCompanyBlock();
+  const lines: string[] = [];
+  if (c.line1) lines.push(c.line1);
+  if (c.line2) lines.push(c.line2);
+  const city = [c.city, c.state, c.postalCode].filter(Boolean).join(", ");
+  if (city) lines.push(city);
+  if (c.country) lines.push(c.country);
+  if (c.phone) lines.push(`Tel: ${c.phone}`);
+  return { label: "Requesting", name: c.legalName, lines };
+}
+
 export function composeProjectDocumentPdfInput(args: {
   kind: ProjectDocumentKind;
   documentNumber: string;
@@ -97,7 +109,10 @@ export function composeProjectDocumentPdfInput(args: {
   documentVersion?: number;
 }): BuildProjectDocumentPdfInput {
   const company = getCompanyBlock();
-  const fromParty = sellerParty();
+  const fromParty =
+    args.kind === "rfq" || args.kind === "purchase_order"
+      ? requestingParty()
+      : sellerParty();
   const proj: PdfProjectContext = {
     project_number: String(args.project.project_number ?? ""),
     project_name: args.project.project_name ?? null,
@@ -111,8 +126,8 @@ export function composeProjectDocumentPdfInput(args: {
   switch (args.kind) {
     case "rfq":
       toParty = args.vendor
-        ? vendorToParty(args.vendor, "Supplier (quote to)")
-        : { label: "Supplier", name: "— Select vendor —", lines: [] };
+        ? vendorToParty(args.vendor, "Vendor")
+        : { label: "Vendor", name: "— Select vendor —", lines: [] };
       break;
     case "purchase_order":
       toParty = args.vendor

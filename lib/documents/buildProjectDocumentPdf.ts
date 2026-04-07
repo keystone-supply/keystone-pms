@@ -5,6 +5,7 @@ import type { VendorRow } from "@/lib/vendorQueries";
 import {
   DOCUMENT_KIND_ACCENT,
   DOCUMENT_KIND_LABEL,
+  type ProjectDocumentDraftMeta,
   type ProjectDocumentKind,
 } from "@/lib/documentTypes";
 import {
@@ -13,7 +14,11 @@ import {
   KEYSTONE_QUOTE_TERMS_TITLE,
 } from "@/lib/documents/keystoneQuoteTerms";
 
-import { formatCompanyMultiline, type CompanyBlock } from "@/lib/documents/company";
+import {
+  formatCompanyMultiline,
+  formatPhysicalAddress,
+  type CompanyBlock,
+} from "@/lib/documents/company";
 
 export type PdfProjectContext = {
   project_number: string;
@@ -180,8 +185,8 @@ function appendQuoteTermsPages(doc: jsPDF, accent: [number, number, number]): vo
   doc.setFontSize(9);
   doc.setTextColor(70, 70, 70);
   doc.text(`Effective Date: ${KEYSTONE_QUOTE_TERMS_EFFECTIVE_DATE}`, MARGIN, y);
-  y += 9;
-  doc.setFontSize(7.5);
+  y += 5;
+  doc.setFontSize(5);
   doc.setTextColor(25, 25, 25);
   const maxW = PAGE_W - 2 * MARGIN;
   const blocks = KEYSTONE_QUOTE_TERMS_BODY_FOR_PDF.split(/\n\n+/);
@@ -250,7 +255,9 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
 
   y = Math.max(y + 22, MARGIN + 28);
 
-  doc.setFontSize(13);
+  // Job number + REV in upper-right, ~3x larger than before (was 13pt), above Doc No.
+  const jobRevY = y + 2;
+  doc.setFontSize(28);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(30, 30, 30);
   doc.text(
@@ -258,18 +265,18 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
       input.project.project_number,
       input.documentVersion,
     ),
-    MARGIN,
-    y,
+    PAGE_W - MARGIN,
+    jobRevY,
+    { align: "right" },
   );
   doc.setFont("helvetica", "normal");
-
   y += 7;
-  doc.setFontSize(11);
+  doc.setFontSize(16);
   doc.setTextColor(accent[0], accent[1], accent[2]);
   doc.text("QUOTATION", MARGIN, y);
   doc.setFontSize(9);
   doc.setTextColor(45, 45, 45);
-  doc.text(`No. ${input.documentNumber}`, PAGE_W - MARGIN, y, { align: "right" });
+  doc.text(`Doc No. ${input.documentNumber}`, PAGE_W - MARGIN, y, { align: "right" });
   y += 7;
   doc.setFontSize(9);
   doc.setTextColor(40, 40, 40);
@@ -500,7 +507,9 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
 
   y = Math.max(y + 22, MARGIN + 28);
 
-  doc.setFontSize(13);
+  // Job number + REV in upper-right, ~3x larger than before (was 13pt), above Doc No.
+  const jobRevY = y + 2;
+  doc.setFontSize(28);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(30, 30, 30);
   doc.text(
@@ -508,8 +517,9 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
       input.project.project_number,
       input.documentVersion,
     ),
-    MARGIN,
-    y,
+    PAGE_W - MARGIN,
+    jobRevY,
+    { align: "right" },
   );
   doc.setFont("helvetica", "normal");
   y += 7;
@@ -519,7 +529,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
   doc.text(title.toUpperCase(), MARGIN, y);
   doc.setFontSize(10);
   doc.setTextColor(40, 40, 40);
-  doc.text(`No. ${input.documentNumber}`, PAGE_W - MARGIN, y, { align: "right" });
+  doc.text(`Doc No. ${input.documentNumber}`, PAGE_W - MARGIN, y, { align: "right" });
   y += 7;
   doc.setFontSize(9);
   doc.text(`Date: ${fmtDateLong(input.issuedDate)}`, PAGE_W - MARGIN, y, {
@@ -548,7 +558,20 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
   y += 4;
   doc.setFontSize(9);
   doc.setTextColor(30, 30, 30);
-  doc.text(partyBlockText(input.fromParty).split("\n"), MARGIN, y, {
+
+  // Use physical address + "REQUESTING" label for RFQ and Purchase Order;
+  // "SELLER" + physical for BOL/Invoice/Packing List; mailing address for quotes.
+  // Matches company.ts intent for physical/ship-from on PO/RFQ.
+  const fromText =
+    input.kind === "bol" ||
+    input.kind === "invoice" ||
+    input.kind === "packing_list" ||
+    input.kind === "rfq" ||
+    input.kind === "purchase_order"
+      ? formatPhysicalAddress(input.company)
+      : partyBlockText(input.fromParty);
+
+  doc.text(fromText.split("\n"), MARGIN, y, {
     lineHeightFactor: 1.2,
   });
   doc.text(partyBlockText(input.toParty).split("\n"), MARGIN + colW + 8, y, {
@@ -584,7 +607,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
     y,
   );
   y += 4;
-  if (input.project.customer) {
+  if (input.project.customer && input.kind !== "rfq" && input.kind !== "purchase_order") {
     doc.text(`Customer ref: ${input.project.customer}`, MARGIN, y);
     y += 4;
   }
@@ -596,7 +619,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
     doc.text(`Freight: ${input.meta.freightTerms}`, MARGIN, y);
     y += 4;
   }
-  if (input.meta.incoterms && (input.kind === "rfq" || input.kind === "quote")) {
+  if (input.meta.incoterms && input.kind === "rfq") {
     doc.text(`Incoterms: ${input.meta.incoterms}`, MARGIN, y);
     y += 4;
   }
