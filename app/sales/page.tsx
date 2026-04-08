@@ -47,6 +47,7 @@ import {
   PIPELINE_STAGE_LABELS,
   SALES_PROJECT_COLUMNS,
 } from "@/lib/salesCommandBoardColumn";
+import { canAccessSales, normalizeAppRole } from "@/lib/auth/roles";
 
 function formatUsd(n: number): string {
   return new Intl.NumberFormat(undefined, {
@@ -87,6 +88,7 @@ export default function SalesPage() {
   const [vendorSearch, setVendorSearch] = useState("");
 
   const { data: session, status } = useSession();
+  const role = normalizeAppRole(session?.role);
 
   const fetchAll = useCallback(async () => {
     const [projRes, custRes, vendRes] = await Promise.all([
@@ -197,11 +199,25 @@ export default function SalesPage() {
         <p className="mb-6 text-lg text-zinc-300">Sign in to open Sales.</p>
         <button
           type="button"
-          onClick={() => signIn("azure-ad")}
+          onClick={() => signIn()}
           className="rounded-2xl bg-blue-600 px-8 py-3 text-sm font-medium text-white hover:bg-blue-700"
         >
-          Sign in with Microsoft
+          Sign in
         </button>
+      </div>
+    );
+  }
+
+  if (!canAccessSales(role)) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
+        <p className="mb-2 text-lg text-zinc-200">Sales access required.</p>
+        <p className="mb-6 text-sm text-zinc-500">
+          Your role does not have permission to open the sales hub.
+        </p>
+        <Button variant="outline" onClick={() => signOut({ callbackUrl: "/" })}>
+          Back to dashboard
+        </Button>
       </div>
     );
   }
@@ -230,6 +246,7 @@ export default function SalesPage() {
             openQuotesCount={metrics.openQuotes}
             activeHref="/sales"
             newProjectHref="/new-project?returnTo=%2Fsales"
+            role={role}
           />
         </div>
 

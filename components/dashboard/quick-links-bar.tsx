@@ -11,6 +11,12 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  canAccessSales,
+  canCreateProjects,
+  canRunNesting,
+  type AppRole,
+} from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
 
 /** Active nav: blue border glow + KPI-style bottom accent (via-blue ~ metric cards). */
@@ -24,14 +30,19 @@ export function QuickLinksBar({
   openQuotesCount,
   activeHref,
   newProjectHref = "/new-project",
+  role,
 }: {
   openQuotesCount: number;
   /** Highlights the matching nav link. Use `"/"` on the home dashboard (Dashboard control refreshes the page). */
   activeHref?: string;
   /** e.g. `/new-project?returnTo=%2Fprojects` so Back returns to jobs list. */
   newProjectHref?: string;
+  role?: AppRole;
 }) {
   const onDashboard = activeHref === "/";
+  const showSales = role == null ? true : canAccessSales(role);
+  const showNewProject = role == null ? true : canCreateProjects(role);
+  const showNest = role == null ? true : canRunNesting(role);
 
   return (
     <nav
@@ -80,35 +91,39 @@ export function QuickLinksBar({
             ) : null}
           </Link>
         </Button>
-        <Button variant="outline" size="sm" asChild>
-          <Link
-            href="/sales"
-            className={cn(
-              "gap-2",
-              activeHref === "/sales" && quickLinkActiveClassName,
-            )}
-            aria-current={activeHref === "/sales" ? "page" : undefined}
-          >
-            <Briefcase className="size-4" />
-            Sales
-          </Link>
-        </Button>
-        <Button variant="outline" size="sm" asChild>
-          <Link
-            href="/nest-remnants"
-            className={cn(
-              "gap-2",
-              activeHref === "/nest-remnants" && quickLinkActiveClassName,
-            )}
-            aria-current={activeHref === "/nest-remnants" ? "page" : undefined}
-          >
-            <span className="relative inline-flex">
-              <Layers className="size-4 text-violet-300" />
-              <Package className="size-4 -ml-1 text-cyan-300" />
-            </span>
-            Nest &amp; remnants
-          </Link>
-        </Button>
+        {showSales ? (
+          <Button variant="outline" size="sm" asChild>
+            <Link
+              href="/sales"
+              className={cn(
+                "gap-2",
+                activeHref === "/sales" && quickLinkActiveClassName,
+              )}
+              aria-current={activeHref === "/sales" ? "page" : undefined}
+            >
+              <Briefcase className="size-4" />
+              Sales
+            </Link>
+          </Button>
+        ) : null}
+        {showNest ? (
+          <Button variant="outline" size="sm" asChild>
+            <Link
+              href="/nest-remnants"
+              className={cn(
+                "gap-2",
+                activeHref === "/nest-remnants" && quickLinkActiveClassName,
+              )}
+              aria-current={activeHref === "/nest-remnants" ? "page" : undefined}
+            >
+              <span className="relative inline-flex">
+                <Layers className="size-4 text-violet-300" />
+                <Package className="size-4 -ml-1 text-cyan-300" />
+              </span>
+              Nest &amp; remnants
+            </Link>
+          </Button>
+        ) : null}
         <Button variant="outline" size="sm" asChild>
           <Link
             href="/weight-calc"
@@ -128,14 +143,16 @@ export function QuickLinksBar({
           </Link>
         </Button>
       </div>
-      <div className="flex w-full shrink-0 justify-end sm:w-auto sm:justify-start">
-        <Button variant="secondary" size="sm" asChild>
-          <Link href={newProjectHref} className="gap-2">
-            <Plus className="size-4" />
-            New project
-          </Link>
-        </Button>
-      </div>
+      {showNewProject ? (
+        <div className="flex w-full shrink-0 justify-end sm:w-auto sm:justify-start">
+          <Button variant="secondary" size="sm" asChild>
+            <Link href={newProjectHref} className="gap-2">
+              <Plus className="size-4" />
+              New project
+            </Link>
+          </Button>
+        </div>
+      ) : null}
     </nav>
   );
 }

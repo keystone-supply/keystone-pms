@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   flexRender,
@@ -342,9 +342,20 @@ export type YearFilter = "all" | number;
 
 type ProjectsDataTableProps = {
   data: DashboardProjectRow[];
+  canViewFinancialColumns: boolean;
 };
 
-export function ProjectsDataTable({ data }: ProjectsDataTableProps) {
+const FINANCIAL_COLUMN_IDS = [
+  "total_quoted",
+  "invoiced_amount",
+  "realized_margin",
+  "estimated_margin",
+] as const;
+
+export function ProjectsDataTable({
+  data,
+  canViewFinancialColumns,
+}: ProjectsDataTableProps) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "project_number", desc: true },
   ]);
@@ -354,8 +365,22 @@ export function ProjectsDataTable({ data }: ProjectsDataTableProps) {
   const [segment, setSegment] = useState<SegmentFilter>("all");
   const [year, setYear] = useState<YearFilter>("all");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
+    total_quoted: canViewFinancialColumns,
+    invoiced_amount: canViewFinancialColumns,
+    realized_margin: canViewFinancialColumns,
     estimated_margin: false,
   });
+
+  useEffect(() => {
+    if (canViewFinancialColumns) return;
+    setColumnVisibility((prev) => ({
+      ...prev,
+      total_quoted: false,
+      invoiced_amount: false,
+      realized_margin: false,
+      estimated_margin: false,
+    }));
+  }, [canViewFinancialColumns]);
 
   const yearOptions = useMemo(() => {
     const set = new Set<number>();
@@ -520,6 +545,14 @@ export function ProjectsDataTable({ data }: ProjectsDataTableProps) {
             <div className="absolute right-0 z-20 mt-2 min-w-[12rem] space-y-2 rounded-xl border border-zinc-700 bg-zinc-900 p-3 shadow-xl">
               {table.getAllLeafColumns().map((column) => {
                 if (!column.getCanHide()) return null;
+                if (
+                  !canViewFinancialColumns &&
+                  FINANCIAL_COLUMN_IDS.includes(
+                    column.id as (typeof FINANCIAL_COLUMN_IDS)[number],
+                  )
+                ) {
+                  return null;
+                }
                 return (
                   <label
                     key={column.id}

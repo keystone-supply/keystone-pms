@@ -18,6 +18,11 @@ import { QuickLinksBar } from "@/components/dashboard/quick-links-bar";
 import { RoleZones } from "@/components/dashboard/role-zones";
 import { SecondaryPanels } from "@/components/dashboard/secondary-panels";
 import {
+  canManageSheetStock,
+  canViewFinancials,
+  normalizeAppRole,
+} from "@/lib/auth/roles";
+import {
   aggregateDashboardMetrics,
   type DashboardMetrics,
   type DashboardProjectRow,
@@ -66,9 +71,14 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (status !== "authenticated") return;
-    setLoading(true);
-    fetchProjects();
-    fetchSheetStockCount();
+    const role = normalizeAppRole(session?.role);
+    void Promise.resolve().then(() => fetchProjects());
+    if (canManageSheetStock(role)) {
+      void Promise.resolve().then(() => fetchSheetStockCount());
+    } else {
+      queueMicrotask(() => setSheetStockCount(null));
+      queueMicrotask(() => setSheetStockLoading(false));
+    }
 
     const channel = supabase
       .channel("dashboard-realtime")
@@ -76,7 +86,7 @@ export default function Dashboard() {
         "postgres_changes",
         { event: "*", schema: "public", table: "projects" },
         () => {
-          fetchProjects();
+          void Promise.resolve().then(() => fetchProjects());
         },
       )
       .subscribe();
@@ -84,7 +94,7 @@ export default function Dashboard() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [status, fetchProjects, fetchSheetStockCount]);
+  }, [status, session?.role, fetchProjects, fetchSheetStockCount]);
 
   if (status === "loading") {
     return (
@@ -109,13 +119,13 @@ export default function Dashboard() {
           </p>
           <button
             type="button"
-            onClick={() => signIn("azure-ad")}
+            onClick={() => signIn()}
             className="rounded-2xl bg-blue-600 px-10 py-3.5 text-base font-medium hover:bg-blue-700"
           >
-            Sign in with Microsoft
+            Sign in
           </button>
           <p className="mt-8 text-sm text-zinc-500">
-            Only your authorized M365 accounts
+            Microsoft and credentials sign-in are supported
           </p>
         </div>
       </div>
@@ -132,6 +142,8 @@ export default function Dashboard() {
 
   const marginDisplay =
     metrics.avgMarginPct === null ? "—" : `${metrics.avgMarginPct}%`;
+  const role = normalizeAppRole(session.role);
+  const showFinancials = canViewFinancials(role);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -146,6 +158,7 @@ export default function Dashboard() {
           <QuickLinksBar
             openQuotesCount={metrics.openQuotes}
             activeHref="/"
+            role={role}
           />
         </div>
 
@@ -183,32 +196,35 @@ export default function Dashboard() {
           />
         </section>
 
-        <section
-          aria-label="Profitability snapshot"
-          className="mt-4 grid gap-4 sm:grid-cols-2"
-        >
-          <KpiCard
-            label="Total P&L (realized)"
-            value={formatUsd(metrics.totalPl)}
-            icon={TrendingUp}
-            href="/projects"
-            valueClassName={
-              metrics.totalPl >= 0 ? "text-emerald-400" : "text-red-400"
-            }
-          />
-          <KpiCard
-            label="Avg margin (invoiced jobs)"
-            value={marginDisplay}
-            icon={Percent}
-            href="/projects"
-          />
-        </section>
+        {showFinancials ? (
+          <section
+            aria-label="Profitability snapshot"
+            className="mt-4 grid gap-4 sm:grid-cols-2"
+          >
+            <KpiCard
+              label="Total P&L (realized)"
+              value={formatUsd(metrics.totalPl)}
+              icon={TrendingUp}
+              href="/projects"
+              valueClassName={
+                metrics.totalPl >= 0 ? "text-emerald-400" : "text-red-400"
+              }
+            />
+            <KpiCard
+              label="Avg margin (invoiced jobs)"
+              value={marginDisplay}
+              icon={Percent}
+              href="/projects"
+            />
+          </section>
+        ) : null}
 
         <div className="mt-10 space-y-10">
           <RoleZones
             metrics={metrics}
             sheetStockCount={sheetStockCount}
             sheetStockLoading={sheetStockLoading}
+            role={role}
           />
           <SecondaryPanels metrics={metrics} />
         </div>

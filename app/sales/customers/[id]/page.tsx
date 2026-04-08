@@ -29,6 +29,7 @@ import {
 } from "@/lib/dashboardMetrics";
 import { PROJECT_SELECT } from "@/lib/projectQueries";
 import { cn } from "@/lib/utils";
+import { canManageCrm, normalizeAppRole } from "@/lib/auth/roles";
 
 function trimOrNull(s: string): string | null {
   const t = s.trim();
@@ -79,6 +80,7 @@ export default function CustomerDetailPage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
   const { data: session, status } = useSession();
+  const role = normalizeAppRole(session?.role);
 
   const [customer, setCustomer] = useState<CustomerWithShipping | null>(null);
   const [form, setForm] = useState<CustomerFormState | null>(null);
@@ -285,11 +287,25 @@ export default function CustomerDetailPage() {
         <p className="mb-6 text-lg text-zinc-300">Sign in to view this account.</p>
         <button
           type="button"
-          onClick={() => signIn("azure-ad")}
+          onClick={() => signIn()}
           className="rounded-2xl bg-blue-600 px-8 py-3 text-sm font-medium text-white hover:bg-blue-700"
         >
-          Sign in with Microsoft
+          Sign in
         </button>
+      </div>
+    );
+  }
+
+  if (!canManageCrm(role)) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
+        <p className="mb-2 text-lg text-zinc-200">CRM access required.</p>
+        <p className="mb-6 text-sm text-zinc-500">
+          Your role does not have permission to view customer accounts.
+        </p>
+        <Button variant="outline" onClick={() => signOut({ callbackUrl: "/" })}>
+          Back to dashboard
+        </Button>
       </div>
     );
   }
@@ -342,6 +358,7 @@ export default function CustomerDetailPage() {
             openQuotesCount={openQuotes}
             activeHref="/sales"
             newProjectHref="/new-project?returnTo=%2Fsales"
+            role={role}
           />
         </div>
 

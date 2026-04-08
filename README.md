@@ -30,13 +30,16 @@ Copy `.env.example` to `.env.local` and set:
 | `AZURE_AD_TENANT_ID` | Azure AD tenant ID (or `common` for multi-tenant) |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonymous (public) key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only Supabase service role key (NextAuth user sync, admin tasks) |
+| `SUPABASE_JWT_SECRET` | Supabase JWT signing secret used by `/api/auth/supabase-token` |
+| `SUPABASE_BRIDGE_TOKEN_TTL_SECONDS` | Optional short-lived bridge token TTL in seconds (default: `600`) |
 
 Azure AD app must request scope `Files.ReadWrite.All` for OneDrive folder creation and file uploads.
 
 ## Project structure
 
 - `app/` – Routes: dashboard (`page.tsx`), projects list/detail, new project, weight calculator, nest remnants; auth API route under `api/auth/[...nextauth]`.
-- `lib/` – `supabaseClient.ts` (Supabase client), `onedrive.ts` (Microsoft Graph: project folders + tape upload), `utils.ts` (shared helpers).
+- `lib/` – `supabaseClient.ts` (Supabase client + authenticated bridge token wiring), `onedrive.ts` (Microsoft Graph: project folders + tape upload), `utils.ts` (shared helpers).
 - `components/ui/` – shadcn UI components (button, table, badge, etc.).
 
 ## NestNow integration

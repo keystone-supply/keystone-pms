@@ -43,10 +43,9 @@ export function buildQuoteFinancialsSnapshot(project: ProjectRow): QuoteFinancia
     version: QUOTE_FINANCIALS_SNAPSHOT_VERSION,
     capturedAt: new Date().toISOString(),
   };
-  const rec = out as Record<string, number | null>;
   for (const k of SNAPSHOT_KEYS) {
     const v = project[k];
-    rec[k] =
+    out[k] =
       v === undefined || v === null || (typeof v === "number" && Number.isNaN(v))
         ? null
         : v;
@@ -63,13 +62,12 @@ function parseSnapshotBody(raw: unknown): QuoteFinancialsSnapshotV1 | null {
     version: QUOTE_FINANCIALS_SNAPSHOT_VERSION,
     capturedAt: o.capturedAt,
   };
-  const rec = out as Record<string, number | null>;
   let anyFinancial = false;
   for (const k of SNAPSHOT_KEYS) {
     if (!(k in o)) continue;
     const v = o[k];
     if (!isFiniteNumberOrNull(v)) return null;
-    rec[k] = v;
+    out[k] = v;
     anyFinancial = true;
   }
   return anyFinancial ? out : null;

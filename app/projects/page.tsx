@@ -15,6 +15,7 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { QuickLinksBar } from "@/components/dashboard/quick-links-bar";
 import { ProjectsDataTable } from "@/components/projects/projects-data-table";
+import { canViewFinancials, normalizeAppRole } from "@/lib/auth/roles";
 import { supabase } from "@/lib/supabaseClient";
 import {
   aggregateDashboardMetrics,
@@ -58,8 +59,7 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     if (status !== "authenticated") return;
-    setLoading(true);
-    fetchProjects();
+    void Promise.resolve().then(() => fetchProjects());
 
     const channel = supabase
       .channel("projects-realtime")
@@ -67,7 +67,7 @@ export default function ProjectsPage() {
         "postgres_changes",
         { event: "*", schema: "public", table: "projects" },
         () => {
-          fetchProjects();
+          void Promise.resolve().then(() => fetchProjects());
         },
       )
       .subscribe();
@@ -91,10 +91,10 @@ export default function ProjectsPage() {
         <p className="mb-6 text-lg text-zinc-300">Sign in to view all projects.</p>
         <button
           type="button"
-          onClick={() => signIn("azure-ad")}
+          onClick={() => signIn()}
           className="rounded-2xl bg-blue-600 px-8 py-3 text-sm font-medium text-white hover:bg-blue-700"
         >
-          Sign in with Microsoft
+          Sign in
         </button>
       </div>
     );
@@ -110,6 +110,8 @@ export default function ProjectsPage() {
 
   const marginDisplay =
     metrics.avgMarginPct === null ? "—" : `${metrics.avgMarginPct}%`;
+  const role = normalizeAppRole(session.role);
+  const showFinancials = canViewFinancials(role);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -127,6 +129,7 @@ export default function ProjectsPage() {
             openQuotesCount={metrics.openQuotes}
             activeHref="/projects"
             newProjectHref="/new-project?returnTo=%2Fprojects"
+            role={role}
           />
         </div>
 
@@ -160,27 +163,32 @@ export default function ProjectsPage() {
           />
         </section>
 
-        <section
-          aria-label="Profitability snapshot"
-          className="mt-4 grid gap-4 sm:grid-cols-2"
-        >
-          <KpiCard
-            label="Total P&L (realized)"
-            value={formatUsd(metrics.totalPl)}
-            icon={TrendingUp}
-            valueClassName={
-              metrics.totalPl >= 0 ? "text-emerald-400" : "text-red-400"
-            }
-          />
-          <KpiCard
-            label="Avg margin (invoiced jobs)"
-            value={marginDisplay}
-            icon={Percent}
-          />
-        </section>
+        {showFinancials ? (
+          <section
+            aria-label="Profitability snapshot"
+            className="mt-4 grid gap-4 sm:grid-cols-2"
+          >
+            <KpiCard
+              label="Total P&L (realized)"
+              value={formatUsd(metrics.totalPl)}
+              icon={TrendingUp}
+              valueClassName={
+                metrics.totalPl >= 0 ? "text-emerald-400" : "text-red-400"
+              }
+            />
+            <KpiCard
+              label="Avg margin (invoiced jobs)"
+              value={marginDisplay}
+              icon={Percent}
+            />
+          </section>
+        ) : null}
 
         <section className="mt-10" aria-label="Project list">
-          <ProjectsDataTable data={rows} />
+          <ProjectsDataTable
+            data={rows}
+            canViewFinancialColumns={showFinancials}
+          />
         </section>
       </div>
     </div>

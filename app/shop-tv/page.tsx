@@ -1,43 +1,48 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
 import { Activity, Monitor } from "lucide-react";
+import { signIn, signOut, useSession } from "next-auth/react";
 
 import { TVCommandMetrics } from "@/components/tv/tv-command-metrics";
 import {
   getCommandBoardTVSummary,
   type CommandBoardTVSummary,
-  type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { canViewShopTv, normalizeAppRole } from "@/lib/auth/roles";
+
+type TvSummaryResponse = {
+  summary?: Omit<CommandBoardTVSummary, "lastUpdated"> & { lastUpdated: string };
+  error?: string;
+};
 
 export default function ShopTVPage() {
+  const { data: session, status } = useSession();
+  const role = normalizeAppRole(session?.role);
   const [summary, setSummary] = useState<CommandBoardTVSummary>(() =>
     getCommandBoardTVSummary([]),
   );
   const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchProjects = useCallback(async () => {
+  const fetchSummary = useCallback(async () => {
     try {
       setError(null);
-      const { data, error: fetchError } = await supabase
-        .from("projects")
-        .select(PROJECT_SELECT)
-        .order("updated_at", { ascending: false });
-
-      if (fetchError) {
-        console.error("Projects fetch error:", fetchError);
-        setError(fetchError.message);
+      const response = await fetch("/api/tv/summary", {
+        method: "GET",
+        cache: "no-store",
+      });
+      const payload = (await response
+        .json()
+        .catch(() => ({ error: "Invalid TV summary response." }))) as TvSummaryResponse;
+      if (!response.ok || !payload.summary) {
+        setError(payload.error ?? "Failed to load project data");
         return;
       }
-
-      const rows = (data ?? []) as DashboardProjectRow[];
-      const tvSummary = getCommandBoardTVSummary(rows);
-      setSummary(tvSummary);
-      setLastUpdated(new Date());
+      setSummary({
+        ...payload.summary,
+        lastUpdated: new Date(payload.summary.lastUpdated),
+      });
     } catch (err) {
       console.error("Unexpected error fetching projects:", err);
       setError("Failed to load project data");
@@ -47,47 +52,28 @@ export default function ShopTVPage() {
   }, []);
 
   useEffect(() => {
+    if (status !== "authenticated") return;
     setLoading(true);
-    fetchProjects();
-
-    // Realtime subscription - focused on projects that affect command board
-    const channel = supabase
-      .channel("shop-tv-realtime")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "projects",
-        },
-        () => {
-          fetchProjects();
-        },
-      )
-      .subscribe((status) => {
-        if (status === "SUBSCRIPTION_ERROR") {
-          console.warn("Realtime subscription error - falling back to polling");
-        }
-      });
+    fetchSummary();
 
     // Polling fallback for TV reliability (every 30s)
     const pollInterval = setInterval(() => {
       if (document.visibilityState === "visible") {
-        fetchProjects();
+        fetchSummary();
       }
     }, 30000);
 
     return () => {
       clearInterval(pollInterval);
-      supabase.removeChannel(channel);
     };
-  }, [fetchProjects]);
+  }, [fetchSummary, status]);
 
   // TV auto-refresh on visibility change (for screen savers / power management)
   useEffect(() => {
+    if (status !== "authenticated") return;
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        fetchProjects();
+        fetchSummary();
       }
     };
 
@@ -95,7 +81,48 @@ export default function ShopTVPage() {
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [fetchProjects]);
+  }, [fetchSummary, status]);
+
+  if (status === "loading") {
+    return (
+      <div className="flex h-screen items-center justify-center bg-zinc-950 text-white">
+        Loading Shop TV...
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
+        <p className="mb-6 text-lg text-zinc-300">Sign in to open Shop TV.</p>
+        <button
+          type="button"
+          onClick={() => signIn()}
+          className="rounded-2xl bg-blue-600 px-10 py-3.5 text-base font-medium text-white hover:bg-blue-700"
+        >
+          Sign in
+        </button>
+      </div>
+    );
+  }
+
+  if (!canViewShopTv(role)) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
+        <p className="mb-2 text-lg text-zinc-200">Shop TV access required.</p>
+        <p className="mb-6 text-sm text-zinc-500">
+          Your role does not have permission to view this surface.
+        </p>
+        <button
+          type="button"
+          onClick={() => signOut({ callbackUrl: "/" })}
+          className="rounded-2xl border border-zinc-700 px-8 py-3 text-sm font-medium text-white hover:bg-zinc-900"
+        >
+          Back to dashboard
+        </button>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

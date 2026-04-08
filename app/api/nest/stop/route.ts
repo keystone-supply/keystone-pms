@@ -1,9 +1,20 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { requireApiRole } from "@/lib/auth/api-guard";
+import { canRunNesting } from "@/lib/auth/roles";
 
 const NESTNOW_URL =
   process.env.NESTNOW_URL || "http://127.0.0.1:3001";
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  const authResult = await requireApiRole(
+    request,
+    canRunNesting,
+    "Your role cannot stop nesting jobs.",
+  );
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
   const url = `${NESTNOW_URL.replace(/\/$/, "")}/stop`;
   try {
     const res = await fetch(url, { method: "POST" });

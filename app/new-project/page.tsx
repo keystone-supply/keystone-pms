@@ -20,6 +20,7 @@ import {
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
 import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { canCreateProjects, normalizeAppRole } from "@/lib/auth/roles";
 
 function NewProjectForm({
   newCustomerReturnTo,
@@ -87,7 +88,6 @@ function NewProjectForm({
       const freshSessionRes = await fetch("/api/auth/session");
       const freshSession = await freshSessionRes.json();
       const freshToken = freshSession?.accessToken;
-      console.log("Fresh token length:", freshToken?.length || 0);
       if (freshToken) {
         await createProjectFolders(
           freshToken,
@@ -179,6 +179,8 @@ function NewProjectWithReturnTo() {
       : "/new-project";
 
   const { data: session, status } = useSession();
+  const role = normalizeAppRole(session?.role);
+  const canCreate = canCreateProjects(role);
   const [openQuotesCount, setOpenQuotesCount] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
@@ -212,11 +214,25 @@ function NewProjectWithReturnTo() {
         <p className="mb-6 text-lg text-zinc-300">Sign in to create a project.</p>
         <button
           type="button"
-          onClick={() => signIn("azure-ad")}
+          onClick={() => signIn()}
           className="rounded-2xl bg-blue-600 px-8 py-3 text-sm font-medium text-white hover:bg-blue-700"
         >
-          Sign in with Microsoft
+          Sign in
         </button>
+      </div>
+    );
+  }
+
+  if (!canCreate) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
+        <p className="mb-2 text-lg text-zinc-200">Create-project access required.</p>
+        <p className="mb-6 text-sm text-zinc-500">
+          Your role can view projects, but cannot create new ones.
+        </p>
+        <Button variant="outline" onClick={() => signOut({ callbackUrl: "/" })}>
+          Back to dashboard
+        </Button>
       </div>
     );
   }
@@ -238,6 +254,7 @@ function NewProjectWithReturnTo() {
           <QuickLinksBar
             openQuotesCount={openQuotesCount}
             newProjectHref={newProjectHref}
+            role={role}
           />
         </div>
 

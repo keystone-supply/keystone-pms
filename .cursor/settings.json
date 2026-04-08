@@ -2,6 +2,30 @@
   "plugins": {
     "supabase": {
       "enabled": true
+    },
+    "cursor-team-kit": {
+      "enabled": true
+    },
+    "agent-compatibility": {
+      "enabled": true
+    },
+    "cli-for-agent": {
+      "enabled": true
+    },
+    "continual-learning": {
+      "enabled": true
+    },
+    "vercel": {
+      "enabled": true
+    },
+    "sanity": {
+      "enabled": true
+    },
+    "atlassian": {
+      "enabled": true
+    },
+    "superpowers": {
+      "enabled": true
     }
   }
 }

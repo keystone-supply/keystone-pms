@@ -1,9 +1,20 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { requireApiRole } from "@/lib/auth/api-guard";
+import { canRunNesting } from "@/lib/auth/roles";
 
 const NESTNOW_URL =
   process.env.NESTNOW_URL || "http://127.0.0.1:3001";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authResult = await requireApiRole(
+    request,
+    canRunNesting,
+    "Your role cannot view nesting progress.",
+  );
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
   const url = `${NESTNOW_URL.replace(/\/$/, "")}/progress`;
   try {
     const res = await fetch(url, { cache: "no-store" });

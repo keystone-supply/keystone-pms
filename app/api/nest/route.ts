@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiRole } from "@/lib/auth/api-guard";
+import { canRunNesting } from "@/lib/auth/roles";
 
 const NESTNOW_URL =
   process.env.NESTNOW_URL || "http://127.0.0.1:3001";
@@ -17,6 +19,15 @@ const USER_NEST_RUN_FAILED =
 export const maxDuration = 86400;
 
 export async function POST(request: NextRequest) {
+  const authResult = await requireApiRole(
+    request,
+    canRunNesting,
+    "Your role cannot run nesting.",
+  );
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
   let body: unknown;
   try {
     body = await request.json();

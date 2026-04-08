@@ -619,10 +619,10 @@ export function UnifiedShopCalc() {
         </p>
         <button
           type="button"
-          onClick={() => signIn("azure-ad")}
+          onClick={() => signIn()}
           className="rounded-2xl bg-blue-600 px-8 py-3 text-sm font-medium text-white hover:bg-blue-700"
         >
-          Sign in with Microsoft
+          Sign in
         </button>
       </div>
     );

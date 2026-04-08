@@ -3,7 +3,7 @@
  * Optional columns (if present): PAYMENT RECEIVED (Y/N), MATERIALS ORDERED, MATERIAL RECEIVED,
  * LABOR COMPLETE — US short dates M/D/YY, same as CUSTOMER RFQ.
  * Requires: npm run db:push (migrations including `projects` workflow columns)
- * Env: .env.local with NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE
+ * Env: .env.local with NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
  *
  * Usage: npx tsx scripts/import-book1.ts
  * Optional: BOOK1_CSV=./path/to.csv
@@ -133,10 +133,11 @@ async function main() {
   }
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_ROLE;
   if (!url || !key) {
     console.error(
-      "Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE in .env.local",
+      "Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local",
     );
     process.exit(1);
   }

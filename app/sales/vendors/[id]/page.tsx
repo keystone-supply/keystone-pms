@@ -25,6 +25,7 @@ import {
 } from "@/lib/dashboardMetrics";
 import { PROJECT_SELECT } from "@/lib/projectQueries";
 import { cn } from "@/lib/utils";
+import { canManageCrm, normalizeAppRole } from "@/lib/auth/roles";
 
 function trimOrNull(s: string): string | null {
   const t = s.trim();
@@ -60,6 +61,7 @@ export default function VendorDetailPage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
   const { data: session, status } = useSession();
+  const role = normalizeAppRole(session?.role);
 
   const [vendor, setVendor] = useState<VendorRow | null>(null);
   const [form, setForm] = useState<VendorFormState | null>(null);
@@ -203,11 +205,25 @@ export default function VendorDetailPage() {
         <p className="mb-6 text-lg text-zinc-300">Sign in to view this vendor.</p>
         <button
           type="button"
-          onClick={() => signIn("azure-ad")}
+          onClick={() => signIn()}
           className="rounded-2xl bg-blue-600 px-8 py-3 text-sm font-medium text-white hover:bg-blue-700"
         >
-          Sign in with Microsoft
+          Sign in
         </button>
+      </div>
+    );
+  }
+
+  if (!canManageCrm(role)) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
+        <p className="mb-2 text-lg text-zinc-200">CRM access required.</p>
+        <p className="mb-6 text-sm text-zinc-500">
+          Your role does not have permission to view vendor records.
+        </p>
+        <Button variant="outline" onClick={() => signOut({ callbackUrl: "/" })}>
+          Back to dashboard
+        </Button>
       </div>
     );
   }
@@ -237,6 +253,7 @@ export default function VendorDetailPage() {
             openQuotesCount={openQuotes}
             activeHref="/sales"
             newProjectHref="/new-project?returnTo=%2Fsales"
+            role={role}
           />
         </div>
 

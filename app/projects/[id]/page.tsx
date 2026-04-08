@@ -1,8 +1,7 @@
 /** Project detail: P&L, costs, edit and save to Supabase. */
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { ChevronDown, ChevronRight, Save, X } from "lucide-react";
@@ -32,7 +31,14 @@ import {
   syncActualLaborCost,
   syncQuoteDerivations,
 } from "@/lib/projectFinancials";
-import { supabase as supabaseMetrics } from "@/lib/supabaseClient";
+import {
+  canAccessSales,
+  canEditProjects,
+  canManageDocuments,
+  canViewFinancials,
+  normalizeAppRole,
+} from "@/lib/auth/roles";
+import { supabase } from "@/lib/supabaseClient";
 
 const detailFieldClass =
   "w-full rounded-xl border border-zinc-700 bg-zinc-900/80 px-4 py-3 text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
@@ -82,6 +88,9 @@ export default function ProjectDetail() {
   const id = params.id as string;
 
   const { data: session, status: sessionStatus } = useSession();
+  const role = normalizeAppRole(session?.role);
+  const canEditProject = canEditProjects(role);
+  const canViewProjectFinancials = canViewFinancials(role);
 
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -92,13 +101,6 @@ export default function ProjectDetail() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [milestonesOpen, setMilestonesOpen] = useState(false);
   const [customersList, setCustomersList] = useState<CustomerRow[]>([]);
-
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const supabase = useMemo(
-    () => createClient(supabaseUrl, supabaseAnonKey),
-    [supabaseUrl, supabaseAnonKey],
-  );
 
   const fetchProject = useCallback(
     async (mode: "full" | "soft" = "full") => {
@@ -125,13 +127,11 @@ export default function ProjectDetail() {
       }
       if (mode === "full") setLoading(false);
     },
-    [id, supabase],
+    [id],
   );
 
   const fetchOpenQuotesCount = useCallback(async () => {
-    const { data, error } = await supabaseMetrics
-      .from("projects")
-      .select(PROJECT_SELECT);
+    const { data, error } = await supabase.from("projects").select(PROJECT_SELECT);
     if (error || !data) return;
     setOpenQuotesCount(
       aggregateDashboardMetrics(data as DashboardProjectRow[]).openQuotes,
@@ -139,8 +139,9 @@ export default function ProjectDetail() {
   }, []);
 
   useEffect(() => {
+    if (sessionStatus !== "authenticated") return;
     void Promise.resolve().then(() => fetchProject("full"));
-  }, [fetchProject]);
+  }, [fetchProject, sessionStatus]);
 
   useEffect(() => {
     if (sessionStatus !== "authenticated") return;
@@ -161,7 +162,7 @@ export default function ProjectDetail() {
     return () => {
       cancelled = true;
     };
-  }, [sessionStatus, supabase]);
+  }, [sessionStatus]);
 
   const applyFinancialPatch = useCallback((patch: Partial<ProjectRow>) => {
     setProject((prev) => {
@@ -177,6 +178,10 @@ export default function ProjectDetail() {
 
   const handleSave = async () => {
     if (!project) return;
+    if (!canEditProject) {
+      setSaveError("Your role can view this project but cannot edit it.");
+      return;
+    }
     setSaving(true);
     setSaveMessage(null);
     setSaveError(null);
@@ -235,10 +240,10 @@ export default function ProjectDetail() {
         </p>
         <button
           type="button"
-          onClick={() => signIn("azure-ad")}
+          onClick={() => signIn()}
           className="rounded-2xl bg-blue-600 px-8 py-3 text-sm font-medium text-white hover:bg-blue-700"
         >
-          Sign in with Microsoft
+          Sign in
         </button>
       </div>
     );
@@ -276,6 +281,7 @@ export default function ProjectDetail() {
             openQuotesCount={openQuotesCount}
             activeHref="/projects"
             newProjectHref={newProjectHref}
+            role={role}
           />
         </div>
 
@@ -293,13 +299,21 @@ export default function ProjectDetail() {
               <Button
                 type="button"
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || !canEditProject}
                 className="gap-2 self-start sm:self-auto"
               >
                 <Save className="size-4" />
                 {saving ? "Saving…" : "Save changes"}
               </Button>
             </div>
+            {!canEditProject ? (
+              <div
+                className="mb-6 rounded-2xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+                role="status"
+              >
+                Your role has read-only access on this project.
+              </div>
+            ) : null}
 
             {saveMessage ? (
               <div
@@ -339,7 +353,7 @@ export default function ProjectDetail() {
               </div>
             ) : null}
 
-      <div className="space-y-8">
+      <fieldset className="space-y-8" disabled={!canEditProject}>
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8">
             <h2 className="text-xl font-semibold mb-6">Project Info</h2>
             <div className="space-y-4">
@@ -383,7 +397,7 @@ export default function ProjectDetail() {
                     </option>
                   ))}
                 </select>
-                {project.customer_id ? (
+                {project.customer_id && canAccessSales(role) ? (
                   <p className="mt-1 text-[11px] text-zinc-500">
                     <a
                       href={`/sales/customers/${project.customer_id}`}
@@ -513,17 +527,23 @@ export default function ProjectDetail() {
             </div>
           </div>
 
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-start">
-          <ProjectQuoteFinancialsPanel
-            project={project}
-            applyFinancialPatch={applyFinancialPatch}
-          />
-          <ProjectActualsFinancialsPanel
-            project={project}
-            applyFinancialPatch={applyFinancialPatch}
-          />
-        </div>
-      </div>
+        {canViewProjectFinancials ? (
+          <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-start">
+            <ProjectQuoteFinancialsPanel
+              project={project}
+              applyFinancialPatch={applyFinancialPatch}
+            />
+            <ProjectActualsFinancialsPanel
+              project={project}
+              applyFinancialPatch={applyFinancialPatch}
+            />
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-zinc-800/90 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-400">
+            Financial panels are hidden for your role.
+          </div>
+        )}
+      </fieldset>
 
             <div className="mt-8">
             <ProjectDocumentsSection
@@ -532,6 +552,7 @@ export default function ProjectDetail() {
               supabase={supabase}
               onProjectRefresh={() => void fetchProject("soft")}
               onApplyQuoteFinancialsSnapshot={applyFinancialPatch}
+              canManageDocuments={canManageDocuments(role)}
             />
 
             <div className="mt-12 text-center">

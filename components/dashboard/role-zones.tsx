@@ -10,6 +10,13 @@ import {
 } from "lucide-react";
 
 import type { DashboardMetrics } from "@/lib/dashboardMetrics";
+import {
+  canAccessSales,
+  canManageSheetStock,
+  canRunNesting,
+  canViewFinancials,
+  type AppRole,
+} from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
 
 function formatUsd(n: number): string {
@@ -87,82 +94,93 @@ type RoleZonesProps = {
   metrics: DashboardMetrics;
   sheetStockCount: number | null;
   sheetStockLoading: boolean;
+  role: AppRole;
 };
 
 export function RoleZones({
   metrics,
   sheetStockCount,
   sheetStockLoading,
+  role,
 }: RoleZonesProps) {
   const winDisplay =
     metrics.winRatePct === null ? "—" : `${metrics.winRatePct}%`;
   const marginDisplay =
     metrics.avgMarginPct === null ? "—" : `${metrics.avgMarginPct}%`;
+  const canUseNesting = canRunNesting(role);
+  const canUseSheetStock = canManageSheetStock(role);
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">
-      <ZoneCard
-        title="Sales & quotes"
-        icon={LineChart}
-        subtitle="Pipeline and customer decisions"
-      >
-        <StatRow label="Open quotes (pending approval)" value={metrics.openQuotes} />
-        <StatRow
-          label="Accepted / rejected"
-          value={`${metrics.quotesAccepted} / ${metrics.quotesRejected}`}
-        />
-        <StatRow label="Win rate (accepted ÷ closed)" value={winDisplay} />
-        <StatRow
-          label="Pipeline ($ quoted, incomplete jobs)"
-          value={formatUsd(metrics.pipelineDollars)}
-        />
-        <p className="pt-1 text-xs text-zinc-600">
-          Pipeline sums <code className="text-zinc-500">total_quoted</code> for
-          jobs where complete = false.
-        </p>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 pt-2">
-          <Link
-            href="/sales"
-            className="text-xs font-medium text-blue-400 hover:text-blue-300"
-          >
-            Sales hub &amp; accounts →
-          </Link>
-          <Link
-            href="/projects"
-            className="text-xs font-medium text-blue-400 hover:text-blue-300"
-          >
-            All projects →
-          </Link>
-        </div>
-      </ZoneCard>
+      {canAccessSales(role) ? (
+        <ZoneCard
+          title="Sales & quotes"
+          icon={LineChart}
+          subtitle="Pipeline and customer decisions"
+        >
+          <StatRow
+            label="Open quotes (pending approval)"
+            value={metrics.openQuotes}
+          />
+          <StatRow
+            label="Accepted / rejected"
+            value={`${metrics.quotesAccepted} / ${metrics.quotesRejected}`}
+          />
+          <StatRow label="Win rate (accepted ÷ closed)" value={winDisplay} />
+          <StatRow
+            label="Pipeline ($ quoted, incomplete jobs)"
+            value={formatUsd(metrics.pipelineDollars)}
+          />
+          <p className="pt-1 text-xs text-zinc-600">
+            Pipeline sums <code className="text-zinc-500">total_quoted</code>{" "}
+            for jobs where complete = false.
+          </p>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 pt-2">
+            <Link
+              href="/sales"
+              className="text-xs font-medium text-blue-400 hover:text-blue-300"
+            >
+              Sales hub &amp; accounts →
+            </Link>
+            <Link
+              href="/projects"
+              className="text-xs font-medium text-blue-400 hover:text-blue-300"
+            >
+              All projects →
+            </Link>
+          </div>
+        </ZoneCard>
+      ) : null}
 
-      <ZoneCard
-        title="Finance & accounting"
-        icon={DollarSign}
-        subtitle="Revenue, margin, and realized P&amp;L"
-      >
-        <StatRow label="YTD quoted" value={formatUsd(metrics.ytdQuoted)} />
-        <StatRow label="YTD invoiced" value={formatUsd(metrics.ytdInvoiced)} />
-        <StatRow
-          label="Total P&amp;L (all jobs, realized)"
-          value={formatUsd(metrics.totalPl)}
-          valueClassName={
-            metrics.totalPl >= 0 ? "text-emerald-400" : "text-red-400"
-          }
-        />
-        <StatRow
-          label="Avg margin % (invoiced jobs)"
-          value={marginDisplay}
-        />
-        <div className="pt-2">
-          <Link
-            href="/projects"
-            className="text-xs font-medium text-blue-400 hover:text-blue-300"
-          >
-            Open project P&amp;L detail →
-          </Link>
-        </div>
-      </ZoneCard>
+      {canViewFinancials(role) ? (
+        <ZoneCard
+          title="Finance & accounting"
+          icon={DollarSign}
+          subtitle="Revenue, margin, and realized P&amp;L"
+        >
+          <StatRow label="YTD quoted" value={formatUsd(metrics.ytdQuoted)} />
+          <StatRow
+            label="YTD invoiced"
+            value={formatUsd(metrics.ytdInvoiced)}
+          />
+          <StatRow
+            label="Total P&amp;L (all jobs, realized)"
+            value={formatUsd(metrics.totalPl)}
+            valueClassName={
+              metrics.totalPl >= 0 ? "text-emerald-400" : "text-red-400"
+            }
+          />
+          <StatRow label="Avg margin % (invoiced jobs)" value={marginDisplay} />
+          <div className="pt-2">
+            <Link
+              href="/projects"
+              className="text-xs font-medium text-blue-400 hover:text-blue-300"
+            >
+              Open project P&amp;L detail →
+            </Link>
+          </div>
+        </ZoneCard>
+      ) : null}
 
       <ZoneCard
         title="Shop & operations"
@@ -183,14 +201,16 @@ export function RoleZones({
           label="Active — industrial track"
           value={metrics.industrialActiveCount}
         />
-        <div className="pt-2">
-          <Link
-            href="/nest-remnants"
-            className="text-xs font-medium text-blue-400 hover:text-blue-300"
-          >
-            Nesting &amp; sheet usage →
-          </Link>
-        </div>
+        {canUseNesting ? (
+          <div className="pt-2">
+            <Link
+              href="/nest-remnants"
+              className="text-xs font-medium text-blue-400 hover:text-blue-300"
+            >
+              Nesting &amp; sheet usage →
+            </Link>
+          </div>
+        ) : null}
       </ZoneCard>
 
       <ZoneCard
@@ -215,38 +235,40 @@ export function RoleZones({
         </div>
       </ZoneCard>
 
-      <ZoneCard
-        title="Purchasing & materials"
-        icon={ShoppingCart}
-        subtitle="On-hand sheet stock (Nest)"
-        className="lg:col-span-2"
-      >
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <StatRow
-              label="Active sheet records"
-              value={
-                sheetStockLoading
-                  ? "…"
-                  : sheetStockCount === null
-                    ? "—"
-                    : sheetStockCount
-              }
-            />
-            <p className="mt-2 text-xs text-zinc-600">
-              Count from Nest inventory (non-archived{" "}
-              <code className="text-zinc-500">sheet_stock</code> rows).
-            </p>
+      {canUseSheetStock ? (
+        <ZoneCard
+          title="Purchasing & materials"
+          icon={ShoppingCart}
+          subtitle="On-hand sheet stock (Nest)"
+          className="lg:col-span-2"
+        >
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <StatRow
+                label="Active sheet records"
+                value={
+                  sheetStockLoading
+                    ? "…"
+                    : sheetStockCount === null
+                      ? "—"
+                      : sheetStockCount
+                }
+              />
+              <p className="mt-2 text-xs text-zinc-600">
+                Count from Nest inventory (non-archived{" "}
+                <code className="text-zinc-500">sheet_stock</code> rows).
+              </p>
+            </div>
+            <Link
+              href="/nest-remnants"
+              className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white hover:border-blue-500/50 hover:bg-zinc-900"
+            >
+              <Hammer className="size-4 text-amber-400" aria-hidden />
+              Open Nest &amp; remnants
+            </Link>
           </div>
-          <Link
-            href="/nest-remnants"
-            className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white hover:border-blue-500/50 hover:bg-zinc-900"
-          >
-            <Hammer className="size-4 text-amber-400" aria-hidden />
-            Open Nest &amp; remnants
-          </Link>
-        </div>
-      </ZoneCard>
+        </ZoneCard>
+      ) : null}
     </div>
   );
 }

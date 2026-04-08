@@ -23,6 +23,9 @@
     "test:project-lifecycle": "node --import tsx --test lib/projectTypes.lifecycle.test.ts",
     "test:document-milestones": "node --import tsx --test lib/documentMilestones.test.ts",
     "test:document-pdf": "node --import tsx --test lib/documents/buildProjectDocumentPdf.test.ts",
+    "test:rbac-roles": "node --import tsx --test lib/auth/roles.test.ts",
+    "test:rbac-sql": "node --import tsx scripts/verify-rbac-sql.ts",
+    "test:rbac-api-guards": "node --import tsx scripts/verify-rbac-api-guards.ts",
     "test:nest-dual-lane": "npx tsx scripts/verify-nest-dual-lane.ts",
     "test:nest-dxf-export": "npx tsx scripts/verify-nest-dxf-export.ts",
     "security:blocked-deps": "node scripts/security/check-blocked-packages.cjs"

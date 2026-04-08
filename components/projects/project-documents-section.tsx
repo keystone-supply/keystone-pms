@@ -102,12 +102,14 @@ export function ProjectDocumentsSection({
   supabase,
   onProjectRefresh,
   onApplyQuoteFinancialsSnapshot,
+  canManageDocuments = true,
 }: {
   projectId: string;
   project: ProjectRow;
   supabase: SupabaseClient;
   onProjectRefresh: () => void;
   onApplyQuoteFinancialsSnapshot?: (patch: Partial<ProjectRow>) => void;
+  canManageDocuments?: boolean;
 }) {
   const [rows, setRows] = useState<ProjectDocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -208,6 +210,10 @@ export function ProjectDocumentsSection({
   };
 
   const saveDraft = async () => {
+    if (!canManageDocuments) {
+      setSaveError("Your role does not allow editing project documents.");
+      return;
+    }
     setSaveError(null);
     setSaveBusy(true);
     try {
@@ -301,6 +307,7 @@ export function ProjectDocumentsSection({
   };
 
   const runExport = async () => {
+    if (!canManageDocuments) return;
     if (!exportingRow) return;
     setExportBusy(true);
     setExportError("");
@@ -433,7 +440,12 @@ export function ProjectDocumentsSection({
             or your job&apos;s OneDrive `_DOCS` folder.
           </p>
         </div>
-        <Button type="button" onClick={openNew} className="gap-2 self-start sm:self-auto">
+        <Button
+          type="button"
+          onClick={openNew}
+          disabled={!canManageDocuments}
+          className="gap-2 self-start sm:self-auto"
+        >
           <Plus className="size-4" />
           New document
         </Button>
@@ -504,6 +516,7 @@ export function ProjectDocumentsSection({
                   type="button"
                   variant="secondary"
                   size="sm"
+                  disabled={!canManageDocuments}
                   onClick={() => openEdit(r)}
                 >
                   Edit
@@ -512,6 +525,7 @@ export function ProjectDocumentsSection({
                   type="button"
                   size="sm"
                   className="gap-1"
+                  disabled={!canManageDocuments}
                   onClick={() => openExportFor(r)}
                 >
                   <HardDriveDownload className="size-4" />
@@ -906,7 +920,7 @@ export function ProjectDocumentsSection({
               <Button
                 type="button"
                 onClick={() => void saveDraft()}
-                disabled={saveBusy}
+                disabled={saveBusy || !canManageDocuments}
               >
                 {saveBusy ? "Saving…" : "Save draft"}
               </Button>

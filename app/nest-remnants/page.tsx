@@ -50,6 +50,7 @@ import {
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
 import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { canRunNesting, normalizeAppRole } from "@/lib/auth/roles";
 import {
   type Remnant,
   type PartShape,
@@ -1397,6 +1398,8 @@ function SheetWireframe({
 
 export default function NestRemnantsPage() {
   const { data: session, status } = useSession();
+  const role = normalizeAppRole(session?.role);
+  const canUseNest = canRunNesting(role);
   const [activeTab, setActiveTab] = useState<"remnants" | "nest">("nest");
   const [pageLastUpdated, setPageLastUpdated] = useState<Date | null>(null);
   const [openQuotesCount, setOpenQuotesCount] = useState(0);
@@ -2965,10 +2968,28 @@ export default function NestRemnantsPage() {
         <p className="mb-6 text-lg text-zinc-300">Sign in to use Nest &amp; remnants.</p>
         <button
           type="button"
-          onClick={() => signIn("azure-ad")}
+          onClick={() => signIn()}
           className="rounded-2xl bg-blue-600 px-8 py-3 text-sm font-medium text-white hover:bg-blue-700"
         >
-          Sign in with Microsoft
+          Sign in
+        </button>
+      </div>
+    );
+  }
+
+  if (!canUseNest) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
+        <p className="mb-2 text-lg text-zinc-200">Nesting access required.</p>
+        <p className="mb-6 text-sm text-zinc-500">
+          Your role does not have permission to run nesting or manage sheet stock.
+        </p>
+        <button
+          type="button"
+          onClick={() => signOut({ callbackUrl: "/" })}
+          className="rounded-2xl border border-zinc-700 px-8 py-3 text-sm font-medium text-white hover:bg-zinc-900"
+        >
+          Back to dashboard
         </button>
       </div>
     );
@@ -3069,6 +3090,7 @@ export default function NestRemnantsPage() {
               openQuotesCount={openQuotesCount}
               activeHref="/nest-remnants"
               newProjectHref="/new-project?returnTo=%2Fnest-remnants"
+              role={role}
             />
           </div>
 

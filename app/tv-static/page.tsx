@@ -1,40 +1,45 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { signIn, signOut, useSession } from "next-auth/react";
 import {
   getCommandBoardTVSummary,
   type CommandBoardTVSummary,
-  type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { canViewShopTv, normalizeAppRole } from "@/lib/auth/roles";
+
+type TvSummaryResponse = {
+  summary?: Omit<CommandBoardTVSummary, "lastUpdated"> & { lastUpdated: string };
+  error?: string;
+};
 
 export default function TVStaticPage() {
+  const { data: session, status } = useSession();
+  const role = normalizeAppRole(session?.role);
   const [summary, setSummary] = useState<CommandBoardTVSummary>(() =>
     getCommandBoardTVSummary([]),
   );
   const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchProjects = useCallback(async () => {
+  const fetchSummary = useCallback(async () => {
     try {
       setError(null);
-      const { data, error: fetchError } = await supabase
-        .from("projects")
-        .select(PROJECT_SELECT)
-        .order("updated_at", { ascending: false });
-
-      if (fetchError) {
-        console.error("Projects fetch error:", fetchError);
-        setError(fetchError.message);
+      const response = await fetch("/api/tv/summary", {
+        method: "GET",
+        cache: "no-store",
+      });
+      const payload = (await response
+        .json()
+        .catch(() => ({ error: "Invalid TV summary response." }))) as TvSummaryResponse;
+      if (!response.ok || !payload.summary) {
+        setError(payload.error ?? "Failed to load project data");
         return;
       }
-
-      const rows = (data ?? []) as DashboardProjectRow[];
-      const tvSummary = getCommandBoardTVSummary(rows);
-      setSummary(tvSummary);
-      setLastUpdated(new Date());
+      setSummary({
+        ...payload.summary,
+        lastUpdated: new Date(payload.summary.lastUpdated),
+      });
     } catch (err) {
       console.error("Unexpected error fetching projects:", err);
       setError("Failed to load project data");
@@ -44,45 +49,121 @@ export default function TVStaticPage() {
   }, []);
 
   useEffect(() => {
+    if (status !== "authenticated") return;
     setLoading(true);
-    fetchProjects();
-
-    const channel = supabase
-      .channel("tv-static-realtime")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "projects",
-        },
-        () => {
-          fetchProjects();
-        },
-      )
-      .subscribe();
+    fetchSummary();
 
     const pollInterval = setInterval(() => {
       if (document.visibilityState === "visible") {
-        fetchProjects();
+        fetchSummary();
       }
     }, 30000);
 
     return () => {
       clearInterval(pollInterval);
-      supabase.removeChannel(channel);
     };
-  }, [fetchProjects]);
+  }, [fetchSummary, status]);
 
   useEffect(() => {
+    if (status !== "authenticated") return;
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        fetchProjects();
+        fetchSummary();
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [fetchProjects]);
+  }, [fetchSummary, status]);
+
+  if (status === "loading") {
+    return (
+      <div style={{
+        backgroundColor: "#111",
+        color: "#fff",
+        height: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "sans-serif",
+        fontSize: "24px",
+      }}>
+        Loading Shop TV...
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div style={{
+        backgroundColor: "#111",
+        color: "#fff",
+        height: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "sans-serif",
+        textAlign: "center",
+        padding: "40px",
+      }}>
+        <div>
+          <h2 style={{ fontSize: "32px", marginBottom: "16px" }}>Sign in required</h2>
+          <button
+            type="button"
+            onClick={() => signIn()}
+            style={{
+              borderRadius: "14px",
+              border: "none",
+              padding: "12px 24px",
+              backgroundColor: "#2563eb",
+              color: "#fff",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Sign in
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canViewShopTv(role)) {
+    return (
+      <div style={{
+        backgroundColor: "#111",
+        color: "#fff",
+        height: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "sans-serif",
+        textAlign: "center",
+        padding: "40px",
+      }}>
+        <div>
+          <h2 style={{ fontSize: "32px", marginBottom: "16px" }}>Access denied</h2>
+          <p style={{ color: "#a1a1aa", marginBottom: "20px" }}>
+            Your role does not have permission to view this surface.
+          </p>
+          <button
+            type="button"
+            onClick={() => signOut({ callbackUrl: "/" })}
+            style={{
+              borderRadius: "14px",
+              border: "1px solid #3f3f46",
+              padding: "12px 24px",
+              backgroundColor: "transparent",
+              color: "#fff",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Back to dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -346,7 +427,7 @@ export default function TVStaticPage() {
         fontSize: "13px",
         fontFamily: "monospace"
       }}>
-        Updated {lastUpdated?.toLocaleTimeString()} • Keystone PMS
+        Updated {summary.lastUpdated.toLocaleTimeString()} • Keystone PMS
       </div>
 
       <style jsx global>{`
