@@ -38,6 +38,7 @@ export default function ProjectsPage() {
     aggregateDashboardMetrics([]),
   );
   const [loading, setLoading] = useState(true);
+  const [queryError, setQueryError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const { data: session, status } = useSession();
@@ -48,11 +49,15 @@ export default function ProjectsPage() {
       .select(PROJECT_SELECT)
       .order("project_number", { ascending: false });
 
-    if (!error && data) {
+    if (error) {
+      console.error("[Projects] query failed:", error.message, error);
+      setQueryError(error.message);
+    } else if (data) {
       const list = data as DashboardProjectRow[];
       setRows(list);
       setMetrics(aggregateDashboardMetrics(list));
       setLastUpdated(new Date());
+      setQueryError(null);
     }
     setLoading(false);
   }, []);
@@ -104,6 +109,27 @@ export default function ProjectsPage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-10 text-center text-lg text-white">
         Loading projects…
+      </div>
+    );
+  }
+
+  if (queryError) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-zinc-950 p-10 text-center text-white">
+        <p className="text-sm font-medium text-red-400">
+          Failed to load projects
+        </p>
+        <p className="max-w-md text-xs text-zinc-400">{queryError}</p>
+        <button
+          type="button"
+          onClick={() => {
+            setLoading(true);
+            void fetchProjects();
+          }}
+          className="rounded-lg bg-zinc-800 px-4 py-2 text-xs hover:bg-zinc-700"
+        >
+          Retry
+        </button>
       </div>
     );
   }

@@ -1,6 +1,6 @@
 import type { Remnant, OutlinePoint } from "@/lib/utils";
 import { parseRemnantDims, rectOutline } from "@/lib/utils";
-import { svgPathToNestOutline } from "@/lib/svgPathToOutline";
+import { svgPathToNestShape } from "@/lib/svgPathToOutline";
 
 /** Sheet entry accepted by NestNow HTTP API (rectangle or polygon). */
 export type NestApiSheetPayload =
@@ -24,9 +24,13 @@ export function isRectNestSheet(s: NestApiSheetPayload): s is {
  * rectangular `{ width, height }` from `length_in`×`width_in` or `dims` (never invent a fake outline).
  */
 export function remnantToNestSheet(r: Remnant): NestApiSheetPayload {
-  const fromSvg = r.svg_path ? svgPathToNestOutline(r.svg_path) : null;
-  if (fromSvg && fromSvg.length >= 3) {
-    return { outline: fromSvg, quantity: 1 };
+  const fromSvgShape = r.svg_path ? svgPathToNestShape(r.svg_path) : null;
+  if (fromSvgShape?.outline?.length) {
+    return {
+      outline: fromSvgShape.outline,
+      ...(fromSvgShape.holes.length ? { holes: fromSvgShape.holes } : {}),
+      quantity: 1,
+    };
   }
 
   if (r.length_in && r.width_in) {

@@ -20,6 +20,7 @@ type SupabaseTokenResponse = {
 
 type SupabaseBridgeContextValue = {
   isReady: boolean;
+  error: string | null;
   refresh: () => Promise<void>;
 };
 
@@ -53,6 +54,7 @@ export function SupabaseBridgeProvider({
 }) {
   const { status } = useSession();
   const [isReady, setIsReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshFnRef = useRef<() => Promise<void>>(async () => {});
 
@@ -66,18 +68,29 @@ export function SupabaseBridgeProvider({
   const refresh = useCallback(async () => {
     if (status !== "authenticated") {
       setSupabaseBridgeAccessToken(null);
+      setError(null);
       setIsReady(true);
       return;
     }
-    const tokenData = await requestSupabaseToken();
-    setSupabaseBridgeAccessToken(tokenData.accessToken);
-    setIsReady(true);
-    clearRefreshTimeout();
-    const msUntilExpiry = tokenData.expiresAt * 1000 - Date.now();
-    const refreshInMs = Math.max(msUntilExpiry - 60_000, 15_000);
-    refreshTimeoutRef.current = setTimeout(() => {
-      void refreshFnRef.current();
-    }, refreshInMs);
+    try {
+      const tokenData = await requestSupabaseToken();
+      setSupabaseBridgeAccessToken(tokenData.accessToken);
+      setError(null);
+      setIsReady(true);
+      clearRefreshTimeout();
+      const msUntilExpiry = tokenData.expiresAt * 1000 - Date.now();
+      const refreshInMs = Math.max(msUntilExpiry - 60_000, 15_000);
+      refreshTimeoutRef.current = setTimeout(() => {
+        void refreshFnRef.current();
+      }, refreshInMs);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Could not establish a Supabase session.";
+      console.error("[SupabaseBridge] Token acquisition failed:", message);
+      setSupabaseBridgeAccessToken(null);
+      setError(message);
+      setIsReady(true);
+    }
   }, [clearRefreshTimeout, status]);
 
   useEffect(() => {
@@ -92,15 +105,13 @@ export function SupabaseBridgeProvider({
     }
     if (status !== "authenticated") {
       setSupabaseBridgeAccessToken(null);
+      setError(null);
       queueMicrotask(() => setIsReady(true));
       return;
     }
     queueMicrotask(() => setIsReady(false));
     queueMicrotask(() => {
-      void refreshFnRef.current().catch(() => {
-        setSupabaseBridgeAccessToken(null);
-        setIsReady(true);
-      });
+      void refreshFnRef.current();
     });
     return () => {
       clearRefreshTimeout();
@@ -110,9 +121,10 @@ export function SupabaseBridgeProvider({
   const value = useMemo<SupabaseBridgeContextValue>(
     () => ({
       isReady,
+      error,
       refresh,
     }),
-    [isReady, refresh],
+    [isReady, error, refresh],
   );
 
   if (!isReady) {
@@ -120,6 +132,28 @@ export function SupabaseBridgeProvider({
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-200">
         <p className="text-sm">Establishing secure database session...</p>
       </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <SupabaseBridgeContext.Provider value={value}>
+        <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-200">
+          <div className="max-w-md space-y-3 text-center">
+            <p className="text-sm font-medium text-red-400">
+              Database session failed
+            </p>
+            <p className="text-xs text-zinc-400">{error}</p>
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              className="rounded-lg bg-zinc-800 px-4 py-2 text-xs hover:bg-zinc-700"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </SupabaseBridgeContext.Provider>
     );
   }
 

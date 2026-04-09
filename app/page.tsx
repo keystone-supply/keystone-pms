@@ -42,6 +42,7 @@ export default function Dashboard() {
     aggregateDashboardMetrics([]),
   );
   const [loading, setLoading] = useState(true);
+  const [queryError, setQueryError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [sheetStockCount, setSheetStockCount] = useState<number | null>(null);
   const [sheetStockLoading, setSheetStockLoading] = useState(true);
@@ -50,10 +51,14 @@ export default function Dashboard() {
 
   const fetchProjects = useCallback(async () => {
     const { data, error } = await supabase.from("projects").select(PROJECT_SELECT);
-    if (!error) {
+    if (error) {
+      console.error("[Dashboard] projects query failed:", error.message, error);
+      setQueryError(error.message);
+    } else {
       const rows = (data ?? []) as DashboardProjectRow[];
       setMetrics(aggregateDashboardMetrics(rows));
       setLastUpdated(new Date());
+      setQueryError(null);
     }
     setLoading(false);
   }, []);
@@ -136,6 +141,27 @@ export default function Dashboard() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-10 text-center text-lg text-white">
         Loading dashboard…
+      </div>
+    );
+  }
+
+  if (queryError) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-zinc-950 p-10 text-center text-white">
+        <p className="text-sm font-medium text-red-400">
+          Failed to load dashboard data
+        </p>
+        <p className="max-w-md text-xs text-zinc-400">{queryError}</p>
+        <button
+          type="button"
+          onClick={() => {
+            setLoading(true);
+            void fetchProjects();
+          }}
+          className="rounded-lg bg-zinc-800 px-4 py-2 text-xs hover:bg-zinc-700"
+        >
+          Retry
+        </button>
       </div>
     );
   }

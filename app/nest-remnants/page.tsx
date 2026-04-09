@@ -9,6 +9,7 @@ import {
   useCallback,
   forwardRef,
   useImperativeHandle,
+  type ChangeEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type Ref,
@@ -90,6 +91,7 @@ import {
   type NestApiSheetPayload,
   isRectNestSheet,
 } from "@/lib/remnantNestGeometry";
+import { svgPathToNestShape } from "@/lib/svgPathToOutline";
 import {
   selectNestPlacementLane,
   partsUnitQuantities,
@@ -98,7 +100,13 @@ import {
   buildNestSheetDxf,
   nestDxfFilename,
 } from "@/lib/nestDxfExport";
+import { parseDxfToShapes } from "@/lib/parseDxf";
 import { uploadDxfToProjectCad } from "@/lib/onedrive";
+import {
+  buildRemnantGeometryFromNest,
+  nestRingsToSvgPath,
+} from "@/lib/remnantSaveGeometry";
+import { renderAndUploadSheetPreviewImage } from "@/lib/renderSheetPreview";
 import {
   expandModuleToGrid,
   type NestGridMetadata,
@@ -794,6 +802,47 @@ const NEST_PREVIEW_ZOOM_MAX = 32;
 /** Aspect-ratio frame for nest SVG; min height for empty states; max respects parent then viewport. */
 const NEST_PREVIEW_FRAME_CLASS =
   "relative h-auto w-full min-w-0 min-h-[140px] max-h-[min(100%,min(840px,120dvh))] overflow-hidden";
+const REMNANT_SVG_NOTES_TAG = "[[NEST_REMNANT_SVG_PATH]]:";
+
+function extractSvgPathMetadataFromNotes(rawNotes: unknown): {
+  svgPath?: string;
+  notes: string | null;
+} {
+  if (typeof rawNotes !== "string" || !rawNotes.trim()) {
+    return { notes: null };
+  }
+
+  let svgPath: string | undefined;
+  const kept: string[] = [];
+  const lines = rawNotes.split(/\r?\n/);
+
+  for (const line of lines) {
+    if (line.startsWith(REMNANT_SVG_NOTES_TAG)) {
+      if (!svgPath) {
+        const encoded = line.slice(REMNANT_SVG_NOTES_TAG.length).trim();
+        if (encoded) {
+          try {
+            svgPath = decodeURIComponent(encoded);
+          } catch {
+            svgPath = undefined;
+          }
+        }
+      }
+      continue;
+    }
+    kept.push(line);
+  }
+
+  const notes = kept.join("\n").trim();
+  return { svgPath, notes: notes || null };
+}
+
+function looksLikeSvgPath(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const s = value.trim();
+  if (!s) return false;
+  return /^[MLHVZmlhvz0-9eE.,\s+-]+$/u.test(s) && /[Mm]/u.test(s);
+}
 
 function clampNestPreviewPan(
   panX: number,
@@ -1347,11 +1396,86 @@ function SheetWireframe({
   lengthIn,
   widthIn,
   dims,
+  svgPath,
 }: {
   lengthIn?: number;
   widthIn?: number;
   dims?: string;
+  svgPath?: string;
 }) {
+  const vbW = 100;
+  const vbH = 60;
+  const pad = 6;
+  const innerW = vbW - pad * 2;
+  const innerH = vbH - pad * 2;
+  const minSide = 8;
+
+  const svgShape = svgPath ? svgPathToNestShape(svgPath) : null;
+  if (svgShape?.outline?.length) {
+    const rings = [svgShape.outline, ...(svgShape.holes ?? [])].filter(
+      (ring) => ring.length >= 3,
+    );
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const ring of rings) {
+      for (const p of ring) {
+        if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+    }
+
+    const shapeW = maxX - minX;
+    const shapeH = maxY - minY;
+    if (
+      Number.isFinite(shapeW) &&
+      Number.isFinite(shapeH) &&
+      shapeW > 0 &&
+      shapeH > 0
+    ) {
+      const scale = Math.min(innerW / shapeW, innerH / shapeH);
+      const normW = Math.max(shapeW * scale, minSide);
+      const normH = Math.max(shapeH * scale, minSide);
+      const x0 = (vbW - normW) / 2;
+      const y0 = (vbH - normH) / 2;
+      const mapPt = (p: { x: number; y: number }) =>
+        `${x0 + (p.x - minX) * scale},${y0 + (maxY - p.y) * scale}`;
+      const loopPath = (loop: { x: number; y: number }[]) => {
+        const [first, ...rest] = loop;
+        return [
+          `M ${mapPt(first)}`,
+          ...rest.map((pt) => `L ${mapPt(pt)}`),
+          "Z",
+        ].join(" ");
+      };
+      const d = rings.map(loopPath).join(" ");
+
+      return (
+        <div className="mt-1 mb-2 flex items-center justify-start">
+          <svg
+            viewBox="0 0 100 60"
+            className="w-24 h-15 text-zinc-500"
+            aria-hidden="true"
+          >
+            <path
+              d={d}
+              fill="currentColor"
+              fillOpacity={0.08}
+              fillRule="evenodd"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+        </div>
+      );
+    }
+  }
+
   let w = lengthIn;
   let h = widthIn;
   if (!w || !h) {
@@ -1360,15 +1484,8 @@ function SheetWireframe({
     h = parsed.height;
   }
   if (!w || !h) return null;
-  // Fit rectangle to viewBox while preserving aspect ratio.
-  // (Previously we normalized into an 80x80 box, which could exceed the 60px-high viewBox and clip top/bottom edges.)
-  const vbW = 100;
-  const vbH = 60;
-  const pad = 6;
-  const innerW = vbW - pad * 2;
-  const innerH = vbH - pad * 2;
+  // Fallback for stock rows without polygon geometry.
   const scale = Math.min(innerW / w, innerH / h);
-  const minSide = 8;
   const normW = Math.max(w * scale, minSide);
   const normH = Math.max(h * scale, minSide);
   const x = (vbW - normW) / 2;
@@ -1422,6 +1539,9 @@ export default function NestRemnantsPage() {
   const [addSheetLoading, setAddSheetLoading] = useState(false);
   const [selectedSheetIds, setSelectedSheetIds] = useState<string[]>([]);
   const [editingSheetId, setEditingSheetId] = useState<string | null>(null);
+  const [editingSheetSvgPath, setEditingSheetSvgPath] = useState<string | null>(
+    null,
+  );
   const [nestResult, setNestResult] = useState<NestResult | null>(null);
   /** Which layout from `nestResult.candidates` (or sole result) is shown in the preview. */
   const [nestCandidateIndex, setNestCandidateIndex] = useState(0);
@@ -1483,6 +1603,9 @@ export default function NestRemnantsPage() {
   const [roundHasHole, setRoundHasHole] = useState(false);
   const [shapeQty, setShapeQty] = useState<string>("1");
   const [addShapeError, setAddShapeError] = useState<string | null>(null);
+  const [dxfParsing, setDxfParsing] = useState(false);
+  const [dxfUploadError, setDxfUploadError] = useState<string | null>(null);
+  const dxfInputRef = useRef<HTMLInputElement>(null);
   const [parts, setParts] = useState<PartShape[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMaterial, setFilterMaterial] = useState<string>("");
@@ -1491,6 +1614,11 @@ export default function NestRemnantsPage() {
   const [nestSheetQuickFilter, setNestSheetQuickFilter] = useState("");
   const [previewSheetIndex, setPreviewSheetIndex] = useState(0);
   const nestPreviewRef = useRef<NestPreviewZoomableHandle>(null);
+  const [saveRemnantBusy, setSaveRemnantBusy] = useState(false);
+  const [saveRemnantError, setSaveRemnantError] = useState<string | null>(null);
+  const [lastNestSheetSources, setLastNestSheetSources] = useState<Remnant[]>(
+    [],
+  );
 
   const [nestDxfModalOpen, setNestDxfModalOpen] = useState(false);
   const [nestDxfExportMethod, setNestDxfExportMethod] = useState<
@@ -1799,15 +1927,23 @@ export default function NestRemnantsPage() {
     const shortId = dbId ? `#${dbId.slice(0, 8).toUpperCase()}` : "#SHEET";
     const label: string | null = row.label ?? null;
 
-    const pathFromDb =
-      typeof row.svg_path === "string" && row.svg_path.trim()
-        ? row.svg_path.trim()
-        : undefined;
+    const parsedNotes = extractSvgPathMetadataFromNotes(row.notes);
+    const pathFromDb = typeof row.svg_path === "string" && row.svg_path.trim()
+      ? row.svg_path.trim()
+      : parsedNotes.svgPath
+        ? parsedNotes.svgPath
+        : looksLikeSvgPath(row.img_url)
+          ? row.img_url.trim()
+          : undefined;
 
     return {
       id: label || shortId,
       db_id: dbId,
       label,
+      img_url:
+        typeof row.img_url === "string" && row.img_url.trim()
+          ? row.img_url.trim()
+          : undefined,
       /** Real remnant outline from DB only — no synthetic shape, so rect stock nests as a rectangle. */
       svg_path: pathFromDb,
       dims,
@@ -1817,7 +1953,7 @@ export default function NestRemnantsPage() {
       thickness_in,
       est_weight_lbs,
       status,
-      notes: row.notes ?? null,
+      notes: parsedNotes.notes,
     };
   }
 
@@ -1996,6 +2132,72 @@ export default function NestRemnantsPage() {
     }
   };
 
+  function readTextFile(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Failed to read file."));
+      reader.onload = () => {
+        const result = reader.result;
+        if (typeof result !== "string") {
+          reject(new Error("Expected DXF text content."));
+          return;
+        }
+        resolve(result);
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  const handleDxfUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const files = Array.from(input.files ?? []);
+    if (!files.length) return;
+
+    setDxfUploadError(null);
+    setDxfParsing(true);
+
+    try {
+      const collectedParts: PartShape[] = [];
+      const uploadIssues: string[] = [];
+
+      for (const file of files) {
+        try {
+          const dxfText = await readTextFile(file);
+          const parsedParts = parseDxfToShapes(dxfText, file.name);
+          if (!parsedParts.length) {
+            uploadIssues.push(
+              `No closed DXF part outlines found in "${file.name}".`,
+            );
+            continue;
+          }
+          collectedParts.push(...parsedParts);
+        } catch (error) {
+          const message =
+            error instanceof Error && error.message
+              ? error.message
+              : "Failed to parse DXF file.";
+          uploadIssues.push(`Upload failed for "${file.name}": ${message}`);
+        }
+      }
+
+      if (collectedParts.length) {
+        setParts((prev) => [...prev, ...collectedParts]);
+      }
+      if (uploadIssues.length) {
+        setDxfUploadError(uploadIssues.join("\n"));
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Failed to parse DXF file.";
+      setDxfUploadError(message);
+    } finally {
+      input.value = "";
+      setDxfParsing(false);
+    }
+  };
+
   useEffect(() => {
     saveNestUiSettings(nestUiSettings);
   }, [nestUiSettings]);
@@ -2161,8 +2363,10 @@ export default function NestRemnantsPage() {
     const myVersion = ++nestRunVersionRef.current;
     setNestError(null);
     setNestErrorAdmin(null);
+    setSaveRemnantError(null);
     setNestResult(null);
     setLastNestPayload(null);
+    setLastNestSheetSources(sheetsSource);
     setNestCandidateIndex(0);
     setNestLiveBestSoFar(null);
     setNestRunPreviewGeometry(null);
@@ -2668,6 +2872,7 @@ export default function NestRemnantsPage() {
     setAddSheetError(null);
     setAddSheetLoading(false);
     setEditingSheetId(null);
+    setEditingSheetSvgPath(null);
   };
 
   const handleOpenEditSheet = (remnant: Remnant) => {
@@ -2686,6 +2891,7 @@ export default function NestRemnantsPage() {
     setSheetMaterial(remnant.material ?? "");
     setSheetLabel(remnant.label ?? "");
     setSheetNotes(remnant.notes ?? "");
+    setEditingSheetSvgPath(remnant.svg_path?.trim() || null);
     setSheetStatus(
       remnant.status === "Allocated"
         ? "allocated"
@@ -2733,6 +2939,10 @@ export default function NestRemnantsPage() {
     };
     basePayload.label = sheetLabel.trim() || null;
     basePayload.notes = sheetNotes.trim() || null;
+    if (editingSheetId && editingSheetSvgPath) {
+      // Preserve remnant geometry when editing non-geometry fields like label/notes.
+      basePayload.svg_path = editingSheetSvgPath;
+    }
 
     let data;
     let error;
@@ -2761,7 +2971,42 @@ export default function NestRemnantsPage() {
       return;
     }
 
-    const remnantFromRow = mapRowToRemnant(data);
+    let rowForMap = data;
+    const rowId =
+      rowForMap &&
+      typeof rowForMap === "object" &&
+      typeof (rowForMap as { id?: unknown }).id === "string"
+        ? ((rowForMap as { id: string }).id)
+        : null;
+    const rowSvgPath =
+      rowForMap &&
+      typeof rowForMap === "object" &&
+      typeof (rowForMap as { svg_path?: unknown }).svg_path === "string"
+        ? (rowForMap as { svg_path: string }).svg_path.trim()
+        : "";
+
+    if (rowId && rowSvgPath) {
+      const previewUrl = await renderAndUploadSheetPreviewImage(rowId, {
+        svg_path: rowSvgPath,
+        length_in:
+          Number((rowForMap as { length_in?: unknown }).length_in) || length,
+        width_in:
+          Number((rowForMap as { width_in?: unknown }).width_in) || width,
+      });
+      if (previewUrl) {
+        const { data: previewRow, error: previewErr } = await supabase
+          .from("sheet_stock")
+          .update({ img_url: previewUrl })
+          .eq("id", rowId)
+          .select("*")
+          .single();
+        if (!previewErr && previewRow) {
+          rowForMap = previewRow;
+        }
+      }
+    }
+
+    const remnantFromRow = mapRowToRemnant(rowForMap);
     setRemnants((prev) => {
       if (!editingSheetId) {
         return [remnantFromRow, ...prev];
@@ -2953,6 +3198,193 @@ export default function NestRemnantsPage() {
     nestDxfSelectedJob,
     nestDxfProjects,
   ]);
+
+  async function handleSaveRemnant() {
+    setSaveRemnantError(null);
+    setSaveRemnantBusy(true);
+    try {
+      if (
+        nestLoading ||
+        !lastNestPayload?.parts?.length ||
+        !displayedNestResult?.placements?.length
+      ) {
+        setSaveRemnantError(
+          "Save remnant is available only after nesting finishes.",
+        );
+        return;
+      }
+
+      const sheet = lastNestPayload.sheets[safePreviewSheetIndex];
+      if (!sheet) {
+        setSaveRemnantError("Sheet data missing for this preview.");
+        return;
+      }
+      const placementsRow =
+        displayedNestResult.placements[safePreviewSheetIndex];
+      const sheetplacements = placementsRow?.sheetplacements ?? [];
+      if (!sheetplacements.length) {
+        setSaveRemnantError("No part placements on this preview sheet.");
+        return;
+      }
+
+      const sourceSheet = lastNestSheetSources[safePreviewSheetIndex];
+      if (!sourceSheet) {
+        setSaveRemnantError(
+          "Source sheet details are unavailable. Run Generate Nest again and retry.",
+        );
+        return;
+      }
+      const thickness = Number(sourceSheet.thickness_in);
+      const material = String(sourceSheet.material ?? "").trim();
+      if (!Number.isFinite(thickness) || thickness <= 0) {
+        setSaveRemnantError("Source sheet thickness is invalid.");
+        return;
+      }
+      if (!material) {
+        setSaveRemnantError("Source sheet material is missing.");
+        return;
+      }
+
+      const remnantGeometry = buildRemnantGeometryFromNest(
+        sheet,
+        lastNestPayload.parts,
+        sheetplacements,
+      );
+      if (!remnantGeometry?.outline?.length) {
+        setSaveRemnantError("Could not build remnant geometry.");
+        return;
+      }
+      const remnantSvgPath = nestRingsToSvgPath([
+        remnantGeometry.outline,
+        ...remnantGeometry.holes,
+      ]);
+      if (!remnantSvgPath) {
+        setSaveRemnantError("Could not encode remnant path.");
+        return;
+      }
+
+      // Use only outer cut loops for remnant DXF so the remaining stock reads as sheet minus part outlines.
+      const remnantParts = lastNestPayload.parts.map((part) => ({
+        ...part,
+        holes: undefined,
+      }));
+      const remnantDxf = buildNestSheetDxf(
+        sheet,
+        remnantParts,
+        sheetplacements,
+        {
+          includePartNames: false,
+          includeSheetOutline: true,
+          textHeight: 1,
+        },
+      );
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const remnantFilename = `Remnant_Sheet${safePreviewSheetIndex + 1}_${stamp}.dxf`;
+      const blob = new Blob([remnantDxf], {
+        type: "application/dxf;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.style.display = "none";
+      a.href = url;
+      a.download = remnantFilename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      const sourceLabel = sourceSheet.label?.trim() || sourceSheet.id;
+      const { width, height } = nestSheetPreviewDimensions(sheet);
+      const lengthIn =
+        typeof sourceSheet.length_in === "number" && sourceSheet.length_in > 0
+          ? sourceSheet.length_in
+          : width;
+      const widthIn =
+        typeof sourceSheet.width_in === "number" && sourceSheet.width_in > 0
+          ? sourceSheet.width_in
+          : height;
+
+      const baseNotes = `Saved from nest preview sheet ${safePreviewSheetIndex + 1}; removed ${sheetplacements.length} part placements.`;
+
+      const baseInsertPayload: {
+        length_in: number;
+        width_in: number;
+        thickness_in: number;
+        material: string;
+        status: string;
+        label: string;
+        notes: string;
+        svg_path: string;
+        kind: string;
+        is_archived: boolean;
+      } = {
+        length_in: lengthIn,
+        width_in: widthIn,
+        thickness_in: thickness,
+        material,
+        status: "available",
+        label: `${sourceLabel} REM ${stamp}`,
+        notes: baseNotes,
+        svg_path: remnantSvgPath,
+        kind: "sheet",
+        is_archived: false,
+      };
+
+      const insertRes = await supabase
+        .from("sheet_stock")
+        .insert([baseInsertPayload])
+        .select("*")
+        .single();
+
+      const { data, error } = insertRes;
+
+      if (error) {
+        setSaveRemnantError(error.message ?? "Failed to save remnant.");
+        return;
+      }
+
+      let rowForMap = data;
+      const savedRowId =
+        rowForMap &&
+        typeof rowForMap === "object" &&
+        typeof (rowForMap as { id?: unknown }).id === "string"
+          ? ((rowForMap as { id: string }).id)
+          : null;
+      if (savedRowId) {
+        const previewUrl = await renderAndUploadSheetPreviewImage(savedRowId, {
+          svg_path: remnantSvgPath,
+          length_in: lengthIn,
+          width_in: widthIn,
+        });
+        if (previewUrl) {
+          const { data: previewRow, error: previewErr } = await supabase
+            .from("sheet_stock")
+            .update({ img_url: previewUrl })
+            .eq("id", savedRowId)
+            .select("*")
+            .single();
+          if (!previewErr && previewRow) {
+            rowForMap = previewRow;
+          }
+        }
+      }
+
+      const savedRemnant = mapRowToRemnant(rowForMap);
+      setRemnants((prev) => [savedRemnant, ...prev]);
+      const savedId = savedRemnant.db_id;
+      if (savedId) {
+        // Focus subsequent nests on the newly created remnant by default.
+        setSelectedSheetIds([savedId]);
+      }
+      alert(`Saved remnant: ${savedRemnant.id}\nDownloaded: ${remnantFilename}`);
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to save remnant.";
+      setSaveRemnantError(message);
+    } finally {
+      setSaveRemnantBusy(false);
+    }
+  }
 
   if (status === "loading") {
     return (
@@ -3412,6 +3844,7 @@ export default function NestRemnantsPage() {
                                 lengthIn={remnant.length_in}
                                 widthIn={remnant.width_in}
                                 dims={remnant.dims}
+                                svgPath={remnant.svg_path}
                               />
                             </div>
                             <label className="inline-flex items-center gap-2 text-xs text-purple-200">
@@ -3568,24 +4001,51 @@ export default function NestRemnantsPage() {
                         </>
                       ) : null}
                     </div>
-                    <button
-                      type="button"
-                      disabled={!showCompletedNestPreview}
-                      title={
-                        showCompletedNestPreview
-                          ? "Export the sheet shown in the preview (DXF)"
-                          : "Available when nesting has finished"
-                      }
-                      onClick={() => setNestDxfModalOpen(true)}
-                      className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-600/80 bg-zinc-800/80 px-2.5 py-1.5 text-xs font-medium transition-colors sm:text-sm ${
-                        showCompletedNestPreview
-                          ? "text-zinc-200 hover:border-zinc-500 hover:bg-zinc-700 hover:text-white"
-                          : "cursor-not-allowed text-zinc-500 opacity-50"
-                      }`}
-                    >
-                      Export .DXF
-                    </button>
+                    <div className="inline-flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={!showCompletedNestPreview || saveRemnantBusy}
+                        title={
+                          showCompletedNestPreview
+                            ? "Save this preview sheet as a new remnant and download its DXF"
+                            : "Available when nesting has finished"
+                        }
+                        onClick={() => void handleSaveRemnant()}
+                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors sm:text-sm ${
+                          showCompletedNestPreview && !saveRemnantBusy
+                            ? "border-emerald-500/60 bg-emerald-900/30 text-emerald-100 hover:border-emerald-400/80 hover:bg-emerald-800/30"
+                            : "cursor-not-allowed border-zinc-700/80 bg-zinc-800/70 text-zinc-500 opacity-60"
+                        }`}
+                      >
+                        {saveRemnantBusy ? (
+                          <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                        ) : null}
+                        {saveRemnantBusy ? "Saving…" : "Save Remnant"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!showCompletedNestPreview}
+                        title={
+                          showCompletedNestPreview
+                            ? "Export the sheet shown in the preview (DXF)"
+                            : "Available when nesting has finished"
+                        }
+                        onClick={() => setNestDxfModalOpen(true)}
+                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-600/80 bg-zinc-800/80 px-2.5 py-1.5 text-xs font-medium transition-colors sm:text-sm ${
+                          showCompletedNestPreview
+                            ? "text-zinc-200 hover:border-zinc-500 hover:bg-zinc-700 hover:text-white"
+                            : "cursor-not-allowed text-zinc-500 opacity-50"
+                        }`}
+                      >
+                        Export .DXF
+                      </button>
+                    </div>
                   </div>
+                  {saveRemnantError && (
+                    <p className="border-b border-amber-700/30 bg-amber-950/20 px-3 py-1.5 text-xs text-amber-200">
+                      {saveRemnantError}
+                    </p>
+                  )}
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                   {nestLoading && (
                     <div
@@ -3968,6 +4428,7 @@ export default function NestRemnantsPage() {
                                 lengthIn={r.length_in}
                                 widthIn={r.width_in}
                                 dims={r.dims}
+                                svgPath={r.svg_path}
                               />
                             </div>
                             <div className="min-w-0 flex-1">
@@ -4011,14 +4472,29 @@ export default function NestRemnantsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
+                          disabled={dxfParsing}
                           onClick={() => {
-                            alert("DXF/Parts upload coming soon. Shapes from DXF will be added to the same Parts list and used in nests alongside UI-created shapes.");
+                            setDxfUploadError(null);
+                            dxfInputRef.current?.click();
                           }}
-                          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-cyan-800/60 bg-cyan-950/40 px-3 py-2 text-sm font-medium text-cyan-100 transition-colors hover:border-cyan-600/60 hover:bg-cyan-900/45 sm:px-4"
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-cyan-800/60 bg-cyan-950/40 px-3 py-2 text-sm font-medium text-cyan-100 transition-colors hover:border-cyan-600/60 hover:bg-cyan-900/45 disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
                         >
-                          <Upload className="size-4 shrink-0" aria-hidden />
-                          Upload DXF
+                          {dxfParsing ? (
+                            <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                          ) : (
+                            <Upload className="size-4 shrink-0" aria-hidden />
+                          )}
+                          {dxfParsing ? "Parsing DXFs..." : "Upload DXF"}
                         </button>
+                        <input
+                          ref={dxfInputRef}
+                          type="file"
+                          accept=".dxf,application/dxf"
+                          multiple
+                          onChange={handleDxfUpload}
+                          className="hidden"
+                          aria-label="Upload DXF file"
+                        />
                         <button
                           type="button"
                           onClick={openAddShapeModal}
@@ -4029,6 +4505,11 @@ export default function NestRemnantsPage() {
                         </button>
                       </div>
                     </div>
+                    {dxfUploadError && (
+                      <p className="mb-3 whitespace-pre-line text-sm text-amber-300">
+                        {dxfUploadError}
+                      </p>
+                    )}
                     {parts.length === 0 ? (
                       <p className="text-sm text-purple-200/70">
                         No parts yet. Use <span className="font-semibold">Upload DXF</span> or <span className="font-semibold">+ Add Shape</span> above.
