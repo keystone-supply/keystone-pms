@@ -20,7 +20,7 @@ import {
   aggregateDashboardMetrics,
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { withProjectSelectFallback } from "@/lib/projectQueries";
 import { safeReturnToPath } from "@/lib/safeReturnTo";
 import { canManageCrm, normalizeAppRole } from "@/lib/auth/roles";
 
@@ -42,10 +42,9 @@ function NewCustomerPageInner() {
   useEffect(() => {
     if (status !== "authenticated") return;
     let cancelled = false;
-    void supabase
-      .from("projects")
-      .select(PROJECT_SELECT)
-      .then(({ data, error: e }) => {
+    void withProjectSelectFallback((select) =>
+      supabase.from("projects").select(select),
+    ).then(({ data, error: e }) => {
         if (cancelled || e || !data) return;
         setOpenQuotes(
           aggregateDashboardMetrics(data as DashboardProjectRow[]).openQuotes,

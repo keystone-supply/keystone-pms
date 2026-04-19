@@ -27,7 +27,7 @@ import {
   aggregateDashboardMetrics,
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { withProjectSelectFallback } from "@/lib/projectQueries";
 import { cn } from "@/lib/utils";
 import { canManageCrm, normalizeAppRole } from "@/lib/auth/roles";
 
@@ -113,18 +113,19 @@ export default function CustomerDetailPage() {
 
   const loadRelatedProjects = useCallback(
     async (customerId: string, legalName: string) => {
-      const { data: byId } = await supabase
-        .from("projects")
-        .select(PROJECT_SELECT)
-        .eq("customer_id", customerId);
+      const { data: byId } = await withProjectSelectFallback((select) =>
+        supabase.from("projects").select(select).eq("customer_id", customerId),
+      );
       const rows: DashboardProjectRow[] = [...((byId ?? []) as DashboardProjectRow[])];
       const seen = new Set(rows.map((r) => r.id));
       const safeName = legalName.replace(/[%_]/g, "").trim();
       if (safeName.length > 0) {
-        const { data: byName } = await supabase
-          .from("projects")
-          .select(PROJECT_SELECT)
-          .ilike("customer", `%${safeName}%`);
+        const { data: byName } = await withProjectSelectFallback((select) =>
+          supabase
+            .from("projects")
+            .select(select)
+            .ilike("customer", `%${safeName}%`),
+        );
         for (const r of (byName ?? []) as DashboardProjectRow[]) {
           if (!seen.has(r.id)) {
             rows.push(r);
@@ -178,10 +179,9 @@ export default function CustomerDetailPage() {
   useEffect(() => {
     if (status !== "authenticated") return;
     let cancelled = false;
-    void supabase
-      .from("projects")
-      .select(PROJECT_SELECT)
-      .then(({ data, error: e }) => {
+    void withProjectSelectFallback((select) =>
+      supabase.from("projects").select(select),
+    ).then(({ data, error: e }) => {
         if (cancelled || e || !data) return;
         setOpenQuotes(
           aggregateDashboardMetrics(data as DashboardProjectRow[]).openQuotes,

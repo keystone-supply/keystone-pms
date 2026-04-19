@@ -42,7 +42,7 @@ import {
   type DashboardMetrics,
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { withProjectSelectFallback } from "@/lib/projectQueries";
 import {
   PIPELINE_STAGE_LABELS,
   SALES_PROJECT_COLUMNS,
@@ -92,7 +92,9 @@ export default function SalesPage() {
 
   const fetchAll = useCallback(async () => {
     const [projRes, custRes, vendRes] = await Promise.all([
-      supabase.from("projects").select(PROJECT_SELECT),
+      withProjectSelectFallback((select) =>
+        supabase.from("projects").select(select),
+      ),
       supabase
         .from("customers")
         .select(CUSTOMER_LIST_SELECT)

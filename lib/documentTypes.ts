@@ -46,6 +46,7 @@ export type DocumentLineItem = {
   unitPrice: number;
   extended: number;
   partRef?: string;
+  sourceCalcLineId?: string;
 };
 
 export type PackingLineItem = {

@@ -15,6 +15,7 @@ import {
 import { ChevronDown, ChevronUp, Eye } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { ProjectStatusTicker } from "@/components/projects/project-status-ticker";
 import {
   Table,
   TableBody,
@@ -30,6 +31,10 @@ import {
   isCancelledProject,
   realizedMarginPct,
 } from "@/lib/dashboardMetrics";
+import {
+  deriveProjectStatusTicker,
+  TICKER_STAGES,
+} from "@/lib/projectStatusTicker";
 import { projectRowHealth } from "@/lib/projectListUtils";
 import { cn } from "@/lib/utils";
 
@@ -111,6 +116,7 @@ function healthBadgeClass(health: string): string {
 }
 
 const columnHelper = createColumnHelper<DashboardProjectRow>();
+const TICKER_STAGE_ORDER = new Map(TICKER_STAGES.map((id, i) => [id, i]));
 
 const baseColumns = [
   columnHelper.display({
@@ -187,6 +193,24 @@ const baseColumns = [
         undefined,
         { sensitivity: "base" },
       ),
+  }),
+  columnHelper.display({
+    id: "ticker",
+    header: "Status ticker",
+    cell: ({ row }) => (
+      <ProjectStatusTicker
+        ticker={deriveProjectStatusTicker(row.original)}
+        variant="compact"
+        className="min-w-[22rem]"
+      />
+    ),
+    sortingFn: (a, b) => {
+      const aTicker = deriveProjectStatusTicker(a.original);
+      const bTicker = deriveProjectStatusTicker(b.original);
+      const aRank = TICKER_STAGE_ORDER.get(aTicker.current) ?? 0;
+      const bRank = TICKER_STAGE_ORDER.get(bTicker.current) ?? 0;
+      return aRank - bRank;
+    },
   }),
   columnHelper.accessor((row) => row.project_status ?? "—", {
     id: "project_status",
@@ -365,6 +389,7 @@ export function ProjectsDataTable({
   const [segment, setSegment] = useState<SegmentFilter>("all");
   const [year, setYear] = useState<YearFilter>("all");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
+    project_status: false,
     total_quoted: canViewFinancialColumns,
     invoiced_amount: canViewFinancialColumns,
     realized_margin: canViewFinancialColumns,

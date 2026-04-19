@@ -1,228 +1,266 @@
-/** Project detail: P&L, costs, edit and save to Supabase. */
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
-import { ChevronDown, ChevronRight, Save, X } from "lucide-react";
+import { Save, X } from "lucide-react";
 
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { QuickLinksBar } from "@/components/dashboard/quick-links-bar";
-import { Button } from "@/components/ui/button";
-import { ProjectBasicsFields } from "@/components/projects/project-basics-fields";
+import { ProjectCalcPanel } from "@/components/projects/project-calc-panel";
 import { ProjectDocumentsSection } from "@/components/projects/project-documents-section";
+import { ProjectFilesPanel } from "@/components/projects/project-files-panel";
 import {
   ProjectActualsFinancialsPanel,
   ProjectQuoteFinancialsPanel,
 } from "@/components/projects/project-financials-panel";
-import type { ProjectBasicsField, ProjectRow } from "@/lib/projectTypes";
+import { ProjectOverviewPanel } from "@/components/projects/project-overview-panel";
+import { ProjectToolsDock } from "@/components/projects/project-tools-dock";
+import { ProjectWorkspaceTwoColumn } from "@/components/projects/project-workspace-two-column";
+import { StatusAdvanceDialog } from "@/components/projects/status-advance-dialog";
+import { Button } from "@/components/ui/button";
+import { useProjectDetail } from "@/hooks/useProjectDetail";
+import { canAccessSales, canEditProjects, canManageDocuments, canViewFinancials, normalizeAppRole } from "@/lib/auth/roles";
+import { type TickerStageId } from "@/lib/projectStatusTicker";
+import { ProjectWorkspaceProvider, useProjectWorkspace } from "@/lib/projectWorkspaceContext";
 import {
-  normalizeProjectLifecycle,
-  pickProjectUpdatePayload,
-} from "@/lib/projectTypes";
-import {
-  aggregateDashboardMetrics,
-  type DashboardProjectRow,
-} from "@/lib/dashboardMetrics";
-import { CUSTOMER_LIST_SELECT, type CustomerRow } from "@/lib/customerQueries";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
-import {
-  normalizeProjectMarkupPctsForEditor,
-  syncActualLaborCost,
-  syncQuoteDerivations,
-} from "@/lib/projectFinancials";
-import {
-  canAccessSales,
-  canEditProjects,
-  canManageDocuments,
-  canViewFinancials,
-  normalizeAppRole,
-} from "@/lib/auth/roles";
+  mergeWorkspaceLayout,
+  parseProjectWorkspaceLayout,
+  writeProjectWorkspaceLayoutToSearch,
+  type ProjectWorkspaceLayoutState,
+} from "@/lib/projectWorkspaceLayout";
 import { supabase } from "@/lib/supabaseClient";
 
-const detailFieldClass =
-  "w-full rounded-xl border border-zinc-700 bg-zinc-900/80 px-4 py-3 text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
+function WorkspaceBody({
+  searchState,
+  setSearchState,
+  id,
+  roleAllowsDocEdits,
+  canEditProject,
+  canViewProjectFinancials,
+  canAccessSalesRole,
+  onBasicsChange,
+  updateField,
+  customersList,
+  applyProjectPatch,
+  onAdvanceStage,
+}: {
+  searchState: ProjectWorkspaceLayoutState;
+  setSearchState: (next: ProjectWorkspaceLayoutState) => void;
+  id: string;
+  roleAllowsDocEdits: boolean;
+  canEditProject: boolean;
+  canViewProjectFinancials: boolean;
+  canAccessSalesRole: boolean;
+  onBasicsChange: ReturnType<typeof useProjectDetail>["onBasicsChange"];
+  updateField: ReturnType<typeof useProjectDetail>["updateField"];
+  customersList: ReturnType<typeof useProjectDetail>["customersList"];
+  applyProjectPatch: ReturnType<typeof useProjectDetail>["applyProjectPatch"];
+  onAdvanceStage: (stage: TickerStageId) => void;
+}) {
+  const workspace = useProjectWorkspace();
+  const sequenceRef = useRef<string[]>([]);
+  const docsRef = useRef<HTMLDivElement | null>(null);
+  const calcRef = useRef<HTMLDivElement | null>(null);
+  const filesRef = useRef<HTMLDivElement | null>(null);
 
-function isoToDatetimeLocal(iso: string | null | undefined): string {
-  if (iso == null || iso === "") return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  useEffect(() => {
+    if (workspace.focusTarget === "docs") {
+      docsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (workspace.focusTarget === "calc") {
+      calcRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (workspace.focusTarget === "files") {
+      filesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [workspace.focusTarget]);
+
+  useEffect(() => {
+    const next = mergeWorkspaceLayout(searchState, {
+      file: workspace.selectedFileId,
+      kind: workspace.focusedDocKind,
+    });
+    if (next.file !== searchState.file || next.kind !== searchState.kind) {
+      setSearchState(next);
+    }
+  }, [searchState, setSearchState, workspace.focusedDocKind, workspace.selectedFileId]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void workspace.savePatch({});
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key !== "g" && key !== "f" && key !== "c" && key !== "d") return;
+      sequenceRef.current = [...sequenceRef.current.slice(-1), key];
+      const joined = sequenceRef.current.join(" ");
+      if (joined === "g f") {
+        workspace.focus("files");
+        filesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      if (joined === "g c") {
+        workspace.focus("calc");
+        calcRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      if (joined === "g d") {
+        workspace.focus("docs");
+        docsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      window.setTimeout(() => {
+        sequenceRef.current = [];
+      }, 400);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [workspace]);
+
+  useEffect(() => {
+    if (!searchState.file) return;
+    if (workspace.selectedFileId === searchState.file) return;
+    workspace.selectFile(searchState.file);
+  }, [searchState.file, workspace]);
+
+  useEffect(() => {
+    if (!searchState.kind) return;
+    workspace.focus("docs", { docKind: searchState.kind });
+    // intentionally only on external query-kind changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchState.kind]);
+
+  return (
+    <ProjectWorkspaceTwoColumn
+      leftTop={
+        <ProjectOverviewPanel
+          project={workspace.project}
+          canEditProject={canEditProject}
+          customersList={customersList}
+          canAccessSales={canAccessSalesRole}
+          onBasicsChange={onBasicsChange}
+          updateField={updateField}
+          onAdvanceStage={onAdvanceStage}
+        />
+      }
+      leftMiddle={
+        <div ref={docsRef}>
+          <ProjectDocumentsSection
+            projectId={id}
+            project={workspace.project}
+            supabase={supabase}
+            onProjectRefresh={() => void workspace.refreshProject()}
+            onApplyQuoteFinancialsSnapshot={applyProjectPatch}
+            canManageDocuments={roleAllowsDocEdits}
+          />
+        </div>
+      }
+      leftBottom={
+        canViewProjectFinancials ? (
+          <div className="grid grid-cols-1 items-start gap-6 2xl:grid-cols-2">
+            <ProjectQuoteFinancialsPanel
+              project={workspace.project}
+              applyFinancialPatch={applyProjectPatch}
+            />
+            <ProjectActualsFinancialsPanel
+              project={workspace.project}
+              applyFinancialPatch={applyProjectPatch}
+            />
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-zinc-800/90 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-400">
+            Financial panels are hidden for your role.
+          </div>
+        )
+      }
+      rightTop={
+        <div ref={calcRef}>
+          <ProjectCalcPanel
+            projectId={id}
+            customer={workspace.project.customer ?? null}
+            projectName={workspace.project.project_name ?? null}
+            projectNumber={workspace.project.project_number ?? null}
+          />
+        </div>
+      }
+      rightMiddle={
+        <div ref={filesRef}>
+          {workspace.project.files_phase1_enabled !== false ? (
+            <ProjectFilesPanel projectId={id} />
+          ) : (
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
+              Project files are not enabled for this job yet.
+            </div>
+          )}
+        </div>
+      }
+      rightBottom={
+        <ProjectToolsDock
+          customer={workspace.project.customer ?? null}
+          projectNumber={workspace.project.project_number ?? null}
+          projectName={workspace.project.project_name ?? null}
+        />
+      }
+    />
+  );
 }
-
-function datetimeLocalToIso(local: string): string | null {
-  if (!local || local.trim() === "") return null;
-  const d = new Date(local);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
-}
-
-const OPS_MILESTONE_FIELDS: {
-  key:
-    | "rfq_vendors_sent_at"
-    | "quote_sent_at"
-    | "po_issued_at"
-    | "in_process_at"
-    | "materials_ordered_at"
-    | "material_received_at"
-    | "labor_completed_at"
-    | "completed_at"
-    | "delivered_at"
-    | "invoiced_at";
-  label: string;
-}[] = [
-  { key: "rfq_vendors_sent_at", label: "RFQ → vendors sent" },
-  { key: "quote_sent_at", label: "Quote sent" },
-  { key: "po_issued_at", label: "Customer PO" },
-  { key: "in_process_at", label: "In process (shop)" },
-  { key: "materials_ordered_at", label: "Materials ordered" },
-  { key: "material_received_at", label: "Material received" },
-  { key: "labor_completed_at", label: "Labor complete" },
-  { key: "completed_at", label: "Complete (sales board)" },
-  { key: "delivered_at", label: "Delivered" },
-  { key: "invoiced_at", label: "Invoiced" },
-];
 
 export default function ProjectDetail() {
   const params = useParams();
   const id = params.id as string;
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const searchParamsString = searchParams.toString();
+  const searchState = useMemo(
+    () => parseProjectWorkspaceLayout(new URLSearchParams(searchParamsString)),
+    [searchParamsString],
+  );
+  const [advanceStage, setAdvanceStage] = useState<TickerStageId | null>(null);
 
   const { data: session, status: sessionStatus } = useSession();
   const role = normalizeAppRole(session?.role);
   const canEditProject = canEditProjects(role);
   const canViewProjectFinancials = canViewFinancials(role);
 
-  const [project, setProject] = useState<ProjectRow | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [openQuotesCount, setOpenQuotesCount] = useState(0);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [milestonesOpen, setMilestonesOpen] = useState(false);
-  const [customersList, setCustomersList] = useState<CustomerRow[]>([]);
+  const {
+    project,
+    loading,
+    saving,
+    saveMessage,
+    saveError,
+    lastUpdated,
+    openQuotesCount,
+    customersList,
+    refreshProject,
+    applyProjectPatch,
+    updateField,
+    onBasicsChange,
+    saveProject,
+    saveProjectPatch,
+    setSaveError,
+    setSaveMessage,
+  } = useProjectDetail(id, sessionStatus === "authenticated", canEditProject);
 
-  const fetchProject = useCallback(
-    async (mode: "full" | "soft" = "full") => {
-      if (mode === "full") setLoading(true);
-      const { data, error } = await supabase
-        .from("projects")
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (error) {
-        console.error(error);
-        setProject(null);
-        setLastUpdated(null);
-      } else {
-        const row = data as ProjectRow;
-        const withMarkups = normalizeProjectMarkupPctsForEditor(row);
-        setProject({
-          ...withMarkups,
-          ...syncQuoteDerivations(withMarkups),
-          ...syncActualLaborCost(withMarkups),
-        });
-        setLastUpdated(new Date());
-      }
-      if (mode === "full") setLoading(false);
-    },
-    [id],
-  );
-
-  const fetchOpenQuotesCount = useCallback(async () => {
-    const { data, error } = await supabase.from("projects").select(PROJECT_SELECT);
-    if (error || !data) return;
-    setOpenQuotesCount(
-      aggregateDashboardMetrics(data as DashboardProjectRow[]).openQuotes,
+  useEffect(() => {
+    if (
+      !searchParams.get("tab") &&
+      !searchParams.get("view") &&
+      !searchParams.get("left") &&
+      !searchParams.get("center") &&
+      !searchParams.get("right")
+    ) {
+      return;
+    }
+    const nextParams = writeProjectWorkspaceLayoutToSearch(
+      new URLSearchParams(searchParamsString),
+      searchState,
     );
-  }, []);
-
-  useEffect(() => {
-    if (sessionStatus !== "authenticated") return;
-    void Promise.resolve().then(() => fetchProject("full"));
-  }, [fetchProject, sessionStatus]);
-
-  useEffect(() => {
-    if (sessionStatus !== "authenticated") return;
-    void Promise.resolve().then(() => fetchOpenQuotesCount());
-  }, [sessionStatus, fetchOpenQuotesCount]);
-
-  useEffect(() => {
-    if (sessionStatus !== "authenticated") return;
-    let cancelled = false;
-    void supabase
-      .from("customers")
-      .select(CUSTOMER_LIST_SELECT)
-      .order("legal_name", { ascending: true })
-      .then(({ data, error }) => {
-        if (cancelled || error || !data) return;
-        setCustomersList(data as CustomerRow[]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionStatus]);
-
-  const applyFinancialPatch = useCallback((patch: Partial<ProjectRow>) => {
-    setProject((prev) => {
-      if (!prev) return null;
-      const next = { ...prev, ...patch };
-      return {
-        ...next,
-        ...syncQuoteDerivations(next),
-        ...syncActualLaborCost(next),
-      };
-    });
-  }, []);
-
-  const handleSave = async () => {
-    if (!project) return;
-    if (!canEditProject) {
-      setSaveError("Your role can view this project but cannot edit it.");
-      return;
-    }
-    setSaving(true);
-    setSaveMessage(null);
-    setSaveError(null);
-    const synced = normalizeProjectMarkupPctsForEditor({
-      ...project,
-      ...syncQuoteDerivations(project),
-      ...syncActualLaborCost(project),
-    });
-    const normalized = normalizeProjectLifecycle(synced);
-    const payload = pickProjectUpdatePayload(normalized);
-    const { error } = await supabase
-      .from("projects")
-      .update(payload)
-      .eq("id", id);
-    if (!error) {
-      setProject(normalized);
-      setSaveMessage(
-        "Saved — realtime update sent to all connected sessions.",
-      );
-      setLastUpdated(new Date());
-      void fetchProject("soft");
-    } else {
-      setSaveError(error.message ?? "Could not save changes.");
-    }
-    setSaving(false);
-  };
-
-  const updateField = <K extends keyof ProjectRow>(
-    field: K,
-    value: ProjectRow[K],
-  ) => {
-    setProject((prev) => (prev ? { ...prev, [field]: value } : null));
-  };
-
-  const onBasicsChange = (field: ProjectBasicsField, value: string) => {
-    if (field === "customer" || field === "project_name") {
-      updateField(field, value.toUpperCase());
-      return;
-    }
-    updateField(field, value);
-  };
+    if (nextParams.toString() === searchParamsString) return;
+    router.replace(`${pathname}?${nextParams.toString()}`);
+  }, [pathname, router, searchParams, searchParamsString, searchState]);
 
   if (sessionStatus === "loading") {
     return (
@@ -235,9 +273,7 @@ export default function ProjectDetail() {
   if (!session) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
-        <p className="mb-6 text-lg text-zinc-300">
-          Sign in to view this project.
-        </p>
+        <p className="mb-6 text-lg text-zinc-300">Sign in to view this project.</p>
         <button
           type="button"
           onClick={() => signIn()}
@@ -250,21 +286,19 @@ export default function ProjectDetail() {
   }
 
   const newProjectHref = `/new-project?returnTo=${encodeURIComponent(`/projects/${id}`)}`;
-
   const headerTitle =
     loading || !project
       ? "Project"
       : `${project.project_number} — ${project.project_name?.toUpperCase() ?? ""}`;
-
   const headerSubtitle = loading
     ? "Loading job details…"
     : !project
       ? "This job could not be found or you may not have access."
-      : "P&L, quote lines, and job status — edits save to Supabase.";
+      : "Project workspace with docs, calc, files, and financials.";
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
+      <div className="mx-auto max-w-[1700px] px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
         <DashboardHeader
           userName={session.user?.name}
           lastUpdated={lastUpdated}
@@ -290,36 +324,28 @@ export default function ProjectDetail() {
             Loading project details…
           </div>
         ) : !project ? (
-          <div className="mt-16 text-center text-lg text-zinc-400">
-            Project not found
-          </div>
+          <div className="mt-16 text-center text-lg text-zinc-400">Project not found</div>
         ) : (
-          <div className="mx-auto mt-10 max-w-7xl">
-            <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end">
+          <div className="mx-auto mt-10 max-w-[1700px]">
+            <div className="mb-6 flex flex-wrap items-center justify-end gap-3">
               <Button
                 type="button"
-                onClick={handleSave}
+                onClick={() => void saveProject()}
                 disabled={saving || !canEditProject}
-                className="gap-2 self-start sm:self-auto"
+                className="gap-2"
               >
                 <Save className="size-4" />
                 {saving ? "Saving…" : "Save changes"}
               </Button>
             </div>
+
             {!canEditProject ? (
-              <div
-                className="mb-6 rounded-2xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
-                role="status"
-              >
+              <div className="mb-6 rounded-2xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
                 Your role has read-only access on this project.
               </div>
             ) : null}
-
             {saveMessage ? (
-              <div
-                className="mb-6 flex items-start justify-between gap-3 rounded-2xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100"
-                role="status"
-              >
+              <div className="mb-6 flex items-start justify-between gap-3 rounded-2xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
                 <p>{saveMessage}</p>
                 <button
                   type="button"
@@ -332,15 +358,9 @@ export default function ProjectDetail() {
               </div>
             ) : null}
             {saveError ? (
-              <div
-                className="mb-6 flex items-start justify-between gap-3 rounded-2xl border border-red-500/35 bg-red-500/10 px-4 py-3 text-sm text-red-200"
-                role="alert"
-              >
+              <div className="mb-6 flex items-start justify-between gap-3 rounded-2xl border border-red-500/35 bg-red-500/10 px-4 py-3 text-sm text-red-200">
                 <p>
-                  <span className="font-semibold text-red-100">
-                    Save failed.
-                  </span>{" "}
-                  {saveError}
+                  <span className="font-semibold text-red-100">Save failed.</span> {saveError}
                 </p>
                 <button
                   type="button"
@@ -353,219 +373,46 @@ export default function ProjectDetail() {
               </div>
             ) : null}
 
-      <fieldset className="space-y-8" disabled={!canEditProject}>
-        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8">
-            <h2 className="text-xl font-semibold mb-6">Project Info</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs text-zinc-500 block mb-1">
-                  PROJECT #
-                </label>
-                <div className="font-mono text-2xl font-semibold text-emerald-400/90 tracking-tight">
-                  {project.project_number}
-                </div>
-              </div>
-              <ProjectBasicsFields
-                mode="edit"
-                value={{
-                  customer: project.customer,
-                  project_name: project.project_name,
-                  customer_po: project.customer_po,
-                  supply_industrial: project.supply_industrial,
-                }}
-                onChange={onBasicsChange}
-              />
-              <div>
-                <label className="mb-1 block text-xs text-zinc-500">
-                  CRM account (optional)
-                </label>
-                <select
-                  value={project.customer_id ?? ""}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    updateField("customer_id", v === "" ? null : v);
-                  }}
-                  className={detailFieldClass}
-                >
-                  <option value="">None — free-text customer only</option>
-                  {customersList.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.legal_name}
-                      {c.account_code
-                        ? ` (${c.account_code})`
-                        : ""}
-                    </option>
-                  ))}
-                </select>
-                {project.customer_id && canAccessSales(role) ? (
-                  <p className="mt-1 text-[11px] text-zinc-500">
-                    <a
-                      href={`/sales/customers/${project.customer_id}`}
-                      className="text-blue-400 hover:underline"
-                    >
-                      Open account in Sales
-                    </a>
-                  </p>
-                ) : null}
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-zinc-500 block mb-1">
-                    APPROVAL
-                  </label>
-                  <select
-                    value={project.customer_approval || "PENDING"}
-                    onChange={(e) =>
-                      updateField("customer_approval", e.target.value)
-                    }
-                    className={detailFieldClass}
-                  >
-                    <option value="PENDING">PENDING</option>
-                    <option value="ACCEPTED">ACCEPTED</option>
-                    <option value="REJECTED">REJECTED</option>
-                    <option value="CANCELLED">CANCELLED</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-zinc-500 block mb-1">
-                    PROJECT STATUS
-                  </label>
-                  <select
-                    value={project.project_status || ""}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      updateField(
-                        "project_status",
-                        v === ""
-                          ? null
-                          : (v as NonNullable<ProjectRow["project_status"]>),
-                      );
-                    }}
-                    className={detailFieldClass}
-                  >
-                    <option value="">—</option>
-                    <option value="in_process">IN PROCESS</option>
-                    <option value="done">DONE</option>
-                    <option value="cancelled">CANCELLED</option>
-                  </select>
-                </div>
-              </div>
-              <label className="flex items-center gap-3 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={!!project.project_complete}
-                  onChange={(e) =>
-                    updateField("project_complete", e.target.checked)
-                  }
-                  className="size-4 rounded border-zinc-600 bg-zinc-900 text-blue-500 focus:ring-2 focus:ring-blue-500/40"
-                />
-                <span className="text-sm text-zinc-300">Project complete</span>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={!!project.payment_received}
-                  onChange={(e) =>
-                    updateField("payment_received", e.target.checked)
-                  }
-                  className="size-4 rounded border-zinc-600 bg-zinc-900 text-blue-500 focus:ring-2 focus:ring-blue-500/40"
-                />
-                <span className="text-sm text-zinc-300">Payment received</span>
-              </label>
-              <p className="text-xs text-zinc-500">
-                Saving sets <strong className="text-zinc-400">complete</strong>{" "}
-                to match status: Done → complete, Cancelled → not complete.
-              </p>
-              <div className="mt-6 rounded-2xl border border-zinc-800/50 bg-zinc-950/30 p-4">
-                <button
-                  type="button"
-                  onClick={() => setMilestonesOpen((o) => !o)}
-                  className="flex w-full items-center gap-1.5 text-left text-xs font-medium text-zinc-400 hover:text-zinc-200"
-                  aria-expanded={milestonesOpen}
-                  id="project-milestones-toggle"
-                >
-                  {milestonesOpen ? (
-                    <ChevronDown className="size-4 shrink-0 text-zinc-500" />
-                  ) : (
-                    <ChevronRight className="size-4 shrink-0 text-zinc-500" />
-                  )}
-                  Milestones (date/time, optional)
-                </button>
-                {milestonesOpen ? (
-                  <div
-                    className="mt-4 space-y-4 text-sm"
-                    role="region"
-                    aria-labelledby="project-milestones-toggle"
-                  >
-                    <p className="text-[11px] leading-snug text-zinc-500">
-                      Optional ops timestamps for this job. Hidden until you
-                      expand this section.
-                    </p>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      {OPS_MILESTONE_FIELDS.map(({ key, label }) => (
-                        <div key={key}>
-                          <label className="mb-1 block text-xs text-zinc-500">
-                            {label}
-                          </label>
-                          <input
-                            type="datetime-local"
-                            value={isoToDatetimeLocal(project[key])}
-                            onChange={(e) =>
-                              updateField(
-                                key,
-                                datetimeLocalToIso(e.target.value),
-                              )
-                            }
-                            className={detailFieldClass}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-        {canViewProjectFinancials ? (
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-start">
-            <ProjectQuoteFinancialsPanel
-              project={project}
-              applyFinancialPatch={applyFinancialPatch}
-            />
-            <ProjectActualsFinancialsPanel
-              project={project}
-              applyFinancialPatch={applyFinancialPatch}
-            />
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-zinc-800/90 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-400">
-            Financial panels are hidden for your role.
-          </div>
-        )}
-      </fieldset>
-
-            <div className="mt-8">
-            <ProjectDocumentsSection
+            <ProjectWorkspaceProvider
               projectId={id}
               project={project}
-              supabase={supabase}
-              onProjectRefresh={() => void fetchProject("soft")}
-              onApplyQuoteFinancialsSnapshot={applyFinancialPatch}
-              canManageDocuments={canManageDocuments(role)}
-            />
+              applyPatch={applyProjectPatch}
+              savePatch={saveProjectPatch}
+              refreshProject={refreshProject}
+            >
+              <WorkspaceBody
+                searchState={searchState}
+                setSearchState={(next) => {
+                  const urlParams = writeProjectWorkspaceLayoutToSearch(
+                    new URLSearchParams(searchParamsString),
+                    next,
+                  );
+                  if (urlParams.toString() === searchParamsString) return;
+                  router.replace(`${pathname}?${urlParams.toString()}`);
+                }}
+                id={id}
+                roleAllowsDocEdits={canManageDocuments(role)}
+                canEditProject={canEditProject}
+                canViewProjectFinancials={canViewProjectFinancials}
+                canAccessSalesRole={canAccessSales(role)}
+                onBasicsChange={onBasicsChange}
+                updateField={updateField}
+                customersList={customersList}
+                applyProjectPatch={applyProjectPatch}
+                onAdvanceStage={(stage) => setAdvanceStage(stage)}
+              />
+            </ProjectWorkspaceProvider>
 
-            <div className="mt-12 text-center">
-              <a
-                href={`https://onedrive.live.com/?id=ROOT&cid=...&folder=Documents%2F0%20PROJECT%20FOLDERS%2F${project.customer}%2F${project.project_number}%20-%20${project.project_name}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-blue-400 hover:underline"
-              >
-                Open this job’s folder in OneDrive (Documents/0 PROJECT FOLDERS)
-              </a>
-            </div>
-            </div>
+            <StatusAdvanceDialog
+              open={advanceStage !== null}
+              stage={advanceStage}
+              project={project}
+              onClose={() => setAdvanceStage(null)}
+              onConfirm={async (patch) => {
+                await saveProjectPatch(patch);
+                setAdvanceStage(null);
+              }}
+            />
           </div>
         )}
       </div>

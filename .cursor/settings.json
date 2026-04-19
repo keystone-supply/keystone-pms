@@ -15,15 +15,6 @@
     "continual-learning": {
       "enabled": true
     },
-    "vercel": {
-      "enabled": true
-    },
-    "sanity": {
-      "enabled": true
-    },
-    "atlassian": {
-      "enabled": true
-    },
     "superpowers": {
       "enabled": true
     }

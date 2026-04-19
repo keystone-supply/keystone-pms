@@ -27,7 +27,7 @@ import {
   type DashboardMetrics,
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { withProjectSelectFallback } from "@/lib/projectQueries";
 
 function formatUsd(n: number): string {
   return new Intl.NumberFormat(undefined, {
@@ -50,11 +50,18 @@ export default function Dashboard() {
   const { data: session, status } = useSession();
 
   const fetchProjects = useCallback(async () => {
-    const { data, error } = await supabase.from("projects").select(PROJECT_SELECT);
+    const { data, error, usedLegacySelect } = await withProjectSelectFallback(
+      (select) => supabase.from("projects").select(select),
+    );
     if (error) {
       console.error("[Dashboard] projects query failed:", error.message, error);
       setQueryError(error.message);
     } else {
+      if (usedLegacySelect) {
+        console.warn(
+          "[Dashboard] using legacy project select because ticker columns are missing. Run latest Supabase migrations.",
+        );
+      }
       const rows = (data ?? []) as DashboardProjectRow[];
       setMetrics(aggregateDashboardMetrics(rows));
       setLastUpdated(new Date());

@@ -9,6 +9,7 @@ import {
   type SalesProjectColumn,
 } from "@/lib/salesCommandBoardColumn";
 import { computeQuotedInternalCostTotal } from "@/lib/projectFinancials";
+import type { ProjectStatusTicker } from "@/lib/projectStatusTicker";
 
 export type CustomerApproval =
   | "PENDING"
@@ -55,6 +56,7 @@ export type DashboardProjectRow = {
   logistics_quoted?: number | null;
   taxes_quoted?: number | null;
   sales_command_stage?: string | null;
+  rfq_received_at?: string | null;
   rfq_vendors_sent_at?: string | null;
   quote_sent_at?: string | null;
   po_issued_at?: string | null;
@@ -63,6 +65,7 @@ export type DashboardProjectRow = {
   materials_ordered_at?: string | null;
   material_received_at?: string | null;
   labor_completed_at?: string | null;
+  ready_to_ship_at?: string | null;
   completed_at?: string | null;
   delivered_at?: string | null;
   invoiced_at?: string | null;
@@ -126,7 +129,17 @@ export type CommandBoardTVSummary = {
   inProcessCount: number;
   activeProjects: number;
   recentAttention: AttentionItem[];
+  projects: TvProjectTickerRow[];
   lastUpdated: Date;
+};
+
+export type TvProjectTickerRow = {
+  project_number: string;
+  project_name: string;
+  customer: string;
+  customer_approval: string | null;
+  ticker: ProjectStatusTicker;
+  moved_in_last_24h: boolean;
 };
 
 function ytdStartIso(year: number): string {
@@ -169,8 +182,6 @@ export function estimatedMarginPctQuoted(p: DashboardProjectRow): number | null 
   if (q <= 0) return null;
   return (estimatedPlQuoted(p) / q) * 100;
 }
-
-const MS_PER_DAY = 86400000;
 
 /** Pending quotes older than this (days) are flagged as stale (list + dashboard). */
 export const STALE_QUOTE_DAYS = 14;
@@ -358,6 +369,23 @@ export function getCommandBoardTVSummary(
     inProcessCount: metrics.pipelineColumnCounts.in_process || 0,
     activeProjects: metrics.activeProjects,
     recentAttention,
+    projects: [],
     lastUpdated: now,
+  };
+}
+
+export function getCommandBoardTVSummaryWithTickers(
+  projects: DashboardProjectRow[],
+  tickerRows: TvProjectTickerRow[],
+  now: Date = new Date(),
+): CommandBoardTVSummary {
+  const base = getCommandBoardTVSummary(projects, now);
+  const sortedRows = tickerRows
+    .sort((a, b) => b.ticker.staleDays - a.ticker.staleDays)
+    .slice(0, 50);
+
+  return {
+    ...base,
+    projects: sortedRows,
   };
 }

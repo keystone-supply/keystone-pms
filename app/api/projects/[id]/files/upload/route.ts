@@ -1,0 +1,141 @@
+import { NextRequest, NextResponse } from "next/server";
+
+import { requireApiRole } from "@/lib/auth/api-guard";
+import { canEditProjects } from "@/lib/auth/roles";
+import { adminSupabase } from "@/lib/supabaseAdmin";
+import { createProjectFolders, ensureFolder } from "@/lib/onedrive";
+import { deltaSyncProject, mirrorFile } from "@/lib/files/oneDriveSync";
+import type { ProjectFileRow, ProjectFolderSlot } from "@/lib/projectFiles";
+import { getGraphAccessToken } from "@/lib/auth/apiAccessToken";
+
+const SLOT_TO_SUFFIX: Record<ProjectFolderSlot, string | null> = {
+  cad: "_CAD",
+  vendors: "_VENDORS",
+  pics: "_PICS",
+  docs: "_DOCS",
+  gcode: "_G-CODE",
+  root: null,
+  other: null,
+};
+
+type ProjectUploadMetadata = {
+  customer: string | null;
+  project_number: string | null;
+  project_name: string | null;
+};
+
+function sanitizeFileName(name: string): string {
+  return name.replace(/[\\/:*?"<>|]/g, "_").trim();
+}
+
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  const authResult = await requireApiRole(
+    request,
+    canEditProjects,
+    "Your role cannot upload project files.",
+  );
+  if (!authResult.ok) return authResult.response;
+  if (!adminSupabase) {
+    return NextResponse.json(
+      { error: "Files API is not configured." },
+      { status: 500 },
+    );
+  }
+
+  const accessToken = await getGraphAccessToken(request);
+  if (!accessToken) {
+    return NextResponse.json(
+      { error: "Sign in with Azure AD to upload to OneDrive." },
+      { status: 401 },
+    );
+  }
+
+  const params = await context.params;
+  const formData = await request.formData();
+  const upload = formData.get("file");
+  if (!(upload instanceof File)) {
+    return NextResponse.json({ error: "Missing file upload." }, { status: 400 });
+  }
+
+  const slotRaw = String(formData.get("folderSlot") ?? "root");
+  const folderSlot = (Object.keys(SLOT_TO_SUFFIX) as ProjectFolderSlot[]).includes(
+    slotRaw as ProjectFolderSlot,
+  )
+    ? (slotRaw as ProjectFolderSlot)
+    : "root";
+  const targetName = sanitizeFileName(upload.name || "upload.bin");
+
+  const { data: project, error: projectError } = await adminSupabase
+    .from("projects")
+    .select("customer,project_number,project_name")
+    .eq("id", params.id)
+    .single();
+  if (projectError || !project) {
+    return NextResponse.json({ error: "Project not found." }, { status: 404 });
+  }
+  const meta = project as ProjectUploadMetadata;
+
+  const basePath = await createProjectFolders(
+    accessToken,
+    meta.customer ?? "",
+    String(meta.project_number ?? ""),
+    meta.project_name ?? "",
+  );
+  const suffix = SLOT_TO_SUFFIX[folderSlot];
+  let uploadPath = basePath;
+  if (suffix) {
+    uploadPath = `${basePath}/${String(meta.project_number ?? "").trim()}${suffix}`;
+    await ensureFolder(
+      { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      uploadPath,
+    );
+  }
+
+  const oneDriveTarget = `${uploadPath}/${targetName}`;
+  const uploadBuffer = new Uint8Array(await upload.arrayBuffer());
+  const uploadRes = await fetch(
+    `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(oneDriveTarget)}:/content`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: uploadBuffer,
+    },
+  );
+  const uploadText = await uploadRes.text().catch(() => "");
+  if (!uploadRes.ok) {
+    return NextResponse.json(
+      { error: `OneDrive upload failed (${uploadRes.status}): ${uploadText}` },
+      { status: 502 },
+    );
+  }
+  const uploaded = (uploadText ? JSON.parse(uploadText) : {}) as { id?: string };
+  if (!uploaded.id) {
+    return NextResponse.json(
+      { error: "OneDrive did not return item metadata." },
+      { status: 502 },
+    );
+  }
+
+  await deltaSyncProject(params.id, accessToken);
+
+  const { data: row, error: rowError } = await adminSupabase
+    .from("project_files")
+    .select("*")
+    .eq("project_id", params.id)
+    .eq("onedrive_item_id", uploaded.id)
+    .single();
+  if (rowError || !row) {
+    return NextResponse.json(
+      { error: rowError?.message ?? "Uploaded file is not indexed yet." },
+      { status: 409 },
+    );
+  }
+
+  const mirrored = await mirrorFile(row as ProjectFileRow, accessToken);
+  return NextResponse.json({ ok: true, file: mirrored });
+}

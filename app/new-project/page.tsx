@@ -19,7 +19,7 @@ import {
   aggregateDashboardMetrics,
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { withProjectSelectFallback } from "@/lib/projectQueries";
 import { canCreateProjects, normalizeAppRole } from "@/lib/auth/roles";
 
 function NewProjectForm({
@@ -70,6 +70,7 @@ function NewProjectForm({
         project_complete: false,
         project_status: "in_process",
         payment_received: false,
+        files_phase1_enabled: true,
         material_cost: null,
         labor_cost: null,
         engineering_cost: null,
@@ -185,9 +186,9 @@ function NewProjectWithReturnTo() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const fetchOpenQuotesCount = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("projects")
-      .select(PROJECT_SELECT);
+    const { data, error } = await withProjectSelectFallback((select) =>
+      supabase.from("projects").select(select),
+    );
     if (error || !data) return;
     setOpenQuotesCount(
       aggregateDashboardMetrics(data as DashboardProjectRow[]).openQuotes,

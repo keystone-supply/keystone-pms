@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Monitor } from "lucide-react";
+import { Activity, AlertTriangle, Monitor } from "lucide-react";
 import { signIn, signOut, useSession } from "next-auth/react";
 
-import { TVCommandMetrics } from "@/components/tv/tv-command-metrics";
+import { TvProjectTickers } from "@/components/tv/tv-project-tickers";
 import {
   getCommandBoardTVSummary,
   type CommandBoardTVSummary,
@@ -22,6 +22,7 @@ export default function ShopTVPage() {
   const [summary, setSummary] = useState<CommandBoardTVSummary>(() =>
     getCommandBoardTVSummary([]),
   );
+  const [pageIndex, setPageIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,6 +68,18 @@ export default function ShopTVPage() {
       clearInterval(pollInterval);
     };
   }, [fetchSummary, status]);
+
+  useEffect(() => {
+    if (summary.projects.length <= 8) {
+      setPageIndex(0);
+      return;
+    }
+    const pages = Math.ceil(summary.projects.length / 8);
+    const id = setInterval(() => {
+      setPageIndex((prev) => (prev + 1) % pages);
+    }, 15000);
+    return () => clearInterval(id);
+  }, [summary.projects.length]);
 
   // TV auto-refresh on visibility change (for screen savers / power management)
   useEffect(() => {
@@ -154,9 +167,8 @@ export default function ShopTVPage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white overflow-hidden">
-      <div className="mx-auto max-w-[1600px] px-8 py-6">
-        {/* TV Header - Minimal */}
+    <div className="min-h-screen overflow-hidden bg-zinc-950 text-white">
+      <div className="mx-auto max-w-[1800px] px-8 py-6">
         <div className="flex items-center justify-between border-b border-zinc-800 pb-6">
           <div className="flex items-center gap-4">
             <div className="flex size-12 items-center justify-center rounded-2xl bg-emerald-500/10">
@@ -179,56 +191,63 @@ export default function ShopTVPage() {
           </div>
         </div>
 
-        <TVCommandMetrics summary={summary} className="mt-10" />
-
-        {/* Network Access Guide - Visible on TV */}
-        <div className="mt-12 rounded-3xl border border-blue-500/30 bg-zinc-900/80 p-8">
-          <div className="flex items-center gap-4 mb-6">
-            <Monitor className="size-8 text-blue-400" />
-            <div>
-              <h3 className="text-2xl font-semibold text-blue-300">Access from Shop TV / Monitor</h3>
-              <p className="text-zinc-400">On another device on the same network</p>
-            </div>
+        <div className="mt-8 grid gap-4 lg:grid-cols-3">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+            <p className="text-xs uppercase tracking-widest text-zinc-500">
+              ACTIVE JOBS
+            </p>
+            <p className="mt-2 font-mono text-5xl text-white">
+              {summary.activeProjects.toLocaleString()}
+            </p>
           </div>
-
-          <div className="grid md:grid-cols-2 gap-8 text-sm">
-            <div>
-              <div className="font-mono text-xs uppercase tracking-widest text-zinc-500 mb-2">1. START TV SERVER</div>
-              <div className="rounded-xl bg-zinc-950 p-4 font-mono text-emerald-300 text-xs leading-relaxed border border-emerald-500/20">
-                npm run dev:tv
-              </div>
-              <p className="mt-3 text-xs text-zinc-500">
-                This runs on all network interfaces (0.0.0.0). Look for the IP in terminal.
-              </p>
-            </div>
-
-            <div>
-              <div className="font-mono text-xs uppercase tracking-widest text-zinc-500 mb-2">2. FIND LAPTOP IP (Windows 11)</div>
-              <div className="rounded-xl bg-zinc-950 p-4 font-mono text-amber-300 text-xs leading-relaxed border border-amber-500/20">
-                Open PowerShell or CMD and run:<br />
-                ipconfig
-              </div>
-              <p className="mt-3 text-xs text-zinc-500">
-                Look for &quot;IPv4 Address&quot; under Wireless LAN or Ethernet adapter (e.g. 192.168.1.105)
-              </p>
-            </div>
+          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-5">
+            <p className="text-xs uppercase tracking-widest text-emerald-300/70">
+              IN PROCESS
+            </p>
+            <p className="mt-2 font-mono text-5xl text-emerald-300">
+              {summary.inProcessCount.toLocaleString()}
+            </p>
           </div>
-
-          <div className="mt-8 pt-6 border-t border-zinc-700 text-center">
-            <div className="text-xs text-zinc-400 mb-1">OPEN THIS URL ON THE TV BROWSER:</div>
-            <div className="inline-flex items-center gap-3 rounded-2xl bg-zinc-950 px-8 py-4 font-mono text-lg text-white border border-blue-500/40">
-              http://YOUR-LAPTOP-IP:3000/shop-tv
-            </div>
-            <p className="mt-4 text-[10px] text-zinc-500 max-w-md mx-auto">
-              Replace YOUR-LAPTOP-IP with the address from ipconfig. The TV must be on the same WiFi/network.
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-950/20 p-5">
+            <p className="text-xs uppercase tracking-widest text-amber-300/80">
+              NEEDS ATTENTION
+            </p>
+            <p className="mt-2 font-mono text-5xl text-amber-200">
+              {summary.recentAttention.length.toLocaleString()}
             </p>
           </div>
         </div>
+
+        <div className="mt-6">
+          <TvProjectTickers projects={summary.projects} pageIndex={pageIndex} />
+        </div>
+
+        {summary.recentAttention.length > 0 ? (
+          <div className="mt-6 rounded-2xl border border-amber-500/30 bg-zinc-900/70 p-4">
+            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-amber-300">
+              <AlertTriangle className="size-4" />
+              Needs attention
+            </div>
+            <div className="grid gap-2 lg:grid-cols-3">
+              {summary.recentAttention.slice(0, 3).map((item) => (
+                <div
+                  key={item.id}
+                  className="rounded-xl border border-amber-500/20 bg-zinc-950/60 px-3 py-2"
+                >
+                  <p className="font-mono text-sm text-amber-100">
+                    #{item.project_number}
+                  </p>
+                  <p className="text-xs text-zinc-300">{item.project_name}</p>
+                  <p className="text-[11px] text-zinc-500">{item.reason}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
-      {/* Subtle footer for TV context */}
       <div className="fixed bottom-3 right-6 text-[10px] font-mono text-zinc-600">
-        Keystone PMS • Updates every 30s • {summary.lastUpdated.toLocaleDateString()}
+        Keystone PMS • Updates every 30s • {summary.lastUpdated.toLocaleTimeString()}
       </div>
     </div>
   );

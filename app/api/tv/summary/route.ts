@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 import {
-  getCommandBoardTVSummary,
+  getCommandBoardTVSummaryWithTickers,
+  type TvProjectTickerRow,
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { withProjectSelectFallback } from "@/lib/projectQueries";
 import { requireApiRole } from "@/lib/auth/api-guard";
 import { canViewShopTv } from "@/lib/auth/roles";
+import { deriveProjectStatusTicker } from "@/lib/projectStatusTicker";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey =
@@ -40,10 +42,12 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const { data, error } = await adminSupabase
-    .from("projects")
-    .select(PROJECT_SELECT)
-    .order("updated_at", { ascending: false });
+  const { data, error } = await withProjectSelectFallback((select) =>
+    adminSupabase
+      .from("projects")
+      .select(select)
+      .order("updated_at", { ascending: false }),
+  );
 
   if (error) {
     return NextResponse.json(
@@ -53,7 +57,33 @@ export async function GET(request: NextRequest) {
   }
 
   const now = new Date();
-  const summary = getCommandBoardTVSummary((data ?? []) as DashboardProjectRow[], now);
+  const projects = (data ?? []) as DashboardProjectRow[];
+  const dayAgoMs = now.getTime() - 24 * 60 * 60 * 1000;
+  const tickerRows: TvProjectTickerRow[] = projects
+    .filter((project) => {
+      const cancelled =
+        project.project_status === "cancelled" ||
+        String(project.customer_approval ?? "").toUpperCase() === "CANCELLED";
+      return !cancelled && !project.project_complete;
+    })
+    .map((project) => {
+      const ticker = deriveProjectStatusTicker(project, now);
+      const movedInLast24h = ticker.stages.some((stage) => {
+        if (!stage.reachedAt) return false;
+        const reachedMs = new Date(stage.reachedAt).getTime();
+        return Number.isFinite(reachedMs) && reachedMs >= dayAgoMs;
+      });
+      return {
+        project_number: String(project.project_number ?? ""),
+        project_name: String(project.project_name ?? ""),
+        customer: String(project.customer ?? ""),
+        customer_approval:
+          project.customer_approval == null ? null : String(project.customer_approval),
+        ticker,
+        moved_in_last_24h: movedInLast24h,
+      };
+    });
+  const summary = getCommandBoardTVSummaryWithTickers(projects, tickerRows, now);
 
   return NextResponse.json(
     {

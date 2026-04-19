@@ -10,6 +10,7 @@ import {
   FunctionSquare,
   HardDriveDownload,
   ListOrdered,
+  Pin,
   Plus,
   Ruler,
   Save,
@@ -17,7 +18,7 @@ import {
   Sigma,
   Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { KpiCard } from "@/components/dashboard/kpi-card";
@@ -32,13 +33,21 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  deleteProjectTape,
+  listProjectTapes,
+  loadTapeFromProject,
+  renameProjectTape,
+  saveTapeToProject,
+} from "@/lib/calcLines/calcLineStorage";
+import type { ProjectCalcTapeRow } from "@/lib/calcLines/types";
+import {
   aggregateDashboardMetrics,
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
 import { uploadTapeToDocs } from "@/lib/onedrive";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { withProjectSelectFallback } from "@/lib/projectQueries";
+import { useProjectWorkspaceOptional } from "@/lib/projectWorkspaceContext";
 import { supabase } from "@/lib/supabaseClient";
-import { evaluateUnifiedTape } from "@/lib/tapeCalculator";
 import type { UnifiedTapeLine } from "@/lib/unifiedTapeTypes";
 import {
   buildFullExport,
@@ -52,7 +61,6 @@ import {
   unifiedSavedTapeTitle,
 } from "@/lib/unifiedTapeStorage";
 import {
-  buildCalculationText,
   getMaterialTapeLineSummaryRows,
 } from "@/lib/weightCalculationText";
 import {
@@ -69,23 +77,42 @@ import {
   getTapeItemTotals,
   shapeHasDim2,
 } from "@/lib/weightCalcMath";
-import type { CostKey, MaterialKey, ShapeValue, TapeItem } from "@/lib/weightTapeTypes";
+import { useUnifiedTape } from "@/lib/useUnifiedTape";
+import type { CostKey, ShapeValue } from "@/lib/weightTapeTypes";
 
-function newMathLine(): UnifiedTapeLine {
-  return { id: crypto.randomUUID(), kind: "math", expr: "" };
-}
-
-export function UnifiedShopCalc() {
+export function UnifiedShopCalc({
+  allowOneDriveExport = true,
+  layout = "page",
+  projectId = null,
+  projectNumber = null,
+  projectName = null,
+  customer = null,
+}: {
+  allowOneDriveExport?: boolean;
+  layout?: "page" | "embedded";
+  projectId?: string | null;
+  projectNumber?: string | null;
+  projectName?: string | null;
+  customer?: string | null;
+} = {}) {
   const { data: session, status } = useSession();
+  const workspace = useProjectWorkspaceOptional();
+  const usingProjectTapes = !!projectId;
+  const attemptedProjectTapesInitRef = useRef(false);
+
+  useEffect(() => {
+    attemptedProjectTapesInitRef.current = false;
+  }, [projectId]);
 
   const [openQuotesCount, setOpenQuotesCount] = useState(0);
-  const [lines, setLines] = useState<UnifiedTapeLine[]>(() => [newMathLine()]);
   const [copyHint, setCopyHint] = useState<string | null>(null);
   const [savedTapes, setSavedTapes] = useState<SavedUnifiedTapeRecord[]>([]);
   const [selectedSavedTapeId, setSelectedSavedTapeId] = useState<string>("");
-  const [materialEditLineId, setMaterialEditLineId] = useState<string | null>(
-    null,
-  );
+  const [projectTapes, setProjectTapes] = useState<ProjectCalcTapeRow[]>([]);
+  const [selectedProjectTapeId, setSelectedProjectTapeId] = useState<string>("");
+  const [projectTapeName, setProjectTapeName] = useState("");
+  const [projectTapeBusy, setProjectTapeBusy] = useState(false);
+  const [projectTapeError, setProjectTapeError] = useState<string | null>(null);
 
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   /** When set, export modal uses these lines instead of the working tape (e.g. saved tape). */
@@ -102,181 +129,55 @@ export function UnifiedShopCalc() {
   const [exportMethod, setExportMethod] = useState<"download" | "onedrive">(
     "download",
   );
-
-  const [materialCostOption, setMaterialCostOption] = useState<CostKey>("mild");
-  const [shape, setShape] = useState<ShapeValue>("square");
-  const [lengthIn, setLengthIn] = useState<number>(96);
-  const [dim1, setDim1] = useState(1);
-  const [dim2, setDim2] = useState(0.25);
-  const [quantity, setQuantity] = useState<number>(1);
-
-  const selectedMaterialCost = useMemo(
-    () =>
-      materialCostOptions.find((o) => o.costKey === materialCostOption) ??
-      materialCostOptions[0],
-    [materialCostOption],
-  );
-  const material = selectedMaterialCost.materialKey;
-  const cost = selectedMaterialCost.costKey;
-  const currentShape = shapes.find((s) => s.value === shape);
-
-  const { computeAreaPreview } = useMemo(() => {
-    const computeAreaPreview = (
-      shapeVal: ShapeValue,
-      d1: number,
-      d2: number,
-    ) => {
-      const has =
-        shapes.find((s) => s.value === shapeVal)?.hasDim2 ?? false;
-      const ad2 = has ? d2 : 0;
-      let a = 0;
-      if (shapeVal === "round") {
-        const radius = d1 / 2;
-        a = Math.PI * radius * radius;
-      } else if (shapeVal === "square") {
-        a = d1 * ad2;
-      } else if (shapeVal === "tube") {
-        const odRadius = d1 / 2;
-        const wallThickness = ad2;
-        const innerDia = d1 - 2 * wallThickness;
-        if (innerDia > 0) {
-          const idRadius = innerDia / 2;
-          a = Math.PI * (odRadius * odRadius - idRadius * idRadius);
-        }
-      }
-      return a;
-    };
-    return { computeAreaPreview };
-  }, []);
-
-  const area = computeAreaPreview(shape, dim1, currentShape?.hasDim2 ? dim2 : 0);
-  const density = materialDensities[material]?.density || 0.284;
-  const previewWeight = density * area * lengthIn * quantity;
-  const previewWeightKg = previewWeight * 0.453592;
-  const costPerLb = costs[cost] || 0.65;
-  const previewTotalCost = previewWeight * costPerLb;
-  const estSell =
-    cost === "viking"
-      ? previewWeight * VIKING_SELL_PER_LB
-      : cost === "hiace"
-        ? previewWeight * HIACE_SELL_PER_LB
-        : previewTotalCost * STANDARD_SELL_MULTIPLIER;
-
-  const formattedWeight = (
-    isNaN(previewWeight) || previewWeight === 0 ? 0 : previewWeight
-  ).toLocaleString("en-US", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  });
-  const formattedWeightKg = (
-    isNaN(previewWeightKg) ? 0 : previewWeightKg
-  ).toLocaleString("en-US", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  });
-  const formattedCost = (
-    isNaN(previewTotalCost) || previewTotalCost === 0 ? 0 : previewTotalCost
-  ).toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-  });
-  const formattedEstSell = (
-    isNaN(estSell) || estSell === 0 ? 0 : estSell
-  ).toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-  });
-  const margin = estSell - previewTotalCost;
-  const formattedMargin = (
-    isNaN(margin) || margin === 0 ? 0 : margin
-  ).toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-  });
-
-  const evals = useMemo(() => evaluateUnifiedTape(lines), [lines]);
-
-  const weightLinesInOrder = useMemo(
-    () => lines.filter((l): l is Extract<UnifiedTapeLine, { kind: "weight" }> => l.kind === "weight"),
-    [lines],
-  );
-
-  const grandTotalWeight = useMemo(() => {
-    return weightLinesInOrder.reduce((sum, l) => {
-      const t = getTapeItemTotals(l.item);
-      return sum + t.totalWeight;
-    }, 0);
-  }, [weightLinesInOrder]);
-
-  const grandTotalCost = useMemo(() => {
-    return weightLinesInOrder.reduce((sum, l) => {
-      const t = getTapeItemTotals(l.item);
-      return sum + t.totalCost;
-    }, 0);
-  }, [weightLinesInOrder]);
-
-  const grandTotalEstSell = useMemo(() => {
-    return weightLinesInOrder.reduce((sum, l) => {
-      const t = getTapeItemTotals(l.item);
-      return sum + t.estSell;
-    }, 0);
-  }, [weightLinesInOrder]);
-
-  const grandTotalMargin = grandTotalEstSell - grandTotalCost;
-  const formattedGrandWeight = (
-    isNaN(grandTotalWeight) || grandTotalWeight === 0 ? "0.0" : grandTotalWeight
-  ).toLocaleString("en-US", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  });
-  const formattedGrandCost = (
-    isNaN(grandTotalCost) || grandTotalCost === 0 ? "$0.00" : grandTotalCost
-  ).toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-  });
-  const formattedGrandEstSell = (
-    isNaN(grandTotalEstSell) || grandTotalEstSell === 0
-      ? 0
-      : grandTotalEstSell
-  ).toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-  });
-  const formattedGrandMargin = (
-    isNaN(grandTotalMargin) || grandTotalMargin === 0 ? 0 : grandTotalMargin
-  ).toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-  });
-
-  const lastNumericLine = useMemo(() => {
-    for (let i = evals.length - 1; i >= 0; i--) {
-      const e = evals[i];
-      const line = lines[i];
-      if (line?.kind === "weight") {
-        const t = getTapeItemTotals(line.item);
-        return {
-          index: i + 1,
-          display: t.estSell.toLocaleString("en-US", {
-            style: "currency",
-            currency: "USD",
-          }),
-        };
-      }
-      if (line?.kind === "math") {
-        if (!e.error && e.display && e.display !== "true" && e.display !== "false") {
-          return { index: i + 1, display: e.display };
-        }
-      }
-    }
-    return null;
-  }, [evals, lines]);
+  const {
+    addMathLine,
+    clearTape,
+    closeMaterialEdit,
+    currentShape,
+    dim1,
+    dim2,
+    editingMaterialContext,
+    evals,
+    formattedCost,
+    formattedEstSell,
+    formattedGrandCost,
+    formattedGrandEstSell,
+    formattedGrandMargin,
+    formattedGrandWeight,
+    formattedMargin,
+    formattedWeight,
+    formattedWeightKg,
+    grandTotalMargin,
+    insertLineAfter,
+    lastNumericLine,
+    lengthIn,
+    lines,
+    margin,
+    materialEditLineId,
+    materialCostOption,
+    openMaterialEdit,
+    quantity,
+    removeLine,
+    sendWeightToTape,
+    setDim1,
+    setDim2,
+    setLengthIn,
+    setLines,
+    setMaterialCostOption,
+    setMaterialEditLineId,
+    setQuantity,
+    setShape,
+    shape,
+    updateItemField,
+    updateItemMaterialCost,
+    updateMathExpr,
+    weightLinesInOrder,
+  } = useUnifiedTape();
 
   const fetchOpenQuotesCount = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("projects")
-      .select(PROJECT_SELECT);
+    const { data, error } = await withProjectSelectFallback((select) =>
+      supabase.from("projects").select(select),
+    );
     if (error || !data) return;
     setOpenQuotesCount(
       aggregateDashboardMetrics(data as DashboardProjectRow[]).openQuotes,
@@ -299,17 +200,44 @@ export function UnifiedShopCalc() {
     setProjectsLoading(false);
   }, []);
 
+  const refreshProjectTapes = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const rows = await listProjectTapes(supabase, projectId);
+      setProjectTapes(rows);
+      setSelectedProjectTapeId((prev) => {
+        if (rows.some((row) => row.id === prev)) return prev;
+        return rows[0]?.id ?? "";
+      });
+      setProjectTapeError(null);
+    } catch (err: unknown) {
+      setProjectTapes([]);
+      setSelectedProjectTapeId("");
+      setProjectTapeError(
+        err instanceof Error ? err.message : "Could not load project tapes.",
+      );
+    }
+  }, [projectId]);
+
   useEffect(() => {
     if (status !== "authenticated") return;
+    if (layout !== "page") return;
     fetchOpenQuotesCount();
-  }, [status, fetchOpenQuotesCount]);
+  }, [fetchOpenQuotesCount, layout, status]);
 
   useEffect(() => {
     if (status !== "authenticated") return;
+    if (usingProjectTapes) {
+      if (attemptedProjectTapesInitRef.current) return;
+      attemptedProjectTapesInitRef.current = true;
+      void refreshProjectTapes();
+      return;
+    }
     setSavedTapes(loadSavedUnifiedTapes());
-  }, [status]);
+  }, [refreshProjectTapes, status, usingProjectTapes]);
 
   useEffect(() => {
+    if (usingProjectTapes) return;
     if (savedTapes.length === 0) {
       setSelectedSavedTapeId("");
       return;
@@ -317,161 +245,18 @@ export function UnifiedShopCalc() {
     setSelectedSavedTapeId((prev) =>
       savedTapes.some((t) => t.id === prev) ? prev : savedTapes[0]!.id,
     );
-  }, [savedTapes]);
+  }, [savedTapes, usingProjectTapes]);
 
   const selectedSavedTape = useMemo(
     () => savedTapes.find((t) => t.id === selectedSavedTapeId),
     [savedTapes, selectedSavedTapeId],
   );
-
-  const openMaterialEdit = useCallback((lineId: string) => {
-    setMaterialEditLineId(lineId);
-  }, []);
-
-  const closeMaterialEdit = useCallback(() => {
-    setMaterialEditLineId(null);
-  }, []);
-
-  const updateMathExpr = useCallback((lineId: string, expr: string) => {
-    setLines((prev) =>
-      prev.map((l) =>
-        l.id === lineId && l.kind === "math" ? { ...l, expr } : l,
-      ),
-    );
-  }, []);
-
-  const addMathLine = useCallback(() => {
-    setLines((prev) => [...prev, newMathLine()]);
-  }, []);
-
-  const insertLineAfter = useCallback((afterId: string) => {
-    const line = newMathLine();
-    setLines((prev) => {
-      const idx = prev.findIndex((l) => l.id === afterId);
-      if (idx === -1) return prev;
-      return [...prev.slice(0, idx + 1), line, ...prev.slice(idx + 1)];
-    });
-    queueMicrotask(() => {
-      document.getElementById(`expr-${line.id}`)?.focus();
-    });
-  }, []);
-
-  const removeLine = useCallback((id: string) => {
-    setLines((prev) => {
-      if (prev.length <= 1) return [newMathLine()];
-      return prev.filter((l) => l.id !== id);
-    });
-    setMaterialEditLineId((prev) => (prev === id ? null : prev));
-  }, []);
-
-  const clearTape = useCallback(() => {
-    setLines([newMathLine()]);
-    setMaterialEditLineId(null);
-  }, []);
-
-  const sendWeightToTape = useCallback(() => {
-    const opt = selectedMaterialCost;
-    const mat = materialDensities[opt.materialKey];
-    const sellPerLb =
-      opt.costKey === "viking"
-        ? VIKING_SELL_PER_LB
-        : opt.costKey === "hiace"
-          ? HIACE_SELL_PER_LB
-          : costs[opt.costKey] * STANDARD_SELL_MULTIPLIER;
-    const item: TapeItem = {
-      id: crypto.randomUUID(),
-      notes: "",
-      material: opt.materialKey,
-      materialName: opt.label,
-      density: mat.density,
-      shape,
-      lengthIn,
-      dim1,
-      dim2,
-      thickness: dim2,
-      costPerLb: costs[opt.costKey],
-      sellPerLb,
-      quantity,
-    };
-    const line: UnifiedTapeLine = {
-      id: crypto.randomUUID(),
-      kind: "weight",
-      item,
-      calculationText: buildCalculationText(item),
-    };
-    setLines((prev) => [...prev, line]);
-  }, [selectedMaterialCost, shape, lengthIn, dim1, dim2, quantity]);
-
-  const updateWeightLineItem = useCallback(
-    (lineId: string, updater: (item: TapeItem) => TapeItem) => {
-      setLines((prev) =>
-        prev.map((l) => {
-          if (l.id !== lineId || l.kind !== "weight") return l;
-          const item = updater(l.item);
-          return {
-            ...l,
-            item,
-            calculationText: buildCalculationText(item),
-          };
-        }),
-      );
-    },
-    [],
+  const selectedProjectTape = useMemo(
+    () => projectTapes.find((t) => t.id === selectedProjectTapeId) ?? null,
+    [projectTapes, selectedProjectTapeId],
   );
 
-  const updateItemField = useCallback(
-    (lineId: string, field: keyof TapeItem, value: unknown) => {
-      updateWeightLineItem(lineId, (item) => {
-        const updated = { ...item, [field]: value } as TapeItem;
-        if (field === "material") {
-          const mat = materialDensities[value as MaterialKey];
-          updated.materialName = mat.name;
-          updated.density = mat.density;
-        }
-        if (field === "dim2") {
-          updated.thickness = value as number;
-        }
-        return updated;
-      });
-    },
-    [updateWeightLineItem],
-  );
-
-  const updateItemMaterialCost = useCallback(
-    (lineId: string, costKey: CostKey) => {
-      const opt = materialCostOptions.find((o) => o.costKey === costKey);
-      if (!opt) return;
-      const mat = materialDensities[opt.materialKey];
-      updateWeightLineItem(lineId, (item) => {
-        const sellPerLb =
-          opt.costKey === "viking"
-            ? VIKING_SELL_PER_LB
-            : opt.costKey === "hiace"
-              ? HIACE_SELL_PER_LB
-              : costs[opt.costKey] * STANDARD_SELL_MULTIPLIER;
-        return {
-          ...item,
-          material: opt.materialKey,
-          materialName: opt.label,
-          density: mat.density,
-          costPerLb: costs[opt.costKey],
-          sellPerLb,
-        };
-      });
-    },
-    [updateWeightLineItem],
-  );
-
-  const editingMaterialContext = useMemo(() => {
-    if (!materialEditLineId) return null;
-    const index = lines.findIndex((l) => l.id === materialEditLineId);
-    if (index === -1) return null;
-    const line = lines[index];
-    if (line?.kind !== "weight") return null;
-    return { line, lineNumber: index + 1 };
-  }, [lines, materialEditLineId]);
-
-  const saveTape = useCallback(() => {
+  const saveBrowserTape = useCallback(() => {
     setSavedTapes(addSavedUnifiedTape(lines));
     setCopyHint("Saved tape to this browser.");
     setTimeout(() => setCopyHint(null), 2500);
@@ -497,7 +282,86 @@ export function UnifiedShopCalc() {
     setMaterialEditLineId(null);
     setCopyHint("Loaded saved tape.");
     setTimeout(() => setCopyHint(null), 2500);
-  }, []);
+  }, [setLines, setMaterialEditLineId]);
+
+  const saveProjectTape = useCallback(async () => {
+    if (!projectId) return null;
+    if (lines.length === 0) {
+      setProjectTapeError("Add at least one line before saving.");
+      return null;
+    }
+    setProjectTapeBusy(true);
+    setProjectTapeError(null);
+    try {
+      const id = await saveTapeToProject(supabase, projectId, lines, projectTapeName);
+      await refreshProjectTapes();
+      setSelectedProjectTapeId(id);
+      setCopyHint("Saved tape to this project.");
+      setTimeout(() => setCopyHint(null), 2500);
+      return id;
+    } catch (err: unknown) {
+      setProjectTapeError(
+        err instanceof Error ? err.message : "Could not save project tape.",
+      );
+      return null;
+    } finally {
+      setProjectTapeBusy(false);
+    }
+  }, [lines, projectId, projectTapeName, refreshProjectTapes]);
+
+  const loadSelectedProjectTape = useCallback(async () => {
+    if (!selectedProjectTapeId) return;
+    setProjectTapeBusy(true);
+    setProjectTapeError(null);
+    try {
+      const loaded = await loadTapeFromProject(supabase, selectedProjectTapeId);
+      setLines(loaded.lines);
+      setMaterialEditLineId(null);
+      setCopyHint("Loaded project tape.");
+      setTimeout(() => setCopyHint(null), 2500);
+    } catch (err: unknown) {
+      setProjectTapeError(
+        err instanceof Error ? err.message : "Could not load project tape.",
+      );
+    } finally {
+      setProjectTapeBusy(false);
+    }
+  }, [selectedProjectTapeId, setLines, setMaterialEditLineId]);
+
+  const renameSelectedProjectTape = useCallback(async () => {
+    if (!selectedProjectTape) return;
+    const nextName = window.prompt("Rename tape", selectedProjectTape.name ?? "");
+    if (!nextName) return;
+    setProjectTapeBusy(true);
+    setProjectTapeError(null);
+    try {
+      await renameProjectTape(supabase, selectedProjectTape.id, nextName);
+      await refreshProjectTapes();
+    } catch (err: unknown) {
+      setProjectTapeError(
+        err instanceof Error ? err.message : "Could not rename project tape.",
+      );
+    } finally {
+      setProjectTapeBusy(false);
+    }
+  }, [refreshProjectTapes, selectedProjectTape]);
+
+  const deleteSelectedProjectTape = useCallback(async () => {
+    if (!selectedProjectTape) return;
+    if (!window.confirm("Delete this project tape?")) return;
+    setProjectTapeBusy(true);
+    setProjectTapeError(null);
+    try {
+      await deleteProjectTape(supabase, selectedProjectTape.id);
+      await refreshProjectTapes();
+    } catch (err: unknown) {
+      setProjectTapeError(
+        err instanceof Error ? err.message : "Could not delete project tape.",
+      );
+    } finally {
+      setProjectTapeBusy(false);
+    }
+  }, [refreshProjectTapes, selectedProjectTape]);
 
   const copyResults = useCallback(async () => {
     const text = buildFullExport(lines);
@@ -524,18 +388,34 @@ export function UnifiedShopCalc() {
       setIsExporting(false);
       return;
     }
-    if (exportMethod === "onedrive" && !selectedJob) {
+    if (
+      allowOneDriveExport &&
+      exportMethod === "onedrive" &&
+      !usingProjectTapes &&
+      !selectedJob
+    ) {
       setExportError("Please select a job.");
+      setIsExporting(false);
+      return;
+    }
+    if (
+      allowOneDriveExport &&
+      exportMethod === "onedrive" &&
+      usingProjectTapes &&
+      (!projectNumber || !projectName || !customer)
+    ) {
+      setExportError("Project name, number, and customer are required.");
       setIsExporting(false);
       return;
     }
     const content = buildFullExport(toExport);
     const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const uploadJobNumber = usingProjectTapes ? projectNumber : selectedJob;
     const filename =
       exportMethod === "download"
         ? `Tape_Export_${timestamp}.txt`
-        : `Tape_Export_${selectedJob}_${timestamp}.txt`;
-    if (exportMethod === "download") {
+        : `Tape_Export_${uploadJobNumber}_${timestamp}.txt`;
+    if (!allowOneDriveExport || exportMethod === "download") {
       const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -559,10 +439,14 @@ export function UnifiedShopCalc() {
       if (!freshToken) {
         throw new Error("No access token. Please sign out and sign back in.");
       }
-      const selectedProject = projects.find(
-        (p) => p.project_number === selectedJob,
-      );
-      if (!selectedProject) {
+      const selectedProject = usingProjectTapes
+        ? {
+            project_number: projectNumber,
+            project_name: projectName,
+            customer,
+          }
+        : projects.find((p) => p.project_number === selectedJob);
+      if (!selectedProject?.project_number || !selectedProject.project_name || !selectedProject.customer) {
         throw new Error("Selected project not found in list");
       }
       await uploadTapeToDocs(
@@ -584,15 +468,28 @@ export function UnifiedShopCalc() {
       setExportTargetLines(null);
       setSelectedJob("");
     }
-  }, [lines, exportTargetLines, exportMethod, selectedJob, projects]);
+  }, [
+    lines,
+    exportTargetLines,
+    exportMethod,
+    selectedJob,
+    projects,
+    allowOneDriveExport,
+    customer,
+    projectName,
+    projectNumber,
+    usingProjectTapes,
+  ]);
 
   useEffect(() => {
     if (isExportModalOpen) {
-      void fetchProjects();
+      if (allowOneDriveExport && !usingProjectTapes) {
+        void fetchProjects();
+      }
       setSelectedJob("");
       setExportMethod("download");
     }
-  }, [isExportModalOpen, fetchProjects]);
+  }, [isExportModalOpen, fetchProjects, allowOneDriveExport, usingProjectTapes]);
 
   useEffect(() => {
     if (!materialEditLineId) return;
@@ -601,11 +498,17 @@ export function UnifiedShopCalc() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [materialEditLineId]);
+  }, [materialEditLineId, setMaterialEditLineId]);
 
   if (status === "loading") {
     return (
-      <div className="flex h-screen items-center justify-center bg-zinc-950 text-white">
+      <div
+        className={
+          layout === "page"
+            ? "flex h-screen items-center justify-center bg-zinc-950 text-white"
+            : "flex min-h-[320px] items-center justify-center rounded-3xl border border-zinc-800 bg-zinc-900 p-6 text-white"
+        }
+      >
         Loading…
       </div>
     );
@@ -613,7 +516,13 @@ export function UnifiedShopCalc() {
 
   if (!session) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
+      <div
+        className={
+          layout === "page"
+            ? "flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400"
+            : "flex min-h-[320px] flex-col items-center justify-center rounded-3xl border border-zinc-800 bg-zinc-900 px-6 py-10 text-center text-zinc-400"
+        }
+      >
         <p className="mb-6 text-lg text-zinc-300">
           Sign in to use the shop calculator.
         </p>
@@ -629,35 +538,49 @@ export function UnifiedShopCalc() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
-        <DashboardHeader
-          userName={session?.user?.name}
-          lastUpdated={null}
-          onSignOut={() => signOut({ callbackUrl: "/" })}
-          title="Shop calculator"
-          subtitle="Material weight and cost, math tape, one export — saved tapes stay in this browser."
-          showLastUpdated={false}
-        />
+    <div className={layout === "page" ? "min-h-screen bg-zinc-950 text-white" : "text-white"}>
+      <div
+        className={
+          layout === "page"
+            ? "mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10"
+            : "rounded-3xl border border-zinc-800 bg-zinc-900 p-5 sm:p-6"
+        }
+      >
+        {layout === "page" ? (
+          <>
+            <DashboardHeader
+              userName={session?.user?.name}
+              lastUpdated={null}
+              onSignOut={() => signOut({ callbackUrl: "/" })}
+              title="Shop calculator"
+              subtitle="Material weight and cost, math tape, one export — saved tapes stay in this browser."
+              showLastUpdated={false}
+            />
 
-        <div className="mt-6 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-200/90">
-          Working lines reset on refresh unless you save a copy (Saved tapes).
-          Material lines show sell total as the result; <code className="font-mono text-amber-100/95">ans</code> and{" "}
-          <code className="font-mono text-amber-100/95">@N</code> use that line&apos;s sell ($) on material rows.{" "}
-          <span className="font-mono text-amber-100/95">Enter</span> on a math row adds the next line.
-        </div>
+            <div className="mt-6 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-200/90">
+              Working lines reset on refresh unless you save a copy (Saved tapes).
+              Material lines show sell total as the result; <code className="font-mono text-amber-100/95">ans</code> and{" "}
+              <code className="font-mono text-amber-100/95">@N</code> use that line&apos;s sell ($) on material rows.{" "}
+              <span className="font-mono text-amber-100/95">Enter</span> on a math row adds the next line.
+            </div>
 
-        <div className="mt-8">
-          <QuickLinksBar
-            openQuotesCount={openQuotesCount}
-            activeHref="/weight-calc"
-            newProjectHref="/new-project?returnTo=%2Fweight-calc"
-          />
-        </div>
+            <div className="mt-8">
+              <QuickLinksBar
+                openQuotesCount={openQuotesCount}
+                activeHref="/weight-calc"
+                newProjectHref="/new-project?returnTo=%2Fweight-calc"
+              />
+            </div>
+          </>
+        ) : (
+          <div className="mb-5 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-200/90">
+            Tapes save to this project. Use Save &amp; use in RFQ/Quote/PO to jump to documents and import lines.
+          </div>
+        )}
 
         <section
           aria-label="Calculator snapshot"
-          className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+          className={`${layout === "page" ? "mt-8" : "mt-2"} grid gap-4 sm:grid-cols-2 xl:grid-cols-4`}
         >
           <KpiCard
             label="Lines"
@@ -693,7 +616,7 @@ export function UnifiedShopCalc() {
           />
         </section>
 
-        <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className={`${layout === "page" ? "mt-8" : "mt-5"} grid grid-cols-1 gap-6 lg:grid-cols-3`}>
           <div className="lg:col-span-2 space-y-4">
             <div className="flex flex-wrap items-center gap-2">
               <Button type="button" size="sm" variant="secondary" onClick={addMathLine}>
@@ -704,9 +627,17 @@ export function UnifiedShopCalc() {
                 <Trash2 className="mr-1 size-4" aria-hidden />
                 Clear tape
               </Button>
-              <Button type="button" size="sm" variant="outline" onClick={saveTape}>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  usingProjectTapes ? void saveProjectTape() : saveBrowserTape()
+                }
+                disabled={projectTapeBusy}
+              >
                 <Save className="mr-1 size-4" aria-hidden />
-                Save tape
+                {usingProjectTapes ? "Save to project" : "Save tape"}
               </Button>
               <Button
                 type="button"
@@ -731,10 +662,59 @@ export function UnifiedShopCalc() {
                 <Download className="size-4" aria-hidden />
                 Export
               </Button>
+              {workspace && usingProjectTapes ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={projectTapeBusy}
+                    onClick={async () => {
+                      const id = await saveProjectTape();
+                      if (!id) return;
+                      workspace.notifyTapeSaved(id);
+                      workspace.focus("docs", { docKind: "rfq" });
+                    }}
+                  >
+                    Save &amp; use in RFQ
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={projectTapeBusy}
+                    onClick={async () => {
+                      const id = await saveProjectTape();
+                      if (!id) return;
+                      workspace.notifyTapeSaved(id);
+                      workspace.focus("docs", { docKind: "quote" });
+                    }}
+                  >
+                    Save &amp; use in Quote
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={projectTapeBusy}
+                    onClick={async () => {
+                      const id = await saveProjectTape();
+                      if (!id) return;
+                      workspace.notifyTapeSaved(id);
+                      workspace.focus("docs", { docKind: "purchase_order" });
+                    }}
+                  >
+                    Save &amp; use in PO
+                  </Button>
+                </>
+              ) : null}
               {copyHint ? (
                 <span className="text-xs text-zinc-400">{copyHint}</span>
               ) : null}
             </div>
+            {projectTapeError ? (
+              <p className="text-sm text-red-300">{projectTapeError}</p>
+            ) : null}
 
             <div className="overflow-x-auto rounded-2xl border border-zinc-800/80 bg-zinc-900/40 shadow-xl">
               <Table>
@@ -804,16 +784,35 @@ export function UnifiedShopCalc() {
                             )}
                           </TableCell>
                           <TableCell className="align-middle text-right">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
-                              onClick={() => removeLine(line.id)}
-                              aria-label={`Remove line ${index + 1}`}
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
+                            <div className="flex justify-end gap-1">
+                              {workspace && e?.display && !e.error ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    workspace.pinCalcValue({
+                                      id: `${line.id}-${index}`,
+                                      label: `Line ${index + 1}`,
+                                      value: e.display,
+                                    })
+                                  }
+                                >
+                                  <Pin className="mr-1 size-3.5" />
+                                  Pin
+                                </Button>
+                              ) : null}
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                className="text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                                onClick={() => removeLine(line.id)}
+                                aria-label={`Remove line ${index + 1}`}
+                              >
+                                <Trash2 className="size-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -854,16 +853,35 @@ export function UnifiedShopCalc() {
                           })}
                         </TableCell>
                         <TableCell className="align-top text-right">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            className="text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
-                            onClick={() => removeLine(line.id)}
-                            aria-label={`Remove material line ${index + 1}`}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
+                          <div className="flex justify-end gap-1">
+                            {workspace && e?.display && !e.error ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  workspace.pinCalcValue({
+                                    id: `${line.id}-${index}`,
+                                    label: `Line ${index + 1}`,
+                                    value: e.display,
+                                  })
+                                }
+                              >
+                                <Pin className="mr-1 size-3.5" />
+                                Pin
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                              onClick={() => removeLine(line.id)}
+                              aria-label={`Remove material line ${index + 1}`}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -967,85 +985,162 @@ export function UnifiedShopCalc() {
           <aside className="space-y-4">
             <div className="rounded-2xl border border-zinc-700/80 bg-zinc-900/40 p-5 text-sm text-zinc-200 shadow-xl">
               <h2 className="text-base font-semibold text-zinc-100">
-                Saved tapes
+                {usingProjectTapes ? "Project tapes" : "Saved tapes"}
               </h2>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-                Stored in this browser only. Older saved tapes from the previous
-                calculator URL may appear here once automatically.
-              </p>
-              <label
-                htmlFor="saved-tape-select"
-                className="mt-4 block text-xs font-medium text-zinc-500"
-              >
-                Choose a saved tape
-              </label>
-              <select
-                id="saved-tape-select"
-                value={selectedSavedTapeId}
-                onChange={(e) => setSelectedSavedTapeId(e.target.value)}
-                disabled={savedTapes.length === 0}
-                className="mt-1.5 w-full rounded-lg border border-zinc-700 bg-zinc-950/80 px-3 py-2.5 font-mono text-xs text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {savedTapes.length === 0 ? (
-                  <option value="">No saved tapes — use &quot;Save tape&quot;</option>
-                ) : (
-                  savedTapes.map((tape) => {
-                    const title = unifiedSavedTapeTitle(tape.lines);
-                    const label =
-                      title.length > 80 ? `${title.slice(0, 77)}…` : title;
-                    return (
-                      <option key={tape.id} value={tape.id}>
-                        {label}
-                      </option>
-                    );
-                  })
-                )}
-              </select>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={!selectedSavedTape}
-                  onClick={() =>
-                    selectedSavedTape && loadSavedTape(selectedSavedTape)
-                  }
-                >
-                  Load
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="gap-1"
-                  disabled={
-                    !selectedSavedTape ||
-                    !unifiedExportHasContent(selectedSavedTape.lines)
-                  }
-                  onClick={() => {
-                    if (!selectedSavedTape) return;
-                    setExportTargetLines(selectedSavedTape.lines);
-                    setIsExportModalOpen(true);
-                  }}
-                >
-                  <Download className="size-4" aria-hidden />
-                  Export
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="gap-1 text-red-300 hover:bg-red-950/50 hover:text-red-200"
-                  disabled={!selectedSavedTape}
-                  onClick={() =>
-                    selectedSavedTape &&
-                    removeSavedTape(selectedSavedTape.id)
-                  }
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                  Delete
-                </Button>
-              </div>
+              {usingProjectTapes ? (
+                <>
+                  <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                    These tapes are stored with this project and available across devices.
+                  </p>
+                  <label
+                    htmlFor="project-tape-name"
+                    className="mt-4 block text-xs font-medium text-zinc-500"
+                  >
+                    Tape name (optional)
+                  </label>
+                  <input
+                    id="project-tape-name"
+                    value={projectTapeName}
+                    onChange={(e) => setProjectTapeName(e.target.value)}
+                    className="mt-1.5 w-full rounded-lg border border-zinc-700 bg-zinc-950/80 px-3 py-2.5 font-mono text-xs text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="Tape name"
+                  />
+                  <label
+                    htmlFor="project-tape-select"
+                    className="mt-4 block text-xs font-medium text-zinc-500"
+                  >
+                    Choose a project tape
+                  </label>
+                  <select
+                    id="project-tape-select"
+                    value={selectedProjectTapeId}
+                    onChange={(e) => setSelectedProjectTapeId(e.target.value)}
+                    disabled={projectTapes.length === 0}
+                    className="mt-1.5 w-full rounded-lg border border-zinc-700 bg-zinc-950/80 px-3 py-2.5 font-mono text-xs text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {projectTapes.length === 0 ? (
+                      <option value="">No project tapes yet</option>
+                    ) : (
+                      projectTapes.map((tape) => (
+                        <option key={tape.id} value={tape.id}>
+                          {tape.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={!selectedProjectTapeId || projectTapeBusy}
+                      onClick={() => void loadSelectedProjectTape()}
+                    >
+                      Load
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!selectedProjectTape || projectTapeBusy}
+                      onClick={() => void renameSelectedProjectTape()}
+                    >
+                      Rename
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1 text-red-300 hover:bg-red-950/50 hover:text-red-200"
+                      disabled={!selectedProjectTape || projectTapeBusy}
+                      onClick={() => void deleteSelectedProjectTape()}
+                    >
+                      <Trash2 className="size-4" aria-hidden />
+                      Delete
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                    Stored in this browser only. Older saved tapes from the previous
+                    calculator URL may appear here once automatically.
+                  </p>
+                  <label
+                    htmlFor="saved-tape-select"
+                    className="mt-4 block text-xs font-medium text-zinc-500"
+                  >
+                    Choose a saved tape
+                  </label>
+                  <select
+                    id="saved-tape-select"
+                    value={selectedSavedTapeId}
+                    onChange={(e) => setSelectedSavedTapeId(e.target.value)}
+                    disabled={savedTapes.length === 0}
+                    className="mt-1.5 w-full rounded-lg border border-zinc-700 bg-zinc-950/80 px-3 py-2.5 font-mono text-xs text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {savedTapes.length === 0 ? (
+                      <option value="">No saved tapes — use &quot;Save tape&quot;</option>
+                    ) : (
+                      savedTapes.map((tape) => {
+                        const title = unifiedSavedTapeTitle(tape.lines);
+                        const label =
+                          title.length > 80 ? `${title.slice(0, 77)}…` : title;
+                        return (
+                          <option key={tape.id} value={tape.id}>
+                            {label}
+                          </option>
+                        );
+                      })
+                    )}
+                  </select>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={!selectedSavedTape}
+                      onClick={() =>
+                        selectedSavedTape && loadSavedTape(selectedSavedTape)
+                      }
+                    >
+                      Load
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1"
+                      disabled={
+                        !selectedSavedTape ||
+                        !unifiedExportHasContent(selectedSavedTape.lines)
+                      }
+                      onClick={() => {
+                        if (!selectedSavedTape) return;
+                        setExportTargetLines(selectedSavedTape.lines);
+                        setIsExportModalOpen(true);
+                      }}
+                    >
+                      <Download className="size-4" aria-hidden />
+                      Export
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1 text-red-300 hover:bg-red-950/50 hover:text-red-200"
+                      disabled={!selectedSavedTape}
+                      onClick={() =>
+                        selectedSavedTape &&
+                        removeSavedTape(selectedSavedTape.id)
+                      }
+                    >
+                      <Trash2 className="size-4" aria-hidden />
+                      Delete
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-4 text-xs text-zinc-500">
@@ -1583,23 +1678,30 @@ export function UnifiedShopCalc() {
                 <HardDriveDownload className="size-4 shrink-0" aria-hidden />
                 Download
               </button>
-              <button
-                type="button"
-                onClick={() => setExportMethod("onedrive")}
-                className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                  exportMethod === "onedrive"
-                    ? "bg-blue-600 text-white shadow-sm ring-1 ring-blue-500/30"
-                    : "text-zinc-400 hover:bg-zinc-800/80 hover:text-white"
-                }`}
-              >
-                <CloudUpload className="size-4 shrink-0" aria-hidden />
-                Job / OneDrive
-              </button>
+              {allowOneDriveExport ? (
+                <button
+                  type="button"
+                  onClick={() => setExportMethod("onedrive")}
+                  className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    exportMethod === "onedrive"
+                      ? "bg-blue-600 text-white shadow-sm ring-1 ring-blue-500/30"
+                      : "text-zinc-400 hover:bg-zinc-800/80 hover:text-white"
+                  }`}
+                >
+                  <CloudUpload className="size-4 shrink-0" aria-hidden />
+                  Job / OneDrive
+                </button>
+              ) : null}
             </div>
-            {exportMethod === "download" ? (
+            {!allowOneDriveExport || exportMethod === "download" ? (
               <p className="mb-6 text-sm text-zinc-400">
                 Material block (TSV) and math block in one .txt file.
               </p>
+            ) : usingProjectTapes ? (
+              <div className="mb-6 rounded-lg border border-zinc-800 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-300">
+                Upload target: {projectNumber ?? "PROJECT"} — {projectName ?? "Untitled"} (
+                {customer ?? "No customer"})
+              </div>
             ) : (
               <div className="mb-6">
                 <label className="mb-3 block font-medium text-zinc-300">
@@ -1655,12 +1757,15 @@ export function UnifiedShopCalc() {
                 disabled={
                   !unifiedExportHasContent(exportTargetLines ?? lines) ||
                   isExporting ||
-                  (exportMethod === "onedrive" && !selectedJob)
+                  (allowOneDriveExport &&
+                    exportMethod === "onedrive" &&
+                    !usingProjectTapes &&
+                    !selectedJob)
                 }
               >
                 {isExporting
                   ? "Exporting…"
-                  : exportMethod === "download"
+                  : !allowOneDriveExport || exportMethod === "download"
                     ? "Download"
                     : "Upload to OneDrive"}
               </Button>

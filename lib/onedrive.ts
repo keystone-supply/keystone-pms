@@ -47,7 +47,20 @@ export async function createProjectFolders(
   return `Documents/0 PROJECT FOLDERS/${customerUpper}/${folderName}`;
 }
 
-export async function ensureFolder(headers: any, fullPath: string) {
+export async function ensureFolder(
+  headers: Record<string, string>,
+  fullPath: string,
+) {
+  const checkUrl = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(fullPath)}`;
+  const existingRes = await fetch(checkUrl, { headers: { Authorization: headers.Authorization } });
+  if (existingRes.ok) {
+    return "already exists";
+  }
+  if (existingRes.status !== 404) {
+    const checkText = await existingRes.text().catch(() => "no body");
+    throw new Error(`Failed to check "${fullPath}": ${existingRes.status} ${checkText}`);
+  }
+
   const parts = fullPath.split("/");
   const parentPath = parts.slice(0, -1).join("/") || "";
   const name = parts[parts.length - 1];

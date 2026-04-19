@@ -22,7 +22,7 @@ import {
   type DashboardMetrics,
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { withProjectSelectFallback } from "@/lib/projectQueries";
 
 function formatUsd(n: number): string {
   return new Intl.NumberFormat(undefined, {
@@ -44,10 +44,12 @@ export default function ProjectsPage() {
   const { data: session, status } = useSession();
 
   const fetchProjects = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("projects")
-      .select(PROJECT_SELECT)
-      .order("project_number", { ascending: false });
+    const { data, error } = await withProjectSelectFallback((select) =>
+      supabase
+        .from("projects")
+        .select(select)
+        .order("project_number", { ascending: false }),
+    );
 
     if (error) {
       console.error("[Projects] query failed:", error.message, error);

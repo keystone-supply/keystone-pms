@@ -50,7 +50,7 @@ import {
   aggregateDashboardMetrics,
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
-import { PROJECT_SELECT } from "@/lib/projectQueries";
+import { withProjectSelectFallback } from "@/lib/projectQueries";
 import { canRunNesting, normalizeAppRole } from "@/lib/auth/roles";
 import {
   type Remnant,
@@ -1637,9 +1637,9 @@ export default function NestRemnantsPage() {
   const [nestDxfTextHeight, setNestDxfTextHeight] = useState("1");
 
   const fetchOpenQuotesCount = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("projects")
-      .select(PROJECT_SELECT);
+    const { data, error } = await withProjectSelectFallback((select) =>
+      supabase.from("projects").select(select),
+    );
     if (error || !data) return;
     setOpenQuotesCount(
       aggregateDashboardMetrics(data as DashboardProjectRow[]).openQuotes,

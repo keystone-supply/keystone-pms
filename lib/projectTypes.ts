@@ -24,6 +24,7 @@ export interface ProjectRow {
   sales_command_stage?: string | null;
   /** Cash received flag; see also invoiced_at / invoiced_amount. */
   payment_received?: boolean | null;
+  rfq_received_at?: string | null;
   rfq_vendors_sent_at?: string | null;
   quote_sent_at?: string | null;
   po_issued_at?: string | null;
@@ -31,6 +32,7 @@ export interface ProjectRow {
   materials_ordered_at?: string | null;
   material_received_at?: string | null;
   labor_completed_at?: string | null;
+  ready_to_ship_at?: string | null;
   completed_at?: string | null;
   delivered_at?: string | null;
   invoiced_at?: string | null;
@@ -60,6 +62,7 @@ export interface ProjectRow {
   equipment_cost?: number | null;
   logistics_cost?: number | null;
   additional_costs?: number | null;
+  files_phase1_enabled?: boolean | null;
 }
 
 export type ProjectBasics = Pick<
@@ -81,6 +84,7 @@ export const PROJECT_UPDATE_KEYS = [
   "project_complete",
   "sales_command_stage",
   "payment_received",
+  "rfq_received_at",
   "rfq_vendors_sent_at",
   "quote_sent_at",
   "po_issued_at",
@@ -88,6 +92,7 @@ export const PROJECT_UPDATE_KEYS = [
   "materials_ordered_at",
   "material_received_at",
   "labor_completed_at",
+  "ready_to_ship_at",
   "completed_at",
   "delivered_at",
   "invoiced_at",
@@ -115,6 +120,7 @@ export const PROJECT_UPDATE_KEYS = [
   "equipment_cost",
   "logistics_cost",
   "additional_costs",
+  "files_phase1_enabled",
 ] as const satisfies readonly (keyof ProjectRow)[];
 
 export type ProjectUpdateKey = (typeof PROJECT_UPDATE_KEYS)[number];

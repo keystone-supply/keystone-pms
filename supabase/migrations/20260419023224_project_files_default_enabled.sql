@@ -1,0 +1,2 @@
+-- Historical no-op placeholder.
+-- Intentionally left blank to preserve canonical migration history.

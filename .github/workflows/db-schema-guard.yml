@@ -1,0 +1,38 @@
+name: db schema guard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "scripts/security/check-db-schema-guard.cjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/db-schema-guard.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "scripts/security/check-db-schema-guard.cjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/db-schema-guard.yml"
+
+jobs:
+  db-schema-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Database schema guard
+        run: npm run security:db-schema-guard
