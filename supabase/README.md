@@ -174,12 +174,68 @@ If strict cutover causes blocking issues:
 
 ## Notes
 
-- If `npm run db:push` reports migration history mismatch, apply migrations via
-  MCP `apply_migration`, then reconcile with CLI (`supabase migration repair`
-  + `supabase db pull`) as a follow-up.
+- If `npm run db:push` reports migration history mismatch, do **not** apply ad hoc
+  dashboard SQL and do **not** leave drift unresolved. Use the repair sequence
+  below to restore a deterministic tree.
 - Keep using `service_role` for backend-only tasks (OneDrive/PDF server flows),
   never in browser.
 - `SUPABASE_SERVICE_ROLE_KEY` is the canonical env var name. Legacy
   `SUPABASE_SERVICE_ROLE` is tolerated in some scripts for compatibility.
 
-Last updated: 2026-04-08
+## Migration Operating Procedure (Required)
+
+**Authority:** `AGENTS.md` and this section are the canonical Supabase workflow policy.
+
+1. **Create migration files in repo first**
+   - Add migration SQL under `supabase/migrations`.
+   - Never rely on dashboard-only changes without capturing SQL in repo.
+   - Create one migration file per schema intent.
+2. **Apply and verify**
+   - Run `npx supabase db push --linked --include-all --yes`.
+   - Run `npx supabase migration list --linked` and confirm local/remote alignment.
+3. **MCP boundaries**
+   - Use MCP for inspection/diagnostics (list/read/advisors/logs) by default.
+   - Do not use MCP `apply_migration` for routine schema mutations.
+   - If emergency/manual mutation is unavoidable, immediately capture canonical file(s)
+     and run migration repair to restore deterministic history.
+4. **If drift exists (MCP/manual apply mismatch)**
+   - Map remote-only versions to canonical local migration files.
+   - Use `npx supabase migration repair --linked --status reverted <remote_version...> --yes`
+     for superseded remote-only versions.
+   - Use `npx supabase migration repair --linked --status applied <local_version...> --yes`
+     for canonical replacements that already exist in schema.
+   - Re-run `npx supabase db push --linked --include-all --yes`.
+   - Re-run `npx supabase migration list --linked` until fully deterministic.
+5. **Security and guard checks before merge**
+   - `npm run test:rbac-api-guards`
+   - `npm run test:rbac-sql`
+   - `npm run security:db-schema-guard`
+   - CI guard workflows must remain enabled:
+     - `.github/workflows/db-schema-guard.yml`
+     - `.github/workflows/live-db-extension-guard.yml`
+
+## Accidental Empty-Stub Incident Runbook
+
+If `supabase migration new` hangs, is interrupted, or creates duplicate timestamped stubs:
+
+1. **Treat as partial failure immediately**
+   - Do not run `db push` yet.
+2. **Inspect newly created migration files**
+   - Ensure there is exactly one new migration file for the intended change.
+   - Remove unintended local stubs before any apply.
+3. **If accidental stubs were already pushed**
+   - Mark accidental versions reverted:
+     - `npx supabase migration repair --linked --status reverted <accidental_versions...> --yes`
+   - Re-run:
+     - `npx supabase migration list --linked`
+4. **Restore canonical state**
+   - Keep a single canonical migration file for the intended change.
+   - Run `npx supabase db push --linked --include-all --yes`.
+   - Re-run `npx supabase migration list --linked` and confirm deterministic alignment.
+
+Safe-creation protocol:
+- create one migration file per intent
+- verify expected new filename before editing
+- never push with empty unintended stub files present
+
+Last updated: 2026-04-19
