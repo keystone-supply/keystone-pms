@@ -106,7 +106,7 @@ import {
   buildRemnantGeometryFromNest,
   nestRingsToSvgPath,
 } from "@/lib/remnantSaveGeometry";
-import { renderAndUploadSheetPreviewImage } from "@/lib/renderSheetPreview";
+import { renderAndUploadSheetPreviewImageDetailed } from "@/lib/renderSheetPreview";
 import {
   expandModuleToGrid,
   type NestGridMetadata,
@@ -2927,6 +2927,21 @@ export default function NestRemnantsPage() {
     setIsModalOpen(true);
   };
 
+  const enqueuePreviewRepair = async (rowId: string, reason: string) => {
+    const { error } = await supabase.rpc("enqueue_sheet_preview_repair", {
+      p_sheet_stock_id: rowId,
+      p_reason: reason,
+    });
+    if (error) {
+      console.warn("[sheet-preview] failed to enqueue repair", {
+        rowId,
+        reason,
+        message: error.message,
+        code: error.code,
+      });
+    }
+  };
+
   const handleSaveSheet = async () => {
     if (addStockMode !== "sheet") return;
     setAddSheetError(null);
@@ -3016,24 +3031,39 @@ export default function NestRemnantsPage() {
         ? (rowForMap as { svg_path: string }).svg_path.trim()
         : "";
 
-    if (rowId && rowSvgPath) {
-      const previewUrl = await renderAndUploadSheetPreviewImage(rowId, {
+    if (rowId) {
+      const previewResult = await renderAndUploadSheetPreviewImageDetailed(rowId, {
         svg_path: rowSvgPath,
         length_in:
           Number((rowForMap as { length_in?: unknown }).length_in) || length,
         width_in:
           Number((rowForMap as { width_in?: unknown }).width_in) || width,
       });
-      if (previewUrl) {
+      if (previewResult.ok) {
         const { data: previewRow, error: previewErr } = await supabase
           .from("sheet_stock")
-          .update({ img_url: previewUrl })
+          .update({ img_url: previewResult.publicUrl })
           .eq("id", rowId)
           .select("*")
           .single();
+        if (previewErr) {
+          console.warn("[sheet-preview] failed to persist img_url", {
+            rowId,
+            message: previewErr.message,
+            code: previewErr.code,
+          });
+          await enqueuePreviewRepair(rowId, "img_url_update_failed");
+        }
         if (!previewErr && previewRow) {
           rowForMap = previewRow;
         }
+      } else {
+        console.warn("[sheet-preview] preview generation/upload failed", {
+          rowId,
+          reason: previewResult.reason,
+          details: previewResult.details,
+        });
+        await enqueuePreviewRepair(rowId, `preview_${previewResult.reason}`);
       }
     }
 
@@ -3382,21 +3412,36 @@ export default function NestRemnantsPage() {
           ? ((rowForMap as { id: string }).id)
           : null;
       if (savedRowId) {
-        const previewUrl = await renderAndUploadSheetPreviewImage(savedRowId, {
+        const previewResult = await renderAndUploadSheetPreviewImageDetailed(savedRowId, {
           svg_path: remnantSvgPath,
           length_in: lengthIn,
           width_in: widthIn,
         });
-        if (previewUrl) {
+        if (previewResult.ok) {
           const { data: previewRow, error: previewErr } = await supabase
             .from("sheet_stock")
-            .update({ img_url: previewUrl })
+            .update({ img_url: previewResult.publicUrl })
             .eq("id", savedRowId)
             .select("*")
             .single();
+          if (previewErr) {
+            console.warn("[sheet-preview] failed to persist img_url", {
+              rowId: savedRowId,
+              message: previewErr.message,
+              code: previewErr.code,
+            });
+            await enqueuePreviewRepair(savedRowId, "img_url_update_failed");
+          }
           if (!previewErr && previewRow) {
             rowForMap = previewRow;
           }
+        } else {
+          console.warn("[sheet-preview] preview generation/upload failed", {
+            rowId: savedRowId,
+            reason: previewResult.reason,
+            details: previewResult.details,
+          });
+          await enqueuePreviewRepair(savedRowId, `preview_${previewResult.reason}`);
         }
       }
 

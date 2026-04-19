@@ -1,81 +1,26 @@
 import { supabase } from "@/lib/supabaseClient";
-import { svgPathToNestShape } from "@/lib/svgPathToOutline";
 import {
-  parseRemnantDims,
-  rectOutline,
-  type OutlinePoint,
-  type Remnant,
-} from "@/lib/utils";
+  getSheetPreviewBounds,
+  getSheetPreviewRings,
+  type PreviewSource,
+} from "@/lib/sheetPreviewGeometry";
 
 const SHEET_PREVIEW_BUCKET = "sheet-previews";
 const PREVIEW_WIDTH_PX = 320;
 const PREVIEW_HEIGHT_PX = 200;
 const PREVIEW_PADDING_PX = 16;
 
-type PreviewSource = Pick<Remnant, "svg_path" | "length_in" | "width_in" | "dims">;
+export type SheetPreviewUploadFailureReason =
+  | "missing_dom"
+  | "invalid_geometry"
+  | "canvas_context_unavailable"
+  | "blob_generation_failed"
+  | "storage_upload_failed"
+  | "public_url_missing";
 
-function isFinitePoint(point: OutlinePoint): boolean {
-  return Number.isFinite(point.x) && Number.isFinite(point.y);
-}
-
-function cleanRing(ring: OutlinePoint[]): OutlinePoint[] {
-  return ring.filter(isFinitePoint);
-}
-
-function getPreviewRings(source: PreviewSource): OutlinePoint[][] {
-  const svgPath = typeof source.svg_path === "string" ? source.svg_path.trim() : "";
-  if (svgPath) {
-    const parsed = svgPathToNestShape(svgPath);
-    if (parsed?.outline?.length) {
-      return [parsed.outline, ...(parsed.holes ?? [])]
-        .map((ring) => cleanRing(ring))
-        .filter((ring) => ring.length >= 3);
-    }
-  }
-
-  const length = Number(source.length_in);
-  const width = Number(source.width_in);
-  if (Number.isFinite(length) && Number.isFinite(width) && length > 0 && width > 0) {
-    return [rectOutline(length, width)];
-  }
-
-  const parsedDims = parseRemnantDims(source.dims, { width: 96, height: 48 });
-  return [rectOutline(parsedDims.width, parsedDims.height)];
-}
-
-function ringBounds(rings: OutlinePoint[][]): {
-  minX: number;
-  maxX: number;
-  minY: number;
-  maxY: number;
-} | null {
-  let minX = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-
-  for (const ring of rings) {
-    for (const point of ring) {
-      if (!isFinitePoint(point)) continue;
-      if (point.x < minX) minX = point.x;
-      if (point.x > maxX) maxX = point.x;
-      if (point.y < minY) minY = point.y;
-      if (point.y > maxY) maxY = point.y;
-    }
-  }
-
-  if (
-    !Number.isFinite(minX) ||
-    !Number.isFinite(maxX) ||
-    !Number.isFinite(minY) ||
-    !Number.isFinite(maxY)
-  ) {
-    return null;
-  }
-
-  if (maxX <= minX || maxY <= minY) return null;
-  return { minX, maxX, minY, maxY };
-}
+export type SheetPreviewUploadResult =
+  | { ok: true; publicUrl: string }
+  | { ok: false; reason: SheetPreviewUploadFailureReason; details?: string };
 
 function toPngBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return new Promise((resolve) => {
@@ -87,19 +32,27 @@ export async function renderAndUploadSheetPreviewImage(
   rowId: string,
   source: PreviewSource,
 ): Promise<string | null> {
+  const result = await renderAndUploadSheetPreviewImageDetailed(rowId, source);
+  return result.ok ? result.publicUrl : null;
+}
+
+export async function renderAndUploadSheetPreviewImageDetailed(
+  rowId: string,
+  source: PreviewSource,
+): Promise<SheetPreviewUploadResult> {
   if (typeof window === "undefined" || typeof document === "undefined") {
-    return null;
+    return { ok: false, reason: "missing_dom" };
   }
 
-  const rings = getPreviewRings(source);
-  const bounds = ringBounds(rings);
-  if (!bounds) return null;
+  const rings = getSheetPreviewRings(source);
+  const bounds = getSheetPreviewBounds(rings);
+  if (!bounds) return { ok: false, reason: "invalid_geometry" };
 
   const canvas = document.createElement("canvas");
   canvas.width = PREVIEW_WIDTH_PX;
   canvas.height = PREVIEW_HEIGHT_PX;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
+  if (!ctx) return { ok: false, reason: "canvas_context_unavailable" };
 
   const shapeWidth = bounds.maxX - bounds.minX;
   const shapeHeight = bounds.maxY - bounds.minY;
@@ -133,7 +86,7 @@ export async function renderAndUploadSheetPreviewImage(
   ctx.stroke();
 
   const blob = await toPngBlob(canvas);
-  if (!blob) return null;
+  if (!blob) return { ok: false, reason: "blob_generation_failed" };
 
   const objectPath = `${rowId}.png`;
   const { error: uploadError } = await supabase.storage
@@ -143,10 +96,20 @@ export async function renderAndUploadSheetPreviewImage(
       contentType: "image/png",
       cacheControl: "3600",
     });
-  if (uploadError) return null;
+  if (uploadError) {
+    return {
+      ok: false,
+      reason: "storage_upload_failed",
+      details: uploadError.message,
+    };
+  }
 
   const { data } = supabase.storage
     .from(SHEET_PREVIEW_BUCKET)
     .getPublicUrl(objectPath);
-  return data?.publicUrl ?? null;
+  if (!data?.publicUrl) {
+    return { ok: false, reason: "public_url_missing" };
+  }
+
+  return { ok: true, publicUrl: data.publicUrl };
 }

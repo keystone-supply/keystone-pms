@@ -30,6 +30,7 @@
     "files:index-active": "npx tsx scripts/index-active-projects.ts",
     "test:nest-dual-lane": "npx tsx scripts/verify-nest-dual-lane.ts",
     "test:nest-dxf-export": "npx tsx scripts/verify-nest-dxf-export.ts",
+    "sheet-previews:repair": "node --import tsx scripts/run-sheet-preview-repair.ts",
     "security:blocked-deps": "node scripts/security/check-blocked-packages.mjs",
     "security:db-schema-guard": "node scripts/security/check-db-schema-guard.mjs"
   },
