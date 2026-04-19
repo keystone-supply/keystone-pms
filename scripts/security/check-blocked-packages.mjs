@@ -2,8 +2,12 @@
  * Fail the build if package-lock.json resolves any blocked package@version.
  * Keep BLOCKED in sync with security advisories (e.g. compromised npm publishes).
  */
-const fs = require("fs");
-const path = require("path");
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /** @type {{ name: string; version: string; reason?: string }[]} */
 const BLOCKED = [
@@ -34,7 +38,7 @@ function loadLockPackages() {
   let data;
   try {
     data = JSON.parse(raw);
-  } catch (e) {
+  } catch {
     console.error("security:blocked-deps: invalid JSON in package-lock.json");
     process.exit(1);
   }

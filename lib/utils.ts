@@ -61,7 +61,7 @@ export function calcPolygonArea(points: number[][]): number {
   return (
     Math.abs(
       points.reduce(
-        (sum, [x, y], i) =>
+        (sum, [, y], i) =>
           sum +
           (points[(i + 1) % n][0] * y - points[i][1] * points[(i + 1) % n][0]),
         0,

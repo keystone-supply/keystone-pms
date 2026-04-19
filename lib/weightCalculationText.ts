@@ -10,7 +10,6 @@ import {
 import type { TapeItem } from "@/lib/weightTapeTypes";
 
 function areaDescription(item: TapeItem): string {
-  const hasDim2 = shapeHasDim2(item.shape);
   if (item.shape === "round") {
     const r = item.dim1 / 2;
     return `π×(${r.toFixed(3)} in)²`;

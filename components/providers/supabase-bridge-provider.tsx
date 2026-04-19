@@ -105,7 +105,7 @@ export function SupabaseBridgeProvider({
     }
     if (status !== "authenticated") {
       setSupabaseBridgeAccessToken(null);
-      setError(null);
+      queueMicrotask(() => setError(null));
       queueMicrotask(() => setIsReady(true));
       return;
     }

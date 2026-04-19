@@ -13,7 +13,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "supabase:preflight": "node scripts/security/check-supabase-cli-version.cjs",
+    "supabase:preflight": "node scripts/security/check-supabase-cli-version.mjs",
     "db:push": "npm run supabase:preflight && npx supabase db push --linked --include-all --yes",
     "import:book1": "npx tsx scripts/import-book1.ts",
     "nest:estimate-payload": "node scripts/estimate-nest-payload-size.mjs",
@@ -30,8 +30,8 @@
     "files:index-active": "npx tsx scripts/index-active-projects.ts",
     "test:nest-dual-lane": "npx tsx scripts/verify-nest-dual-lane.ts",
     "test:nest-dxf-export": "npx tsx scripts/verify-nest-dxf-export.ts",
-    "security:blocked-deps": "node scripts/security/check-blocked-packages.cjs",
-    "security:db-schema-guard": "node scripts/security/check-db-schema-guard.cjs"
+    "security:blocked-deps": "node scripts/security/check-blocked-packages.mjs",
+    "security:db-schema-guard": "node scripts/security/check-db-schema-guard.mjs"
   },
   "dependencies": {
     "@azure/identity": "^4.13.0",

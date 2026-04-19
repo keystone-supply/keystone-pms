@@ -177,43 +177,43 @@ type NestApiResponse = NestResult &
   }>;
 
 function stripNestApiDiagnostics(raw: NestApiResponse): NestResult {
-  const {
-    proxyDurationMs: _p,
-    nestNowHttpStatus: _n,
-    stage: _s,
-    error: _e,
-    adminHint: _ah,
-    failureKind: _fk,
-    nestNowDurationMs: _nnd,
-    evalCount: _ec,
-    populationSize: _ps,
-    gaGenerations: _gg,
-    lastEvalError: _lee,
-    bestEffort: _be,
-    candidates: rawCandidates,
-    ...nest
-  } = raw;
+  const { candidates: rawCandidates, ...nestWithDiagnostics } = raw;
+  const nest = { ...nestWithDiagnostics } as Partial<NestApiResponse>;
+  delete nest.proxyDurationMs;
+  delete nest.nestNowHttpStatus;
+  delete nest.stage;
+  delete nest.error;
+  delete nest.adminHint;
+  delete nest.failureKind;
+  delete nest.nestNowDurationMs;
+  delete nest.evalCount;
+  delete nest.populationSize;
+  delete nest.gaGenerations;
+  delete nest.lastEvalError;
+  delete nest.bestEffort;
   const out = nest as NestResult;
   if (Array.isArray(rawCandidates) && rawCandidates.length > 0) {
     out.candidates = rawCandidates.map((c) => {
       const row = c as NestApiResponse;
-      const {
-        proxyDurationMs: __p,
-        nestNowHttpStatus: __n,
-        stage: __s,
-        error: __e,
-        adminHint: __ah,
-        failureKind: __fk,
-        nestNowDurationMs: __nnd,
-        evalCount: __ec,
-        populationSize: __ps,
-        gaGenerations: __gg,
-        lastEvalError: __lee,
-        bestEffort: __be,
-        candidates: __nested,
-        ...rest
-      } = row;
-      return rest as NestResult;
+      const { candidates: nestedCandidates, ...candidateWithDiagnostics } = row;
+      const candidate = { ...candidateWithDiagnostics } as Partial<NestApiResponse>;
+      delete candidate.proxyDurationMs;
+      delete candidate.nestNowHttpStatus;
+      delete candidate.stage;
+      delete candidate.error;
+      delete candidate.adminHint;
+      delete candidate.failureKind;
+      delete candidate.nestNowDurationMs;
+      delete candidate.evalCount;
+      delete candidate.populationSize;
+      delete candidate.gaGenerations;
+      delete candidate.lastEvalError;
+      delete candidate.bestEffort;
+      delete candidate.candidates;
+      if (nestedCandidates) {
+        // Nested candidates are intentionally stripped for seed persistence.
+      }
+      return candidate as NestResult;
     });
   }
   return out;
@@ -1151,7 +1151,9 @@ const NestPreviewZoomable = forwardRef(function NestPreviewZoomable(
 
   /** Reset camera when stock or computed scene bounds change. */
   useLayoutEffect(() => {
-    setView({ zoom: NEST_PREVIEW_ZOOM_MIN, panX: 0, panY: 0 });
+    queueMicrotask(() => {
+      setView({ zoom: NEST_PREVIEW_ZOOM_MIN, panX: 0, panY: 0 });
+    });
   }, [sheetWidth, sheetHeight, worldW, worldH]);
 
   useImperativeHandle(
@@ -1898,18 +1900,38 @@ export default function NestRemnantsPage() {
     [remnants],
   );
 
-  function mapRowToRemnant(row: any): Remnant {
+  const mapRowToRemnant = useCallback((row: {
+    id?: string | null;
+    label?: string | null;
+    material?: string | null;
+    length_in?: number | string | null;
+    width_in?: number | string | null;
+    thickness_in?: number | string | null;
+    est_weight_lbs?: number | string | null;
+    is_archived?: boolean | null;
+    status?: string | null;
+    notes?: string | null;
+    svg_path?: string | null;
+    img_url?: string | null;
+  }): Remnant => {
     const length_in = Number(row.length_in) || 0;
     const width_in = Number(row.width_in) || 0;
     const thickness_in = Number(row.thickness_in) || 0;
-    const material: string = row.material ?? "Unknown";
+    const material: string =
+      typeof row.material === "string" && row.material.trim()
+        ? row.material
+        : "Unknown";
     const dims = length_in && width_in ? `${length_in}x${width_in}"` : undefined;
+    const estWeightFromRow = Number(row.est_weight_lbs);
     const est_weight_lbs =
       length_in && width_in && thickness_in
         ? calcWeight(length_in * width_in, thickness_in, material)
-        : row.est_weight_lbs ?? 0;
+        : Number.isFinite(estWeightFromRow)
+          ? estWeightFromRow
+          : 0;
     const isArchived = Boolean(row.is_archived);
-    const statusRaw: string = row.status ?? "available";
+    const statusRaw: string =
+      typeof row.status === "string" ? row.status : "available";
     const lowered = statusRaw.toLowerCase();
     const normalized =
       lowered === "scrapped" ? "scrap" : lowered;
@@ -1923,17 +1945,19 @@ export default function NestRemnantsPage() {
             ? "Scrap"
             : "Available";
 
-    const dbId: string = row.id;
+    const dbId: string = typeof row.id === "string" ? row.id : "";
     const shortId = dbId ? `#${dbId.slice(0, 8).toUpperCase()}` : "#SHEET";
-    const label: string | null = row.label ?? null;
+    const label: string | null = typeof row.label === "string" ? row.label : null;
+    const notesRaw = typeof row.notes === "string" ? row.notes : null;
+    const imgUrlRaw = typeof row.img_url === "string" ? row.img_url.trim() : "";
 
-    const parsedNotes = extractSvgPathMetadataFromNotes(row.notes);
+    const parsedNotes = extractSvgPathMetadataFromNotes(notesRaw);
     const pathFromDb = typeof row.svg_path === "string" && row.svg_path.trim()
       ? row.svg_path.trim()
       : parsedNotes.svgPath
         ? parsedNotes.svgPath
-        : looksLikeSvgPath(row.img_url)
-          ? row.img_url.trim()
+        : looksLikeSvgPath(imgUrlRaw)
+          ? imgUrlRaw
           : undefined;
 
     return {
@@ -1941,9 +1965,7 @@ export default function NestRemnantsPage() {
       db_id: dbId,
       label,
       img_url:
-        typeof row.img_url === "string" && row.img_url.trim()
-          ? row.img_url.trim()
-          : undefined,
+        imgUrlRaw.length > 0 ? imgUrlRaw : undefined,
       /** Real remnant outline from DB only — no synthetic shape, so rect stock nests as a rectangle. */
       svg_path: pathFromDb,
       dims,
@@ -1955,9 +1977,9 @@ export default function NestRemnantsPage() {
       status,
       notes: parsedNotes.notes,
     };
-  }
+  }, []);
 
-  const fetchSheets = async () => {
+  const fetchSheets = useCallback(async () => {
     setRemnantsLoading(true);
     setRemnantsError(null);
     const { data, error } = await supabase
@@ -1974,7 +1996,7 @@ export default function NestRemnantsPage() {
     setRemnants(mapped);
     setRemnantsLoading(false);
     setPageLastUpdated(new Date());
-  };
+  }, [mapRowToRemnant]);
 
   const handleRequestDeleteSheet = (remnant: Remnant) => {
     if (!remnant.db_id) return;
@@ -2847,7 +2869,7 @@ export default function NestRemnantsPage() {
     return () => {
       channel.unsubscribe();
     };
-  }, []);
+  }, [fetchSheets]);
 
   useEffect(() => {
     if (status !== "authenticated") return;
@@ -2930,15 +2952,24 @@ export default function NestRemnantsPage() {
     setAddSheetLoading(true);
 
     // Shared payload for insert/update
-    const basePayload: any = {
+    const basePayload: {
+      length_in: number;
+      width_in: number;
+      thickness_in: number;
+      material: string;
+      status: string;
+      label: string | null;
+      notes: string | null;
+      svg_path?: string;
+    } = {
       length_in: length,
       width_in: width,
       thickness_in: thickness,
       material: sheetMaterial.trim(),
       status: sheetStatus || "available",
+      label: sheetLabel.trim() || null,
+      notes: sheetNotes.trim() || null,
     };
-    basePayload.label = sheetLabel.trim() || null;
-    basePayload.notes = sheetNotes.trim() || null;
     if (editingSheetId && editingSheetSvgPath) {
       // Preserve remnant geometry when editing non-geometry fields like label/notes.
       basePayload.svg_path = editingSheetSvgPath;
@@ -3731,7 +3762,7 @@ export default function NestRemnantsPage() {
                               {r.material}
                             </td>
                             <td className="px-6 py-3 text-zinc-200">
-                              {r.thickness_in.toFixed(3)}"
+                              {r.thickness_in.toFixed(3)}&quot;
                             </td>
                             <td className="px-6 py-3 text-zinc-200">
                               {r.length_in && r.width_in
@@ -3871,7 +3902,7 @@ export default function NestRemnantsPage() {
                             <div className="flex justify-between">
                               <span className="text-zinc-400">Thickness:</span>{" "}
                               <span className="font-mono">
-                                {remnant.thickness_in.toFixed(3)}"
+                                {remnant.thickness_in.toFixed(3)}&quot;
                               </span>
                             </div>
                             <div className="flex justify-between">
@@ -4434,7 +4465,7 @@ export default function NestRemnantsPage() {
                             <div className="min-w-0 flex-1">
                               <p className="truncate font-medium">{r.id}</p>
                               <p className="text-xs text-purple-200/80">
-                                {r.material} {r.thickness_in.toFixed(3)}" ·{" "}
+                                {r.material} {r.thickness_in.toFixed(3)}&quot; ·{" "}
                                 {r.dims ?? "—"}
                               </p>
                               {typeof r.est_weight_lbs === "number" && (

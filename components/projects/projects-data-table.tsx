@@ -437,6 +437,7 @@ export function ProjectsDataTable({
     });
   }, [data, completion, approval, segment, year]);
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table hook is intentionally used here.
   const table = useReactTable({
     data: filteredSource,
     columns: baseColumns,

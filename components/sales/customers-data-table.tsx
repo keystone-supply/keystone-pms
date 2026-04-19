@@ -204,6 +204,7 @@ export function CustomersDataTable({
     return rows;
   }, [data, statusFilter, search]);
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table hook is intentionally used here.
   const table = useReactTable({
     data: filtered,
     columns,

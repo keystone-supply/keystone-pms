@@ -457,7 +457,6 @@ export function buildNestSheetDxf(
   );
 
   // Single layer "0" to match Fusion reference
-  const layerNames = [NEST_DXF_LAYER_0];
   pushTableOpen(body, handleGen, "LAYER", 1);
   body.push(
     "0",

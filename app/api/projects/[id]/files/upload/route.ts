@@ -25,7 +25,15 @@ type ProjectUploadMetadata = {
 };
 
 function sanitizeFileName(name: string): string {
-  return name.replace(/[\\/:*?"<>|]/g, "_").trim();
+  const cleaned = name.replace(/[\\/:*?"<>|]/g, "_").trim();
+  return cleaned || "upload.bin";
+}
+
+function encodeGraphPath(path: string): string {
+  return path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }
 
 export async function POST(
@@ -96,8 +104,9 @@ export async function POST(
 
   const oneDriveTarget = `${uploadPath}/${targetName}`;
   const uploadBuffer = new Uint8Array(await upload.arrayBuffer());
+  const encodedTarget = encodeGraphPath(oneDriveTarget);
   const uploadRes = await fetch(
-    `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(oneDriveTarget)}:/content`,
+    `https://graph.microsoft.com/v1.0/me/drive/root:/${encodedTarget}:/content`,
     {
       method: "PUT",
       headers: {
@@ -113,7 +122,17 @@ export async function POST(
       { status: 502 },
     );
   }
-  const uploaded = (uploadText ? JSON.parse(uploadText) : {}) as { id?: string };
+  let uploaded: { id?: string } = {};
+  if (uploadText) {
+    try {
+      uploaded = JSON.parse(uploadText) as { id?: string };
+    } catch {
+      return NextResponse.json(
+        { error: `OneDrive upload returned invalid JSON: ${uploadText}` },
+        { status: 502 },
+      );
+    }
+  }
   if (!uploaded.id) {
     return NextResponse.json(
       { error: "OneDrive did not return item metadata." },

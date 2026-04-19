@@ -4,8 +4,12 @@
  * 2) extensions assigned to the public schema
  * 3) citext/vector extension creation without WITH SCHEMA extensions
  */
-const fs = require("fs");
-const path = require("path");
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const ROOT = path.join(__dirname, "..", "..");
 const MIGRATIONS_DIR = path.join(ROOT, "supabase", "migrations");
@@ -76,7 +80,6 @@ function extensionNameFromStatement(statement) {
 function main() {
   const files = collectSqlFiles(MIGRATIONS_DIR);
   const violations = [];
-  const parsedMigrations = [];
   const bySlug = new Map();
 
   for (const filePath of files) {
@@ -84,7 +87,6 @@ function main() {
     const sql = fs.readFileSync(filePath, "utf8");
     const parsed = parseMigrationFilename(filePath);
     if (parsed) {
-      parsedMigrations.push(parsed);
       if (!bySlug.has(parsed.slug)) {
         bySlug.set(parsed.slug, []);
       }

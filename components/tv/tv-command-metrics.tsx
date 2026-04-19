@@ -16,7 +16,7 @@ export function TVCommandMetrics({ summary, className }: TVCommandMetricsProps) 
   const formatCount = (n: number) => n.toLocaleString();
 
   const stageEntries = Object.entries(summary.stageCounts)
-    .filter(([_, count]) => count > 0)
+    .filter(([, count]) => count > 0)
     .sort(([a], [b]) => {
       const order = [
         "in_process",

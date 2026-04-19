@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const { execSync } = require("child_process");
+import { execSync } from "node:child_process";
 
 const MIN_VERSION = "2.81.3";
 
@@ -29,7 +29,7 @@ function main() {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
-  } catch (error) {
+  } catch {
     fail("unable to run `npx supabase --version`");
   }
 
