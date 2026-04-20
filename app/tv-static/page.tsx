@@ -6,7 +6,8 @@ import {
   getCommandBoardTVSummary,
   type CommandBoardTVSummary,
 } from "@/lib/dashboardMetrics";
-import { canViewShopTv, normalizeAppRole } from "@/lib/auth/roles";
+import { canViewShopTv } from "@/lib/auth/roles";
+import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
 
 type TvSummaryResponse = {
   summary?: Omit<CommandBoardTVSummary, "lastUpdated"> & { lastUpdated: string };
@@ -15,7 +16,7 @@ type TvSummaryResponse = {
 
 export default function TVStaticPage() {
   const { data: session, status } = useSession();
-  const role = normalizeAppRole(session?.role);
+  const capabilities = getSessionCapabilitySet(session);
   const [summary, setSummary] = useState<CommandBoardTVSummary>(() =>
     getCommandBoardTVSummary([]),
   );
@@ -127,7 +128,7 @@ export default function TVStaticPage() {
     );
   }
 
-  if (!canViewShopTv(role)) {
+  if (!canViewShopTv(capabilities)) {
     return (
       <div style={{
         backgroundColor: "#111",

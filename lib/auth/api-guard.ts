@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-import { normalizeAppRole, type AppRole } from "@/lib/auth/roles";
+import {
+  hasCapability,
+  legacyRoleToCapabilities,
+  normalizeAppCapabilities,
+  toCapabilitySet,
+  type AppCapability,
+  type AppCapabilitySet,
+} from "@/lib/auth/roles";
 
 type AuthorizedRoleContext = {
-  role: AppRole;
+  capabilities: AppCapabilitySet;
   email: string;
   userId: string;
 };
@@ -21,7 +28,7 @@ type RoleGuardResult =
 
 export async function requireApiRole(
   request: NextRequest,
-  check: (role: AppRole) => boolean,
+  check: (capabilities: AppCapabilitySet) => boolean,
   deniedMessage = "Not authorized for this action.",
 ): Promise<RoleGuardResult> {
   const nextAuthSecret = process.env.NEXTAUTH_SECRET;
@@ -49,8 +56,11 @@ export async function requireApiRole(
     };
   }
 
-  const role = normalizeAppRole(token.role);
-  if (!check(role)) {
+  const legacyRole = (token as { role?: unknown }).role;
+  const capabilities = toCapabilitySet(
+    normalizeAppCapabilities(token.capabilities ?? legacyRoleToCapabilities(legacyRole)),
+  );
+  if (!check(capabilities)) {
     return {
       ok: false,
       response: NextResponse.json({ error: deniedMessage }, { status: 403 }),
@@ -60,9 +70,21 @@ export async function requireApiRole(
   return {
     ok: true,
     context: {
-      role,
+      capabilities,
       email,
       userId,
     },
   };
+}
+
+export async function requireApiCapability(
+  request: NextRequest,
+  capability: AppCapability,
+  deniedMessage = "Not authorized for this action.",
+): Promise<RoleGuardResult> {
+  return requireApiRole(
+    request,
+    (capabilities) => hasCapability(capabilities, capability),
+    deniedMessage,
+  );
 }

@@ -20,7 +20,8 @@ import {
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
 import { withProjectSelectFallback } from "@/lib/projectQueries";
-import { canCreateProjects, normalizeAppRole } from "@/lib/auth/roles";
+import { canCreateProjects } from "@/lib/auth/roles";
+import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
 
 function NewProjectForm({
   newCustomerReturnTo,
@@ -177,8 +178,8 @@ function NewProjectWithReturnTo() {
       : "/new-project";
 
   const { data: session, status } = useSession();
-  const role = normalizeAppRole(session?.role);
-  const canCreate = canCreateProjects(role);
+  const capabilities = getSessionCapabilitySet(session);
+  const canCreate = canCreateProjects(capabilities);
   const [openQuotesCount, setOpenQuotesCount] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
@@ -252,7 +253,7 @@ function NewProjectWithReturnTo() {
           <QuickLinksBar
             openQuotesCount={openQuotesCount}
             newProjectHref={newProjectHref}
-            role={role}
+            capabilities={capabilities}
           />
         </div>
 

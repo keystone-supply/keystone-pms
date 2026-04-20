@@ -90,6 +90,48 @@ Migration: `20260421000000_single_source_lifecycle.sql`
   - `project_complete`
   - `customer_approval`
 
+Migration: `20260422000000_harden_trigger_search_paths.sql`
+
+- Pins `search_path` for trigger functions:
+  - `public.stamp_project_stage_transition()`
+  - `public.sheet_preview_repairs_set_updated_at()`
+- Removes `function_search_path_mutable` security advisor warnings.
+
+Migration: `20260422010000_consolidate_auth_policies.sql`
+
+- Consolidates overlapping authenticated RBAC policies on:
+  - `public.app_users`
+  - `public.app_user_project_access`
+- Uses `(select auth.jwt())` pattern in RLS to avoid per-row JWT re-evaluation.
+
+Migration: `20260422020000_drop_duplicate_and_unused_indexes.sql`
+
+- Removes duplicate unique index `projects_project_number_unique`.
+- Drops advisor-flagged unused indexes to reduce write overhead.
+
+Migration: `20260422030000_fix_policy_and_fk_index_lints.sql`
+
+- Splits admin write policies by command (`insert`/`update`/`delete`) so there is
+  a single authenticated `SELECT` policy per table.
+- Reintroduces FK-covering indexes required by performance advisor checks.
+- Leaves index-usage advisor INFOs expected on fresh indexes until workload
+  naturally records usage.
+
+### Current RBAC policy shape (app identity tables)
+
+- `public.app_users`:
+  - `app_users_select_self_or_admin`
+  - `app_users_admin_insert`
+  - `app_users_admin_update`
+  - `app_users_admin_delete`
+  - `app_users_service_role_all`
+- `public.app_user_project_access`:
+  - `app_user_project_access_select_self_or_admin`
+  - `app_user_project_access_admin_insert`
+  - `app_user_project_access_admin_update`
+  - `app_user_project_access_admin_delete`
+  - `app_user_project_access_service_role_all`
+
 ## Strict Production Target
 
 Final target is now the default deployment path:
@@ -154,6 +196,7 @@ From repo root, run:
 - `npm run test:rbac-roles` - validates role capability helpers.
 - `npm run test:rbac-sql` - executes `public.rbac_policy_audit()` via service role.
 - `npm run test:rbac-api-guards` - asserts unauthenticated API access is denied.
+- Note: run RBAC scripts through npm scripts so `.env.local` is loaded (`node --env-file=.env.local ...`).
 
 Detailed staging execution checklist:
 
@@ -249,4 +292,4 @@ Safe-creation protocol:
 - verify expected new filename before editing
 - never push with empty unintended stub files present
 
-Last updated: 2026-04-20
+Last updated: 2026-04-21

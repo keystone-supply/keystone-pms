@@ -20,8 +20,8 @@ import { SecondaryPanels } from "@/components/dashboard/secondary-panels";
 import {
   canManageSheetStock,
   canViewFinancials,
-  normalizeAppRole,
 } from "@/lib/auth/roles";
+import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
 import {
   aggregateDashboardMetrics,
   type DashboardMetrics,
@@ -83,9 +83,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (status !== "authenticated") return;
-    const role = normalizeAppRole(session?.role);
+    const capabilities = getSessionCapabilitySet(session);
     void Promise.resolve().then(() => fetchProjects());
-    if (canManageSheetStock(role)) {
+    if (canManageSheetStock(capabilities)) {
       void Promise.resolve().then(() => fetchSheetStockCount());
     } else {
       queueMicrotask(() => setSheetStockCount(null));
@@ -106,7 +106,7 @@ export default function Dashboard() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [status, session?.role, fetchProjects, fetchSheetStockCount]);
+  }, [status, session, fetchProjects, fetchSheetStockCount]);
 
   if (status === "loading") {
     return (
@@ -175,8 +175,8 @@ export default function Dashboard() {
 
   const marginDisplay =
     metrics.avgMarginPct === null ? "—" : `${metrics.avgMarginPct}%`;
-  const role = normalizeAppRole(session.role);
-  const showFinancials = canViewFinancials(role);
+  const capabilities = getSessionCapabilitySet(session);
+  const showFinancials = canViewFinancials(capabilities);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -191,7 +191,7 @@ export default function Dashboard() {
           <QuickLinksBar
             openQuotesCount={metrics.openQuotes}
             activeHref="/"
-            role={role}
+            capabilities={capabilities}
           />
         </div>
 
@@ -257,9 +257,9 @@ export default function Dashboard() {
             metrics={metrics}
             sheetStockCount={sheetStockCount}
             sheetStockLoading={sheetStockLoading}
-            role={role}
+            capabilities={capabilities}
           />
-          <SecondaryPanels metrics={metrics} />
+          <SecondaryPanels metrics={metrics} showFinancials={showFinancials} />
         </div>
       </div>
     </div>

@@ -19,9 +19,10 @@
 5. **Required verification before completion claims**
    - `npm run security:db-schema-guard`
    - `npm run test:rbac-api-guards`
-   - `npm run test:rbac-sql`
+   - `npm run test:rbac-sql` (must load `.env.local`; use npm script, not raw node/tsx)
    - `npm run build`
    - `npx supabase migration list --linked`
+   - Ensure trigger functions set an explicit `search_path` (for example: `set search_path = public, pg_temp`)
 
 ## Drift Repair Rules
 

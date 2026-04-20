@@ -76,6 +76,14 @@ export type AttentionItem = {
   estimatedMarginPct: number;
 };
 
+export type PurchasingItem = {
+  id: string;
+  project_number: string;
+  project_name: string;
+  customer: string;
+  materials_ordered_at: string | null;
+};
+
 export type DashboardMetrics = {
   /** customer_approval === "PENDING" */
   openQuotes: number;
@@ -112,6 +120,8 @@ export type DashboardMetrics = {
   topCustomers: Array<{ rank: number; customer: string; revenue: number }>;
   /** Open quotes: non-cancelled rows with customer_approval PENDING (oldest created_at first). */
   needsAttention: AttentionItem[];
+  /** Jobs where materials have been ordered but not yet received (oldest ordered first). */
+  purchasingQueue: PurchasingItem[];
   /** Median days RFQ received to PO issued. */
   quoteTurnaroundDaysMedian: number | null;
   /** Median days PO issued to invoiced. */
@@ -373,6 +383,7 @@ export function aggregateDashboardMetrics(
     p: DashboardProjectRow;
     item: AttentionItem;
   }[] = [];
+  const purchasingQueueRaw: PurchasingItem[] = [];
   for (const p of projects) {
     const stage = stageOf(p);
     if (!OPEN_QUOTE_STAGES.has(stage)) continue;
@@ -390,6 +401,22 @@ export function aggregateDashboardMetrics(
           est !== null ? Math.round(est * 10) / 10 : 0,
       },
     });
+
+    if (
+      p.materials_ordered_at &&
+      !p.material_received_at &&
+      stage !== "cancelled" &&
+      stage !== "lost" &&
+      stage !== "invoiced"
+    ) {
+      purchasingQueueRaw.push({
+        id: p.id,
+        project_number: String(p.project_number ?? ""),
+        project_name: (p.project_name || "").toUpperCase() || "—",
+        customer: (p.customer || "").toUpperCase() || "—",
+        materials_ordered_at: p.materials_ordered_at ?? null,
+      });
+    }
   }
   pendingOpenQuotes.sort((a, b) => {
     const ta = a.p.created_at
@@ -401,6 +428,15 @@ export function aggregateDashboardMetrics(
     return ta - tb;
   });
   const needsAttention = pendingOpenQuotes.map((r) => r.item);
+  purchasingQueueRaw.sort((a, b) => {
+    const ta = a.materials_ordered_at
+      ? new Date(a.materials_ordered_at).getTime()
+      : Number.POSITIVE_INFINITY;
+    const tb = b.materials_ordered_at
+      ? new Date(b.materials_ordered_at).getTime()
+      : Number.POSITIVE_INFINITY;
+    return ta - tb;
+  });
 
   return {
     openQuotes,
@@ -421,6 +457,7 @@ export function aggregateDashboardMetrics(
     engineeringLoadQuoted,
     topCustomers,
     needsAttention,
+    purchasingQueue: purchasingQueueRaw,
     quoteTurnaroundDaysMedian: median(quoteTurnaroundSamples),
     cashToCashDaysMedian: median(cashToCashSamples),
     shopThroughputDaysMedian: median(shopThroughputSamples),

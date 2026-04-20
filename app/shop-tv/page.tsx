@@ -9,7 +9,8 @@ import {
   getCommandBoardTVSummary,
   type CommandBoardTVSummary,
 } from "@/lib/dashboardMetrics";
-import { canViewShopTv, normalizeAppRole } from "@/lib/auth/roles";
+import { canViewShopTv } from "@/lib/auth/roles";
+import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
 
 type TvSummaryResponse = {
   summary?: Omit<CommandBoardTVSummary, "lastUpdated"> & { lastUpdated: string };
@@ -18,7 +19,7 @@ type TvSummaryResponse = {
 
 export default function ShopTVPage() {
   const { data: session, status } = useSession();
-  const role = normalizeAppRole(session?.role);
+  const capabilities = getSessionCapabilitySet(session);
   const [summary, setSummary] = useState<CommandBoardTVSummary>(() =>
     getCommandBoardTVSummary([]),
   );
@@ -119,7 +120,7 @@ export default function ShopTVPage() {
     );
   }
 
-  if (!canViewShopTv(role)) {
+  if (!canViewShopTv(capabilities)) {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
         <p className="mb-2 text-lg text-zinc-200">Shop TV access required.</p>

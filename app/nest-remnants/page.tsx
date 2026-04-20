@@ -51,7 +51,8 @@ import {
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
 import { withProjectSelectFallback } from "@/lib/projectQueries";
-import { canRunNesting, normalizeAppRole } from "@/lib/auth/roles";
+import { canRunNesting } from "@/lib/auth/roles";
+import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
 import {
   type Remnant,
   type PartShape,
@@ -1517,12 +1518,12 @@ function SheetWireframe({
 
 export default function NestRemnantsPage() {
   const { data: session, status } = useSession();
-  const role = normalizeAppRole(session?.role);
-  const canUseNest = canRunNesting(role);
+  const capabilities = getSessionCapabilitySet(session);
+  const canUseNest = canRunNesting(capabilities);
   const [activeTab, setActiveTab] = useState<"remnants" | "nest">("nest");
   const [pageLastUpdated, setPageLastUpdated] = useState<Date | null>(null);
   const [openQuotesCount, setOpenQuotesCount] = useState(0);
-  const [remnantsCardView, setRemnantsCardView] = useState(false);
+  const [remnantsCardView, setRemnantsCardView] = useState(true);
   const remnantsSectionRef = useRef<HTMLElement | null>(null);
 
   const [remnants, setRemnants] = useState<Remnant[]>([]);
@@ -3596,7 +3597,7 @@ export default function NestRemnantsPage() {
               openQuotesCount={openQuotesCount}
               activeHref="/nest-remnants"
               newProjectHref="/new-project?returnTo=%2Fnest-remnants"
-              role={role}
+              capabilities={capabilities}
             />
           </div>
 
@@ -3755,9 +3756,10 @@ export default function NestRemnantsPage() {
                     </div>
                   ) : (
                   <>
-                  <div className="mb-6 bg-zinc-900/60 border border-zinc-800 rounded-2xl overflow-hidden shadow-xl">
+                  <div className="mb-6 rounded-2xl border border-zinc-800 bg-zinc-900/60 shadow-xl">
+                    <div className="max-h-[33rem] overflow-y-auto">
                     <table className="w-full text-sm">
-                      <thead className="bg-zinc-950 border-b border-zinc-800">
+                      <thead className="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950">
                         <tr>
                           <th className="px-4 py-3 text-center text-xs font-medium text-zinc-400 uppercase tracking-widest w-14">
                             Nest
@@ -3898,6 +3900,7 @@ export default function NestRemnantsPage() {
                         )}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                   {remnantsCardView && (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mb-6 transition-all duration-200">

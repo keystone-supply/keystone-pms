@@ -14,8 +14,9 @@ import { Button } from "@/components/ui/button";
 import {
   canAccessSales,
   canCreateProjects,
+  canManageUsers,
   canRunNesting,
-  type AppRole,
+  type AppCapabilitySet,
 } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
 
@@ -30,19 +31,20 @@ export function QuickLinksBar({
   openQuotesCount,
   activeHref,
   newProjectHref = "/new-project",
-  role,
+  capabilities,
 }: {
   openQuotesCount: number;
   /** Highlights the matching nav link. Use `"/"` on the home dashboard (Dashboard control refreshes the page). */
   activeHref?: string;
   /** e.g. `/new-project?returnTo=%2Fprojects` so Back returns to jobs list. */
   newProjectHref?: string;
-  role?: AppRole;
+  capabilities?: AppCapabilitySet;
 }) {
   const onDashboard = activeHref === "/";
-  const showSales = role == null ? true : canAccessSales(role);
-  const showNewProject = role == null ? true : canCreateProjects(role);
-  const showNest = role == null ? true : canRunNesting(role);
+  const showSales = capabilities == null ? true : canAccessSales(capabilities);
+  const showNewProject = capabilities == null ? true : canCreateProjects(capabilities);
+  const showNest = capabilities == null ? true : canRunNesting(capabilities);
+  const showAdmin = capabilities == null ? false : canManageUsers(capabilities);
 
   return (
     <nav
@@ -142,6 +144,20 @@ export function QuickLinksBar({
             Shop calc
           </Link>
         </Button>
+        {showAdmin ? (
+          <Button variant="outline" size="sm" asChild>
+            <Link
+              href="/admin/users"
+              className={cn(
+                "gap-2",
+                activeHref?.startsWith("/admin") && quickLinkActiveClassName,
+              )}
+              aria-current={activeHref?.startsWith("/admin") ? "page" : undefined}
+            >
+              Admin users
+            </Link>
+          </Button>
+        ) : null}
       </div>
       {showNewProject ? (
         <div className="flex w-full shrink-0 justify-end sm:w-auto sm:justify-start">

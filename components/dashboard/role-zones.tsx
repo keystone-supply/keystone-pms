@@ -1,12 +1,11 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import {
-  DollarSign,
   Factory,
   Hammer,
   LineChart,
+  Package2,
   ShoppingCart,
-  Wrench,
 } from "lucide-react";
 
 import type { DashboardMetrics } from "@/lib/dashboardMetrics";
@@ -14,8 +13,7 @@ import {
   canAccessSales,
   canManageSheetStock,
   canRunNesting,
-  canViewFinancials,
-  type AppRole,
+  type AppCapabilitySet,
 } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +23,17 @@ function formatUsd(n: number): string {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(n);
+}
+
+function formatShortDate(raw: string | null): string {
+  if (raw == null || raw === "") return "—";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(d);
 }
 
 function ZoneCard({
@@ -94,29 +103,28 @@ type RoleZonesProps = {
   metrics: DashboardMetrics;
   sheetStockCount: number | null;
   sheetStockLoading: boolean;
-  role: AppRole;
+  capabilities: AppCapabilitySet;
 };
 
 export function RoleZones({
   metrics,
   sheetStockCount,
   sheetStockLoading,
-  role,
+  capabilities,
 }: RoleZonesProps) {
   const winDisplay =
     metrics.winRatePct === null ? "—" : `${metrics.winRatePct}%`;
-  const marginDisplay =
-    metrics.avgMarginPct === null ? "—" : `${metrics.avgMarginPct}%`;
-  const canUseNesting = canRunNesting(role);
-  const canUseSheetStock = canManageSheetStock(role);
+  const canUseNesting = canRunNesting(capabilities);
+  const canUseSheetStock = canManageSheetStock(capabilities);
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">
-      {canAccessSales(role) ? (
+      {canAccessSales(capabilities) ? (
         <ZoneCard
           title="Sales & quotes"
           icon={LineChart}
           subtitle="Pipeline and customer decisions"
+          className="lg:col-span-2"
         >
           <StatRow
             label="Open quotes (pending approval)"
@@ -131,10 +139,6 @@ export function RoleZones({
             label="Pipeline ($ quoted, incomplete jobs)"
             value={formatUsd(metrics.pipelineDollars)}
           />
-          <p className="pt-1 text-xs text-zinc-600">
-            Pipeline sums <code className="text-zinc-500">total_quoted</code>{" "}
-            for jobs where complete = false.
-          </p>
           <div className="flex flex-wrap gap-x-4 gap-y-1 pt-2">
             <Link
               href="/sales"
@@ -152,40 +156,11 @@ export function RoleZones({
         </ZoneCard>
       ) : null}
 
-      {canViewFinancials(role) ? (
-        <ZoneCard
-          title="Finance & accounting"
-          icon={DollarSign}
-          subtitle="Revenue, margin, and realized P&amp;L"
-        >
-          <StatRow label="YTD quoted" value={formatUsd(metrics.ytdQuoted)} />
-          <StatRow
-            label="YTD invoiced"
-            value={formatUsd(metrics.ytdInvoiced)}
-          />
-          <StatRow
-            label="Total P&amp;L (all jobs, realized)"
-            value={formatUsd(metrics.totalPl)}
-            valueClassName={
-              metrics.totalPl >= 0 ? "text-emerald-400" : "text-red-400"
-            }
-          />
-          <StatRow label="Avg margin % (invoiced jobs)" value={marginDisplay} />
-          <div className="pt-2">
-            <Link
-              href="/projects"
-              className="text-xs font-medium text-blue-400 hover:text-blue-300"
-            >
-              Open project P&amp;L detail →
-            </Link>
-          </div>
-        </ZoneCard>
-      ) : null}
-
       <ZoneCard
         title="Shop & operations"
         icon={Factory}
         subtitle="Work in progress and job mix"
+        className="lg:col-span-2"
       >
         <StatRow label="Active jobs" value={metrics.activeProjects} />
         <StatRow
@@ -213,61 +188,79 @@ export function RoleZones({
         ) : null}
       </ZoneCard>
 
-      <ZoneCard
-        title="Engineering"
-        icon={Wrench}
-        subtitle="Quoted engineering load on open work"
-      >
-        <StatRow
-          label="Σ Engineering quoted (active jobs)"
-          value={formatUsd(metrics.engineeringLoadQuoted)}
-        />
-        <p className="text-xs text-zinc-600">
-          Proxy for engineering backlog until tasks are tracked separately.
-        </p>
-        <div className="pt-2">
-          <Link
-            href="/projects"
-            className="text-xs font-medium text-blue-400 hover:text-blue-300"
-          >
-            View jobs →
-          </Link>
-        </div>
-      </ZoneCard>
-
       {canUseSheetStock ? (
-        <ZoneCard
-          title="Purchasing & materials"
-          icon={ShoppingCart}
-          subtitle="On-hand sheet stock (Nest)"
-          className="lg:col-span-2"
-        >
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <StatRow
-                label="Active sheet records"
-                value={
-                  sheetStockLoading
-                    ? "…"
-                    : sheetStockCount === null
-                      ? "—"
-                      : sheetStockCount
-                }
-              />
-              <p className="mt-2 text-xs text-zinc-600">
-                Count from Nest inventory (non-archived{" "}
-                <code className="text-zinc-500">sheet_stock</code> rows).
+        <div className="space-y-5 lg:col-span-2">
+          <ZoneCard
+            title="Purchasing"
+            icon={ShoppingCart}
+            subtitle="Jobs with materials ordered but not yet received"
+          >
+            {metrics.purchasingQueue.length > 0 ? (
+              <div className="max-h-[10.5rem] overflow-y-auto pr-1">
+                <ul className="space-y-2">
+                  {metrics.purchasingQueue.map((item) => (
+                    <li key={item.id}>
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-zinc-200">
+                            {(item.project_number || "—") + " — " + item.project_name}
+                          </p>
+                          <p className="truncate text-xs text-zinc-500">
+                            {(item.customer || "No customer").toUpperCase()}
+                          </p>
+                          <p className="truncate text-xs text-zinc-500">
+                            Ordered: {formatShortDate(item.materials_ordered_at)}
+                          </p>
+                        </div>
+                        <Link
+                          href={`/projects/${item.id}`}
+                          className="shrink-0 rounded-md border border-blue-500/35 bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-300 hover:bg-blue-500/20"
+                        >
+                          View
+                        </Link>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-8 text-center text-sm text-zinc-500">
+                No jobs are waiting on material receipt
+              </p>
+            )}
+          </ZoneCard>
+
+          <ZoneCard
+            title="Active sheet records"
+            icon={Package2}
+            subtitle="Current on-hand sheets in Nest inventory"
+          >
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+                Active sheet records
+              </p>
+              <p className="mt-1 font-mono text-2xl font-semibold text-white">
+                {sheetStockLoading
+                  ? "…"
+                  : sheetStockCount === null
+                    ? "—"
+                    : sheetStockCount}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                Count from non-archived <code className="text-zinc-500">sheet_stock</code> rows.
               </p>
             </div>
-            <Link
-              href="/nest-remnants"
-              className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white hover:border-blue-500/50 hover:bg-zinc-900"
-            >
-              <Hammer className="size-4 text-amber-400" aria-hidden />
-              Open Nest &amp; remnants
-            </Link>
-          </div>
-        </ZoneCard>
+            <div className="pt-2">
+              <Link
+                href="/nest-remnants"
+                className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white hover:border-blue-500/50 hover:bg-zinc-900"
+              >
+                <Hammer className="size-4 text-amber-400" aria-hidden />
+                Open Nest &amp; remnants
+              </Link>
+            </div>
+          </ZoneCard>
+        </div>
       ) : null}
     </div>
   );

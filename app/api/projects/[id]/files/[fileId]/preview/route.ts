@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { requireApiRole } from "@/lib/auth/api-guard";
-import { hasCapability } from "@/lib/auth/roles";
+import { requireApiCapability } from "@/lib/auth/api-guard";
 import { adminSupabase } from "@/lib/supabaseAdmin";
 import type { ProjectFileRow } from "@/lib/projectFiles";
 import { mirrorFile } from "@/lib/files/oneDriveSync";
@@ -11,10 +10,10 @@ export async function GET(
   request: NextRequest,
   context: { params: Promise<{ id: string; fileId: string }> },
 ) {
-  const authResult = await requireApiRole(
+  const authResult = await requireApiCapability(
     request,
-    (role) => hasCapability(role, "read_projects"),
-    "Your role cannot preview project files.",
+    "read_projects",
+    "Your account cannot preview project files.",
   );
   if (!authResult.ok) return authResult.response;
   if (!adminSupabase) {

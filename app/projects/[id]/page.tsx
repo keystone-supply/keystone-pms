@@ -21,7 +21,13 @@ import { ProjectWorkspaceTwoColumn } from "@/components/projects/project-workspa
 import { StatusAdvanceDialog } from "@/components/projects/status-advance-dialog";
 import { Button } from "@/components/ui/button";
 import { useProjectDetail } from "@/hooks/useProjectDetail";
-import { canAccessSales, canEditProjects, canManageDocuments, canViewFinancials, normalizeAppRole } from "@/lib/auth/roles";
+import {
+  canAccessSales,
+  canEditProjects,
+  canManageDocuments,
+  canViewFinancials,
+} from "@/lib/auth/roles";
+import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
 import { type TickerStageId } from "@/lib/projectStatusTicker";
 import { ProjectWorkspaceProvider, useProjectWorkspace } from "@/lib/projectWorkspaceContext";
 import {
@@ -338,9 +344,9 @@ export default function ProjectDetail() {
   const [advanceStage, setAdvanceStage] = useState<TickerStageId | null>(null);
 
   const { data: session, status: sessionStatus } = useSession();
-  const role = normalizeAppRole(session?.role);
-  const canEditProject = canEditProjects(role);
-  const canViewProjectFinancials = canViewFinancials(role);
+  const capabilities = getSessionCapabilitySet(session);
+  const canEditProject = canEditProjects(capabilities);
+  const canViewProjectFinancials = canViewFinancials(capabilities);
 
   const {
     project,
@@ -430,7 +436,7 @@ export default function ProjectDetail() {
             openQuotesCount={openQuotesCount}
             activeHref="/projects"
             newProjectHref={newProjectHref}
-            role={role}
+            capabilities={capabilities}
           />
         </div>
 
@@ -509,10 +515,10 @@ export default function ProjectDetail() {
                   router.replace(`${pathname}?${urlParams.toString()}`);
                 }}
                 id={id}
-                roleAllowsDocEdits={canManageDocuments(role)}
+                roleAllowsDocEdits={canManageDocuments(capabilities)}
                 canEditProject={canEditProject}
                 canViewProjectFinancials={canViewProjectFinancials}
-                canAccessSalesRole={canAccessSales(role)}
+                canAccessSalesRole={canAccessSales(capabilities)}
                 onBasicsChange={onBasicsChange}
                 updateField={updateField}
                 customersList={customersList}

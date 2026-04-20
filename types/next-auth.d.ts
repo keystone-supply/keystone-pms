@@ -1,11 +1,11 @@
 import { DefaultSession } from "next-auth";
 
-import type { AppRole } from "@/lib/auth/roles";
+import type { AppCapability } from "@/lib/auth/roles";
 
 declare module "next-auth" {
   interface Session {
     accessToken?: string;
-    role: AppRole;
+    capabilities: AppCapability[];
     authProvider: "azure-ad" | "credentials";
     user: DefaultSession["user"] & {
       id?: string;
@@ -14,7 +14,7 @@ declare module "next-auth" {
 
   interface User {
     id?: string;
-    role?: AppRole;
+    capabilities?: AppCapability[];
     authProvider?: "azure-ad" | "credentials";
   }
 }
@@ -24,7 +24,7 @@ declare module "next-auth/jwt" {
     accessToken?: string;
     refreshToken?: string;
     accessTokenExpires?: number;
-    role?: AppRole;
+    capabilities?: AppCapability[];
     authProvider?: "azure-ad" | "credentials";
     userId?: string;
   }

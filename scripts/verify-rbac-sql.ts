@@ -1,4 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
+import { config } from "dotenv";
+
+config({ path: ".env.local", override: false });
 
 type AuditRow = {
   check_name: string;

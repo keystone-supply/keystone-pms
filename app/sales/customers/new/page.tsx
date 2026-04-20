@@ -22,7 +22,8 @@ import {
 } from "@/lib/dashboardMetrics";
 import { withProjectSelectFallback } from "@/lib/projectQueries";
 import { safeReturnToPath } from "@/lib/safeReturnTo";
-import { canManageCrm, normalizeAppRole } from "@/lib/auth/roles";
+import { canManageCrm } from "@/lib/auth/roles";
+import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
 
 function trimOrNull(s: string): string | null {
   const t = s.trim();
@@ -33,7 +34,7 @@ function NewCustomerPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session, status } = useSession();
-  const role = normalizeAppRole(session?.role);
+  const capabilities = getSessionCapabilitySet(session);
   const [form, setForm] = useState<CustomerFormState>(emptyCustomerFormState);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +132,7 @@ function NewCustomerPageInner() {
     );
   }
 
-  if (!canManageCrm(role)) {
+  if (!canManageCrm(capabilities)) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
         <p className="mb-2 text-lg text-zinc-200">CRM access required.</p>
@@ -164,7 +165,7 @@ function NewCustomerPageInner() {
             openQuotesCount={openQuotes}
             activeHref="/sales"
             newProjectHref="/new-project?returnTo=%2Fsales"
-            role={role}
+            capabilities={capabilities}
           />
         </div>
 

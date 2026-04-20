@@ -25,7 +25,8 @@ import {
 } from "@/lib/dashboardMetrics";
 import { withProjectSelectFallback } from "@/lib/projectQueries";
 import { cn } from "@/lib/utils";
-import { canManageCrm, normalizeAppRole } from "@/lib/auth/roles";
+import { canManageCrm } from "@/lib/auth/roles";
+import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
 
 function trimOrNull(s: string): string | null {
   const t = s.trim();
@@ -61,7 +62,7 @@ export default function VendorDetailPage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
   const { data: session, status } = useSession();
-  const role = normalizeAppRole(session?.role);
+  const capabilities = getSessionCapabilitySet(session);
 
   const [vendor, setVendor] = useState<VendorRow | null>(null);
   const [form, setForm] = useState<VendorFormState | null>(null);
@@ -213,7 +214,7 @@ export default function VendorDetailPage() {
     );
   }
 
-  if (!canManageCrm(role)) {
+  if (!canManageCrm(capabilities)) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
         <p className="mb-2 text-lg text-zinc-200">CRM access required.</p>
@@ -252,7 +253,7 @@ export default function VendorDetailPage() {
             openQuotesCount={openQuotes}
             activeHref="/sales"
             newProjectHref="/new-project?returnTo=%2Fsales"
-            role={role}
+            capabilities={capabilities}
           />
         </div>
 

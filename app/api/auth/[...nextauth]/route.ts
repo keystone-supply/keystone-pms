@@ -4,13 +4,17 @@ import AzureADProvider from "next-auth/providers/azure-ad";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { createClient } from "@supabase/supabase-js";
 
-import { DEFAULT_APP_ROLE, normalizeAppRole } from "@/lib/auth/roles";
+import {
+  DEFAULT_APP_CAPABILITIES,
+  legacyRoleToCapabilities,
+  normalizeAppCapabilities,
+  type AppCapability,
+} from "@/lib/auth/roles";
 
 type AuthUserRow = {
   id: string;
   email: string;
   display_name: string | null;
-  role: string;
   is_active?: boolean;
 };
 
@@ -80,12 +84,22 @@ async function findAppUserByEmail(email: string): Promise<AuthUserRow | null> {
   if (!adminSupabase) return null;
   const { data, error } = await adminSupabase
     .from("app_users")
-    .select("id, email, display_name, role, is_active")
+    .select("id, email, display_name, is_active")
     .eq("email", email)
     .eq("is_active", true)
     .maybeSingle();
   if (error || !data) return null;
   return data as AuthUserRow;
+}
+
+async function getAppUserCapabilities(userId: string): Promise<AppCapability[]> {
+  if (!adminSupabase) return [...DEFAULT_APP_CAPABILITIES];
+  const { data, error } = await adminSupabase
+    .from("app_user_capabilities")
+    .select("capability")
+    .eq("user_id", userId);
+  if (error || !data) return [...DEFAULT_APP_CAPABILITIES];
+  return normalizeAppCapabilities(data.map((row) => row.capability));
 }
 
 async function syncAzureUser(email: string, name: string | null, azureOid?: string | null) {
@@ -105,12 +119,11 @@ async function syncAzureUser(email: string, name: string | null, azureOid?: stri
     .insert({
       email,
       display_name: name,
-      role: DEFAULT_APP_ROLE,
       auth_provider: "azure_ad",
       azure_oid: azureOid ?? null,
       is_active: true,
     })
-    .select("id, email, display_name, role")
+    .select("id, email, display_name")
     .single();
   if (error || !data) return null;
   return data as AuthUserRow;
@@ -135,11 +148,12 @@ const handler = NextAuth({
         });
         if (error || !Array.isArray(data) || data.length === 0) return null;
         const user = data[0] as AuthUserRow;
+        const capabilities = await getAppUserCapabilities(user.id);
         return {
           id: user.id,
           email: user.email,
           name: user.display_name ?? user.email,
-          role: normalizeAppRole(user.role),
+          capabilities,
           authProvider: "credentials",
         };
       },
@@ -182,29 +196,35 @@ const handler = NextAuth({
       }
 
       // Credentials sign-in provides role directly from authorize.
-      if (user?.role) {
-        token.role = normalizeAppRole(user.role);
+      if (user?.capabilities) {
+        token.capabilities = normalizeAppCapabilities(user.capabilities);
         token.authProvider = user.authProvider ?? "credentials";
         token.userId = user.id;
       }
 
-      // For Azure users or already-existing sessions, refresh role from DB by email.
+      // For Azure users or already-existing sessions, refresh capabilities from DB by email.
       const tokenEmail =
         typeof token.email === "string" ? token.email.trim().toLowerCase() : "";
       if (tokenEmail) {
         const appUser = await findAppUserByEmail(tokenEmail);
         if (appUser) {
-          token.role = normalizeAppRole(appUser.role);
+          token.capabilities = await getAppUserCapabilities(appUser.id);
           token.userId = appUser.id;
           token.authProvider =
             token.authProvider ?? (account?.provider === "azure-ad" ? "azure-ad" : "credentials");
         } else {
-          token.role = DEFAULT_APP_ROLE;
+          token.capabilities = [...DEFAULT_APP_CAPABILITIES];
           token.userId = undefined;
           token.authProvider =
             token.authProvider ??
             (account?.provider === "credentials" ? "credentials" : "azure-ad");
         }
+      }
+
+      // One-time migration path for old tokens with role.
+      const legacyRole = (token as { role?: unknown }).role;
+      if (!token.capabilities && legacyRole) {
+        token.capabilities = legacyRoleToCapabilities(legacyRole);
       }
 
       if (
@@ -220,12 +240,12 @@ const handler = NextAuth({
         }
       }
 
-      token.role = normalizeAppRole(token.role);
+      token.capabilities = normalizeAppCapabilities(token.capabilities);
       return token;
     },
     async session({ session, token }) {
       session.accessToken = token.accessToken as string | undefined;
-      session.role = normalizeAppRole(token.role);
+      session.capabilities = normalizeAppCapabilities(token.capabilities);
       session.authProvider =
         token.authProvider === "credentials" ? "credentials" : "azure-ad";
       if (session.user) {

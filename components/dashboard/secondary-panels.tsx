@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { FolderKanban } from "lucide-react";
+import { DollarSign, FolderKanban } from "lucide-react";
 
 import type { DashboardMetrics } from "@/lib/dashboardMetrics";
 
@@ -24,100 +24,173 @@ function formatCreatedAt(raw: string | null): string {
 
 type SecondaryPanelsProps = {
   metrics: DashboardMetrics;
+  showFinancials: boolean;
 };
 
-export function SecondaryPanels({ metrics }: SecondaryPanelsProps) {
+export function SecondaryPanels({
+  metrics,
+  showFinancials,
+}: SecondaryPanelsProps) {
+  const marginDisplay =
+    metrics.avgMarginPct === null ? "—" : `${metrics.avgMarginPct}%`;
+
   return (
     <div className="grid gap-5 lg:grid-cols-2">
-      <section className="rounded-2xl border border-zinc-800/90 bg-zinc-900/60 p-6">
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-white">
-              Top customers by invoiced revenue
-            </h2>
-            <p className="mt-1 max-w-xl text-xs text-zinc-500">
-              {new Date().getFullYear()} only — same window as YTD invoiced
-              (jobs with RFQ/created in this year).
-            </p>
-          </div>
-          <Link
-            href="/projects"
-            className="shrink-0 text-xs font-medium text-blue-400 hover:text-blue-300"
-          >
-            Projects →
-          </Link>
-        </div>
-        <ul className="space-y-3">
-          {metrics.topCustomers.length > 0 ? (
-            metrics.topCustomers.map((c) => (
-              <li
-                key={`${c.rank}-${c.customer}`}
-                className="flex items-center justify-between gap-4 border-b border-zinc-800/50 pb-3 last:border-0 last:pb-0"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-zinc-950 font-mono text-xs text-zinc-400">
-                    {c.rank}
-                  </span>
-                  <span className="truncate font-medium uppercase text-zinc-200">
-                    {c.customer}
-                  </span>
-                </div>
-                <span className="shrink-0 font-mono text-sm text-emerald-400">
-                  {formatUsd(c.revenue)}
+      <div className="space-y-5">
+        {showFinancials ? (
+          <section className="rounded-2xl border border-zinc-800/90 bg-zinc-900/60 p-6">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-zinc-950 ring-1 ring-zinc-800">
+                <DollarSign className="size-5 text-blue-400" aria-hidden />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-white">
+                  Finance &amp; accounting
+                </h2>
+                <p className="text-xs text-zinc-500">
+                  Revenue, margin, and realized P&amp;L
+                </p>
+              </div>
+            </div>
+            <div className="space-y-3 text-sm">
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="text-zinc-500">YTD quoted</span>
+                <span className="font-mono text-sm font-medium tabular-nums text-white">
+                  {formatUsd(metrics.ytdQuoted)}
                 </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="text-zinc-500">YTD invoiced</span>
+                <span className="font-mono text-sm font-medium tabular-nums text-white">
+                  {formatUsd(metrics.ytdInvoiced)}
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="text-zinc-500">Total P&amp;L (all jobs, realized)</span>
+                <span
+                  className={
+                    metrics.totalPl >= 0
+                      ? "font-mono text-sm font-medium tabular-nums text-emerald-400"
+                      : "font-mono text-sm font-medium tabular-nums text-red-400"
+                  }
+                >
+                  {formatUsd(metrics.totalPl)}
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="text-zinc-500">Avg margin % (invoiced jobs)</span>
+                <span className="font-mono text-sm font-medium tabular-nums text-white">
+                  {marginDisplay}
+                </span>
+              </div>
+              <div className="pt-2">
+                <Link
+                  href="/projects"
+                  className="text-xs font-medium text-blue-400 hover:text-blue-300"
+                >
+                  Open project P&amp;L detail →
+                </Link>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="rounded-2xl border border-zinc-800/90 bg-zinc-900/60 p-6">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+                Top customers by invoiced revenue
+              </p>
+              <p className="max-w-xl text-xs text-zinc-500">
+                {new Date().getFullYear()} only — same window as YTD invoiced
+                (jobs with RFQ/created in this year).
+              </p>
+            </div>
+            <Link
+              href="/projects"
+              className="shrink-0 text-xs font-medium text-blue-400 hover:text-blue-300"
+            >
+              Projects →
+            </Link>
+          </div>
+          <ul className="space-y-2">
+            {metrics.topCustomers.length > 0 ? (
+              metrics.topCustomers.map((c) => (
+                <li
+                  key={`${c.rank}-${c.customer}`}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-zinc-900 font-mono text-xs text-zinc-400 ring-1 ring-zinc-800">
+                      {c.rank}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-zinc-200">
+                        {c.customer.toUpperCase()}
+                      </p>
+                      <p className="text-xs text-zinc-500">YTD invoiced revenue</p>
+                    </div>
+                  </div>
+                  <p className="shrink-0 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 font-mono text-xs font-medium text-emerald-300">
+                    {formatUsd(c.revenue)}
+                  </p>
+                </li>
+              ))
+            ) : (
+              <li className="py-8 text-center text-sm text-zinc-500">
+                No invoiced revenue yet
               </li>
-            ))
-          ) : (
-            <li className="py-8 text-center text-sm text-zinc-500">
-              No invoiced revenue yet
-            </li>
-          )}
-        </ul>
-      </section>
+            )}
+          </ul>
+        </section>
+      </div>
 
       <section className="rounded-2xl border border-zinc-800/90 bg-zinc-900/60 p-6">
-        <div className="mb-4 flex items-center gap-2">
-          <FolderKanban className="size-5 text-sky-400/90" aria-hidden />
-          <h2 className="text-base font-semibold text-white">
-            Open quotes (pending approval)
-          </h2>
+        <div className="mb-4 flex items-start gap-2.5">
+          <FolderKanban className="mt-0.5 size-4 text-sky-400/90" aria-hidden />
+          <div className="min-w-0 flex-1 space-y-1">
+            <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+              Open quotes (pending approval)
+            </p>
+            <p className="text-xs text-zinc-500">
+              Jobs where customer approval is still pending (same set as the Open
+              quotes KPI), oldest RFQ first.
+            </p>
+          </div>
         </div>
-        <p className="mb-4 text-xs text-zinc-500">
-          Jobs where customer approval is still pending (same set as the Open
-          quotes KPI), oldest RFQ first.
-        </p>
-        <ul className="space-y-3">
-          {metrics.needsAttention.length > 0 ? (
-            metrics.needsAttention.map((item) => (
-              <li key={item.id} className="text-sm">
-                <Link
-                  href={`/projects/${item.id}`}
-                  className="group flex flex-col rounded-xl border border-zinc-800/60 bg-zinc-950/50 px-3 py-2 transition-colors hover:border-sky-500/30 hover:bg-zinc-950"
-                >
-                  <span className="font-mono font-medium text-white group-hover:text-sky-100">
-                    {item.project_number || "—"} — {item.project_name}
-                  </span>
-                  <span className="mt-1 truncate text-xs uppercase text-zinc-400">
-                    {item.customer}
-                  </span>
-                  <span className="text-xs text-zinc-500">
-                    RFQ date:{" "}
-                    <span className="font-mono text-zinc-400 tabular-nums">
-                      {formatCreatedAt(item.created_at)}
-                    </span>
-                  </span>
-                  <span className="mt-0.5 text-xs font-mono text-zinc-400">
-                    Est. quoted margin: {item.estimatedMarginPct}%
-                  </span>
-                </Link>
+        <div className="max-h-[40rem] overflow-y-auto pr-1">
+          <ul className="space-y-2">
+            {metrics.needsAttention.length > 0 ? (
+              metrics.needsAttention.map((item) => (
+                <li key={item.id}>
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-zinc-200">
+                        {(item.project_number || "—") + " — " + item.project_name}
+                      </p>
+                      <p className="truncate text-xs text-zinc-500">
+                        {(item.customer || "No customer").toUpperCase()}
+                      </p>
+                      <p className="truncate text-xs text-zinc-500">
+                        RFQ: {formatCreatedAt(item.created_at)}
+                      </p>
+                    </div>
+                    <Link
+                      href={`/projects/${item.id}`}
+                      className="shrink-0 rounded-md border border-blue-500/35 bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-300 hover:bg-blue-500/20"
+                    >
+                      View
+                    </Link>
+                  </div>
+                </li>
+              ))
+            ) : (
+              <li className="py-8 text-center text-sm text-zinc-500">
+                No open quotes pending approval
               </li>
-            ))
-          ) : (
-            <li className="py-8 text-center text-sm text-zinc-500">
-              No open quotes pending approval
-            </li>
-          )}
-        </ul>
+            )}
+          </ul>
+        </div>
       </section>
     </div>
   );

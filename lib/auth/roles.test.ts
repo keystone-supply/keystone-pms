@@ -8,54 +8,59 @@ import {
   canManageCrm,
   canManageDocuments,
   canManageSheetStock,
+  canManageUsers,
   canRunNesting,
   canViewFinancials,
   canViewShopTv,
-  normalizeAppRole,
-  type AppRole,
+  legacyRoleToCapabilities,
+  normalizeAppCapabilities,
+  toCapabilitySet,
 } from "@/lib/auth/roles";
 
-const roles: AppRole[] = [
-  "admin",
-  "manager",
-  "sales",
-  "engineering",
-  "fabrication",
-  "viewer",
-];
-
-test("normalizeAppRole falls back to viewer", () => {
-  assert.equal(normalizeAppRole(undefined), "viewer");
-  assert.equal(normalizeAppRole("unexpected"), "viewer");
-  assert.equal(normalizeAppRole("sales"), "sales");
+test("normalizeAppCapabilities falls back to read_projects", () => {
+  assert.deepEqual(normalizeAppCapabilities(undefined), ["read_projects"]);
+  assert.deepEqual(normalizeAppCapabilities(["unexpected"]), ["read_projects"]);
+  assert.deepEqual(normalizeAppCapabilities(["read_projects", "view_financials"]), [
+    "read_projects",
+    "view_financials",
+  ]);
 });
 
-test("sales + finance capabilities are limited to commercial roles", () => {
-  for (const role of roles) {
-    const expected = role === "admin" || role === "manager" || role === "sales";
-    assert.equal(canAccessSales(role), expected, `${role} sales access`);
-    assert.equal(canManageCrm(role), expected, `${role} crm access`);
-    assert.equal(canViewFinancials(role), expected, `${role} financial visibility`);
-    assert.equal(canCreateProjects(role), expected, `${role} create projects`);
-    assert.equal(canEditProjects(role), expected, `${role} edit projects`);
-    assert.equal(canManageDocuments(role), expected, `${role} manage documents`);
-  }
+test("legacy role mapper keeps commercial capabilities", () => {
+  const salesCaps = toCapabilitySet(legacyRoleToCapabilities("sales"));
+  assert.equal(canAccessSales(salesCaps), true);
+  assert.equal(canManageCrm(salesCaps), true);
+  assert.equal(canViewFinancials(salesCaps), true);
+  assert.equal(canCreateProjects(salesCaps), true);
+  assert.equal(canEditProjects(salesCaps), true);
+  assert.equal(canManageDocuments(salesCaps), true);
+
+  const viewerCaps = toCapabilitySet(legacyRoleToCapabilities("viewer"));
+  assert.equal(canAccessSales(viewerCaps), false);
+  assert.equal(canManageCrm(viewerCaps), false);
+  assert.equal(canViewFinancials(viewerCaps), false);
 });
 
-test("nesting + sheet stock capabilities are restricted to shop roles", () => {
-  for (const role of roles) {
-    const expected =
-      role === "admin" ||
-      role === "manager" ||
-      role === "engineering" ||
-      role === "fabrication";
-    assert.equal(canRunNesting(role), expected, `${role} run nesting`);
-    assert.equal(canManageSheetStock(role), expected, `${role} manage sheet stock`);
-  }
+test("legacy role mapper keeps nesting + sheet stock behavior", () => {
+  const engineeringCaps = toCapabilitySet(legacyRoleToCapabilities("engineering"));
+  assert.equal(canRunNesting(engineeringCaps), true);
+  assert.equal(canManageSheetStock(engineeringCaps), true);
+
+  const salesCaps = toCapabilitySet(legacyRoleToCapabilities("sales"));
+  assert.equal(canRunNesting(salesCaps), false);
+  assert.equal(canManageSheetStock(salesCaps), false);
+});
+
+test("manage_users is admin-only in legacy mapper", () => {
+  const adminCaps = toCapabilitySet(legacyRoleToCapabilities("admin"));
+  const managerCaps = toCapabilitySet(legacyRoleToCapabilities("manager"));
+  assert.equal(canManageUsers(adminCaps), true);
+  assert.equal(canManageUsers(managerCaps), false);
 });
 
 test("shop tv visibility excludes viewer", () => {
-  for (const role of roles) {
-    assert.equal(canViewShopTv(role), role !== "viewer", `${role} shop tv`);
-  }
+  const viewerCaps = toCapabilitySet(legacyRoleToCapabilities("viewer"));
+  const managerCaps = toCapabilitySet(legacyRoleToCapabilities("manager"));
+  assert.equal(canViewShopTv(viewerCaps), false);
+  assert.equal(canViewShopTv(managerCaps), true);
 });

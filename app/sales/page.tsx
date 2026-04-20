@@ -47,7 +47,8 @@ import {
   PIPELINE_STAGE_LABELS,
   SALES_PROJECT_COLUMNS,
 } from "@/lib/salesCommandBoardColumn";
-import { canAccessSales, normalizeAppRole } from "@/lib/auth/roles";
+import { canAccessSales } from "@/lib/auth/roles";
+import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
 
 function formatUsd(n: number): string {
   return new Intl.NumberFormat(undefined, {
@@ -88,7 +89,7 @@ export default function SalesPage() {
   const [vendorSearch, setVendorSearch] = useState("");
 
   const { data: session, status } = useSession();
-  const role = normalizeAppRole(session?.role);
+  const capabilities = getSessionCapabilitySet(session);
 
   const fetchAll = useCallback(async () => {
     const [projRes, custRes, vendRes] = await Promise.all([
@@ -210,7 +211,7 @@ export default function SalesPage() {
     );
   }
 
-  if (!canAccessSales(role)) {
+  if (!canAccessSales(capabilities)) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
         <p className="mb-2 text-lg text-zinc-200">Sales access required.</p>
@@ -248,7 +249,7 @@ export default function SalesPage() {
             openQuotesCount={metrics.openQuotes}
             activeHref="/sales"
             newProjectHref="/new-project?returnTo=%2Fsales"
-            role={role}
+            capabilities={capabilities}
           />
         </div>
 

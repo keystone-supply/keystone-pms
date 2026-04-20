@@ -14,7 +14,8 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { QuickLinksBar } from "@/components/dashboard/quick-links-bar";
 import { ProjectsDataTable } from "@/components/projects/projects-data-table";
-import { canViewFinancials, normalizeAppRole } from "@/lib/auth/roles";
+import { canViewFinancials } from "@/lib/auth/roles";
+import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
 import { supabase } from "@/lib/supabaseClient";
 import {
   aggregateDashboardMetrics,
@@ -181,8 +182,8 @@ export default function ProjectsPage() {
     );
   }
 
-  const role = normalizeAppRole(session.role);
-  const showFinancials = canViewFinancials(role);
+  const capabilities = getSessionCapabilitySet(session);
+  const showFinancials = canViewFinancials(capabilities);
   const openQuoteProjects = rows.filter((project) => {
     const stage = boardColumnForProject(project);
     return (
@@ -211,7 +212,7 @@ export default function ProjectsPage() {
             openQuotesCount={metrics.openQuotes}
             activeHref="/projects"
             newProjectHref="/new-project?returnTo=%2Fprojects"
-            role={role}
+            capabilities={capabilities}
           />
         </div>
 

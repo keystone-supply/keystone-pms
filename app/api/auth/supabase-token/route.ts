@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 import { createClient } from "@supabase/supabase-js";
 
-import { normalizeAppRole } from "@/lib/auth/roles";
+import { normalizeAppCapabilities } from "@/lib/auth/roles";
 import {
   getSupabaseBridgeTokenTtlSeconds,
   issueSupabaseBridgeToken,
@@ -29,7 +29,7 @@ const adminSupabase =
 async function issueBridgeTokenFromDatabase(
   email: string,
   userId: string,
-  role: ReturnType<typeof normalizeAppRole>,
+  capabilities: ReturnType<typeof normalizeAppCapabilities>,
 ): Promise<SupabaseTokenResponse> {
   if (!adminSupabase) {
     throw new Error("Server auth configuration is incomplete.");
@@ -37,7 +37,7 @@ async function issueBridgeTokenFromDatabase(
   const { data, error } = await adminSupabase.rpc("issue_supabase_bridge_token", {
     p_email: email,
     p_user_id: userId,
-    p_app_role: role,
+    p_app_capabilities: capabilities,
     p_ttl_seconds: getSupabaseBridgeTokenTtlSeconds(),
   });
   if (error) {
@@ -76,21 +76,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const role = normalizeAppRole(token.role);
+  const capabilities = normalizeAppCapabilities(token.capabilities);
   let issued: SupabaseTokenResponse;
   try {
     if (process.env.SUPABASE_JWT_SECRET) {
       const bridgeToken = issueSupabaseBridgeToken({
         email,
         userId,
-        role,
+        capabilities,
       });
       issued = {
         accessToken: bridgeToken.token,
         expiresAt: bridgeToken.expiresAt,
       };
     } else {
-      issued = await issueBridgeTokenFromDatabase(email, userId, role);
+      issued = await issueBridgeTokenFromDatabase(email, userId, capabilities);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not issue token.";

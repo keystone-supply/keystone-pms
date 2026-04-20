@@ -33,7 +33,8 @@ import {
   boardColumnForProject,
 } from "@/lib/salesCommandBoardColumn";
 import { cn } from "@/lib/utils";
-import { canManageCrm, normalizeAppRole } from "@/lib/auth/roles";
+import { canManageCrm } from "@/lib/auth/roles";
+import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
 
 function trimOrNull(s: string): string | null {
   const t = s.trim();
@@ -84,7 +85,7 @@ export default function CustomerDetailPage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
   const { data: session, status } = useSession();
-  const role = normalizeAppRole(session?.role);
+  const capabilities = getSessionCapabilitySet(session);
 
   const [customer, setCustomer] = useState<CustomerWithShipping | null>(null);
   const [form, setForm] = useState<CustomerFormState | null>(null);
@@ -300,7 +301,7 @@ export default function CustomerDetailPage() {
     );
   }
 
-  if (!canManageCrm(role)) {
+  if (!canManageCrm(capabilities)) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 text-center text-zinc-400">
         <p className="mb-2 text-lg text-zinc-200">CRM access required.</p>
@@ -362,7 +363,7 @@ export default function CustomerDetailPage() {
             openQuotesCount={openQuotes}
             activeHref="/sales"
             newProjectHref="/new-project?returnTo=%2Fsales"
-            role={role}
+            capabilities={capabilities}
           />
         </div>
 

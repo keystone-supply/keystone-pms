@@ -1,7 +1,6 @@
 import { createHmac } from "node:crypto";
 
-import type { AppRole } from "@/lib/auth/roles";
-import { normalizeAppRole } from "@/lib/auth/roles";
+import type { AppCapability } from "@/lib/auth/roles";
 
 const JWT_ALGORITHM = "HS256";
 const JWT_TYPE = "JWT";
@@ -10,7 +9,7 @@ const DEFAULT_SUPABASE_BRIDGE_TOKEN_TTL_SECONDS = 10 * 60;
 type SupabaseBridgeTokenInput = {
   email: string;
   userId: string;
-  role: AppRole;
+  capabilities: AppCapability[];
   ttlSeconds?: number;
 };
 
@@ -19,7 +18,7 @@ type SupabaseBridgePayload = {
   role: "authenticated";
   sub: string;
   email: string;
-  app_role: AppRole;
+  app_capabilities: AppCapability[];
   app_user_id: string;
   iat: number;
   exp: number;
@@ -53,7 +52,7 @@ export function getSupabaseBridgeTokenTtlSeconds(): number {
 export function issueSupabaseBridgeToken({
   email,
   userId,
-  role,
+  capabilities,
   ttlSeconds,
 }: SupabaseBridgeTokenInput): { token: string; expiresAt: number } {
   const secret = process.env.SUPABASE_JWT_SECRET;
@@ -79,7 +78,7 @@ export function issueSupabaseBridgeToken({
     role: "authenticated",
     sub: normalizedUserId,
     email: normalizedEmail,
-    app_role: normalizeAppRole(role),
+    app_capabilities: capabilities,
     app_user_id: normalizedUserId,
     iat: nowSeconds,
     exp: expiresAt,
