@@ -297,7 +297,7 @@ export function ProjectFilesPanel({
                 const rows = grouped.get(slot) ?? [];
                 if (rows.length === 0) return null;
                 return (
-                  <details key={slot} open className="rounded-lg border border-zinc-800">
+                  <details key={slot} className="rounded-lg border border-zinc-800">
                     <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-zinc-200">
                       {SLOT_LABEL[slot]} ({rows.length})
                     </summary>

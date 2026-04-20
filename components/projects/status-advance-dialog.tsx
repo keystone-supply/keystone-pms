@@ -72,21 +72,8 @@ function buildAdvancePatch(project: ProjectRow, stage: TickerStageId): Partial<P
   const moved = rowAfterMoveToColumn(
     { id: project.id ?? "__local__", ...project },
     target,
-    new Date(nowIso),
   );
-  const candidateKeys: Array<keyof ProjectRow> = [
-    "sales_command_stage",
-    "customer_approval",
-    "project_status",
-    "project_complete",
-    "rfq_vendors_sent_at",
-    "quote_sent_at",
-    "po_issued_at",
-    "in_process_at",
-    "completed_at",
-    "delivered_at",
-    "invoiced_at",
-  ];
+  const candidateKeys: Array<keyof ProjectRow> = ["sales_command_stage"];
 
   for (const key of candidateKeys) {
     if (moved[key] !== project[key]) {

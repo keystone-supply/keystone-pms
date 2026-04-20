@@ -4,6 +4,10 @@ import {
   estimatedMarginPctQuoted,
   isCancelledProject,
 } from "@/lib/dashboardMetrics";
+import {
+  boardColumnForProject,
+  isLostProject,
+} from "@/lib/salesCommandBoardColumn";
 
 const MS_PER_DAY = 86400000;
 
@@ -15,18 +19,20 @@ export function projectRowHealth(
   p: DashboardProjectRow,
   now: Date = new Date(),
 ): string {
-  if (p.project_complete) return "Complete";
+  if (boardColumnForProject(p) === "invoiced") return "Complete";
 
   if (isCancelledProject(p)) return "Cancelled";
 
-  const approval = p.customer_approval || "";
-  if (approval === "REJECTED") return "Rejected";
+  if (isLostProject(p)) return "Rejected";
 
-  if (approval === "PENDING" && p.created_at) {
+  const stage = boardColumnForProject(p);
+  const isOpenQuote =
+    stage === "rfq_customer" || stage === "rfq_vendors" || stage === "quote_sent";
+  if (isOpenQuote && p.created_at) {
     const ageDays =
       (now.getTime() - new Date(p.created_at).getTime()) / MS_PER_DAY;
     if (ageDays >= STALE_QUOTE_DAYS) return "Stale quote";
-    return "Pending approval";
+    return "Open quote";
   }
 
   const est = estimatedMarginPctQuoted(p);

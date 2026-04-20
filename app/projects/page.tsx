@@ -2,13 +2,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { signIn, signOut, useSession } from "next-auth/react";
 import {
   Activity,
-  DollarSign,
+  ChevronDown,
   FolderKanban,
-  Percent,
-  TrendingUp,
 } from "lucide-react";
 
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
@@ -19,17 +18,63 @@ import { canViewFinancials, normalizeAppRole } from "@/lib/auth/roles";
 import { supabase } from "@/lib/supabaseClient";
 import {
   aggregateDashboardMetrics,
+  isCancelledProject,
   type DashboardMetrics,
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
 import { withProjectSelectFallback } from "@/lib/projectQueries";
+import { boardColumnForProject } from "@/lib/salesCommandBoardColumn";
 
-function formatUsd(n: number): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(n);
+function projectDisplayName(project: DashboardProjectRow): string {
+  const number = project.project_number ?? "—";
+  const name = project.project_name?.trim() || "Untitled";
+  return `${number} — ${name}`;
+}
+
+function ProjectStateDropdown({
+  projects,
+}: {
+  projects: DashboardProjectRow[];
+}) {
+  return (
+    <details className="group rounded-2xl border border-zinc-800/80 bg-zinc-900/80 p-5 shadow-sm">
+      <summary className="cursor-pointer list-none">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm text-zinc-400">View projects in this state</span>
+          <ChevronDown className="size-4 text-zinc-500 transition group-open:rotate-180" />
+        </div>
+      </summary>
+      <div className="mt-3 max-h-64 space-y-2 overflow-auto pr-1">
+        {projects.length === 0 ? (
+          <p className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-500">
+            No projects in this state.
+          </p>
+        ) : (
+          projects.map((project) => (
+            <div
+              key={project.id}
+              className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-zinc-200">
+                  {projectDisplayName(project)}
+                </p>
+                <p className="truncate text-xs text-zinc-500">
+                  {(project.customer || "No customer").toUpperCase()}
+                </p>
+              </div>
+              <Link
+                href={`/projects/${project.id}`}
+                className="shrink-0 rounded-md border border-blue-500/35 bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-300 hover:bg-blue-500/20"
+              >
+                View
+              </Link>
+            </div>
+          ))
+        )}
+      </div>
+    </details>
+  );
 }
 
 export default function ProjectsPage() {
@@ -136,14 +181,23 @@ export default function ProjectsPage() {
     );
   }
 
-  const marginDisplay =
-    metrics.avgMarginPct === null ? "—" : `${metrics.avgMarginPct}%`;
   const role = normalizeAppRole(session.role);
   const showFinancials = canViewFinancials(role);
+  const openQuoteProjects = rows.filter((project) => {
+    const stage = boardColumnForProject(project);
+    return (
+      (stage === "rfq_customer" || stage === "rfq_vendors" || stage === "quote_sent") &&
+      !isCancelledProject(project)
+    );
+  });
+  const activeProjects = rows.filter(
+    (project) =>
+      !isCancelledProject(project) && boardColumnForProject(project) !== "invoiced",
+  );
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
+      <div className="mx-auto max-w-[92.4rem] px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
         <DashboardHeader
           userName={session?.user?.name}
           lastUpdated={lastUpdated}
@@ -163,54 +217,27 @@ export default function ProjectsPage() {
 
         <section
           aria-label="Project portfolio KPIs"
-          className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+          className="mt-8 grid gap-4 sm:grid-cols-2"
         >
-          <KpiCard
-            label="Pipeline (incomplete)"
-            value={formatUsd(metrics.pipelineDollars)}
-            hint="Sum of quoted $ on open jobs"
-            icon={TrendingUp}
-          />
-          <KpiCard
-            label="YTD invoiced"
-            value={formatUsd(metrics.ytdInvoiced)}
-            hint="Invoiced this calendar year"
-            icon={DollarSign}
-          />
-          <KpiCard
-            label="Open quotes"
-            value={metrics.openQuotes}
-            hint="Awaiting customer approval"
-            icon={FolderKanban}
-          />
-          <KpiCard
-            label="Active jobs"
-            value={metrics.activeProjects}
-            hint={`${metrics.completedProjects} completed (lifetime)`}
-            icon={Activity}
-          />
+          <div className="space-y-3">
+            <KpiCard
+              label="Open quotes"
+              value={metrics.openQuotes}
+              hint="In RFQ / quote stages"
+              icon={FolderKanban}
+            />
+            <ProjectStateDropdown projects={openQuoteProjects} />
+          </div>
+          <div className="space-y-3">
+            <KpiCard
+              label="Active jobs"
+              value={metrics.activeProjects}
+              hint={`${metrics.completedProjects} completed (lifetime)`}
+              icon={Activity}
+            />
+            <ProjectStateDropdown projects={activeProjects} />
+          </div>
         </section>
-
-        {showFinancials ? (
-          <section
-            aria-label="Profitability snapshot"
-            className="mt-4 grid gap-4 sm:grid-cols-2"
-          >
-            <KpiCard
-              label="Total P&L (realized)"
-              value={formatUsd(metrics.totalPl)}
-              icon={TrendingUp}
-              valueClassName={
-                metrics.totalPl >= 0 ? "text-emerald-400" : "text-red-400"
-              }
-            />
-            <KpiCard
-              label="Avg margin (invoiced jobs)"
-              value={marginDisplay}
-              icon={Percent}
-            />
-          </section>
-        ) : null}
 
         <section className="mt-10" aria-label="Project list">
           <ProjectsDataTable

@@ -6,7 +6,6 @@
 
 import type { ProjectDocumentKind } from "@/lib/documentTypes";
 import type { ProjectRow } from "@/lib/projectTypes";
-import { normalizeProjectLifecycle } from "@/lib/projectTypes";
 
 function stampIfEmpty(
   row: ProjectRow,
@@ -55,7 +54,6 @@ export function milestonePatchForDocumentExport(
       break;
   }
 
-  const normalized = normalizeProjectLifecycle(next);
   const out: MilestoneExportPatch = {};
   const keys: (keyof ProjectRow)[] = [
     "sales_command_stage",
@@ -66,7 +64,7 @@ export function milestonePatchForDocumentExport(
     "delivered_at",
   ];
   for (const k of keys) {
-    if (normalized[k] !== row[k]) out[k as string] = normalized[k] ?? null;
+    if (next[k] !== row[k]) out[k as string] = next[k] ?? null;
   }
   return out;
 }

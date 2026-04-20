@@ -38,8 +38,8 @@ import { cn } from "@/lib/utils";
 const COLUMN_BODY_MAX_H = "max-h-[36rem]";
 const COLUMN_BODY_MIN_H = "min-h-[9rem]";
 
-const PIPELINE_COLUMNS: Array<{
-  key: Exclude<SalesProjectColumn, "lost">;
+const BOARD_COLUMNS: Array<{
+  key: SalesProjectColumn;
   dropId: string;
   title: string;
   subtitle: string;
@@ -92,6 +92,18 @@ const PIPELINE_COLUMNS: Array<{
     title: "Invoiced",
     subtitle: "Billing",
   },
+  {
+    key: "lost",
+    dropId: SALES_BOARD_DROP.lost,
+    title: "Lost (rejected)",
+    subtitle: "Pre-PO losses",
+  },
+  {
+    key: "cancelled",
+    dropId: SALES_BOARD_DROP.cancelled,
+    title: "Cancelled",
+    subtitle: "Post-PO churn",
+  },
 ];
 
 function formatShortDate(iso: string | null | undefined): string | null {
@@ -140,7 +152,15 @@ function milestoneHint(project: DashboardProjectRow): string | null {
       const d = formatShortDate(project.invoiced_at);
       return d ? `Invoiced ${d}` : null;
     }
+    case "cancelled": {
+      const d = formatShortDate(project.cancelled_at);
+      return d ? `Cancelled ${d}` : "Cancelled";
+    }
     case "lost":
+      {
+        const d = formatShortDate(project.lost_at);
+        return d ? `Lost ${d}` : "Lost";
+      }
     default:
       return null;
   }
@@ -213,92 +233,6 @@ function ColumnShell({
   );
 }
 
-function LostDropStrip({
-  id,
-  label,
-}: {
-  id: string;
-  label: string;
-}) {
-  const { setNodeRef, isOver } = useDroppable({ id });
-  return (
-    <div
-      ref={setNodeRef}
-      className={cn(
-        "min-h-10 flex-1 rounded-lg border border-dashed border-zinc-600 px-1 py-2 text-center text-[10px] font-medium leading-tight text-zinc-500",
-        isOver && "border-blue-500/50 bg-blue-950/25 text-zinc-300",
-      )}
-    >
-      {label}
-    </div>
-  );
-}
-
-function LostColumn({
-  projects,
-  attentionByProjectId,
-  formatUsd,
-  dragDisabled,
-}: {
-  projects: DashboardProjectRow[];
-  attentionByProjectId: Map<string, AttentionItem>;
-  formatUsd: (n: number) => string;
-  dragDisabled: boolean;
-}) {
-  const num = (n: string | number | null | undefined) => {
-    const x = typeof n === "number" ? n : parseInt(String(n ?? ""), 10);
-    return Number.isFinite(x) ? x : 0;
-  };
-  const sorted = [...projects].sort(
-    (a, b) => num(b.project_number) - num(a.project_number),
-  );
-
-  return (
-    <div
-      className={cn(
-        "flex w-[min(100%,260px)] shrink-0 flex-col rounded-2xl border border-zinc-800/90 bg-zinc-900/40",
-      )}
-    >
-      <div className="shrink-0 border-b border-zinc-800/80 px-3 py-3">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold text-white">Lost</h3>
-          <span className="font-mono text-xs tabular-nums text-zinc-500">
-            {projects.length}
-          </span>
-        </div>
-        <p className="mt-1 text-xs text-zinc-500">Rejected or cancelled</p>
-        <div className="mt-2 flex gap-1.5">
-          <LostDropStrip
-            id={SALES_BOARD_DROP.lost_rejected}
-            label="Drop → rejected"
-          />
-          <LostDropStrip
-            id={SALES_BOARD_DROP.lost_cancelled}
-            label="Drop → cancelled"
-          />
-        </div>
-      </div>
-      <div
-        className={cn(
-          "min-h-0 flex flex-col gap-2 overflow-y-auto overflow-x-hidden overscroll-y-contain p-2",
-          COLUMN_BODY_MIN_H,
-          COLUMN_BODY_MAX_H,
-        )}
-      >
-        {sorted.map((p) => (
-          <DraggableProjectCard
-            key={p.id}
-            project={p}
-            attention={attentionByProjectId.get(p.id)}
-            formatUsd={formatUsd}
-            disabled={dragDisabled}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function ProjectCardInner({
   project,
   attention,
@@ -350,16 +284,14 @@ function ProjectCardInner({
               </Badge>
             ) : null}
             {boardColumnForProject(project) === "lost" ? (
-              String(project.customer_approval || "").toUpperCase() ===
-              "CANCELLED" ? (
-                <Badge className="bg-zinc-500/15 text-[10px] text-zinc-300">
-                  Cancelled
-                </Badge>
-              ) : (
-                <Badge className="bg-red-500/15 text-[10px] text-red-300">
-                  Rejected
-                </Badge>
-              )
+              <Badge className="bg-red-500/15 text-[10px] text-red-300">
+                Rejected
+              </Badge>
+            ) : null}
+            {boardColumnForProject(project) === "cancelled" ? (
+              <Badge className="bg-zinc-500/15 text-[10px] text-zinc-300">
+                Cancelled
+              </Badge>
             ) : null}
           </div>
           {milestoneLine ? (
@@ -484,7 +416,7 @@ export function SalesCommandBoard({
       if (!row) return;
       if (moveTargetFromRow(row) === targetMove) return;
 
-      const nextLifecycle = rowAfterMoveToColumn(row, targetMove, new Date());
+      const nextLifecycle = rowAfterMoveToColumn(row, targetMove);
       const payload = pickProjectUpdatePayload(nextLifecycle);
       setError(null);
       setBusyId(projectId);
@@ -542,7 +474,7 @@ export function SalesCommandBoard({
         onDragCancel={onDragCancel}
       >
         <div className="flex gap-3 overflow-x-auto pb-2">
-          {PIPELINE_COLUMNS.map((col) => (
+          {BOARD_COLUMNS.map((col) => (
             <ColumnShell
               key={col.key}
               dropId={col.dropId}
@@ -561,13 +493,6 @@ export function SalesCommandBoard({
               ))}
             </ColumnShell>
           ))}
-
-          <LostColumn
-            projects={byColumn.lost}
-            attentionByProjectId={attentionByProjectId}
-            formatUsd={formatUsd}
-            dragDisabled={dragDisabled}
-          />
         </div>
 
         <DragOverlay dropAnimation={null}>

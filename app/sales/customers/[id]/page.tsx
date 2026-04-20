@@ -28,6 +28,10 @@ import {
   type DashboardProjectRow,
 } from "@/lib/dashboardMetrics";
 import { withProjectSelectFallback } from "@/lib/projectQueries";
+import {
+  PIPELINE_STAGE_LABELS,
+  boardColumnForProject,
+} from "@/lib/salesCommandBoardColumn";
 import { cn } from "@/lib/utils";
 import { canManageCrm, normalizeAppRole } from "@/lib/auth/roles";
 
@@ -444,7 +448,7 @@ export default function CustomerDetailPage() {
                       </span>
                       <span className="text-xs text-zinc-500">
                         {formatUsd(p.invoiced_amount || 0)} invoiced ·{" "}
-                        {p.customer_approval || "—"}
+                        {PIPELINE_STAGE_LABELS[boardColumnForProject(p)]}
                       </span>
                     </li>
                   ))

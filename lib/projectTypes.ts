@@ -1,12 +1,5 @@
 /** Shape of a `projects` row used by detail editor and forms. */
 
-export type ProjectStatus = "in_process" | "done" | "cancelled" | null | "";
-export type CustomerApproval =
-  | "PENDING"
-  | "ACCEPTED"
-  | "REJECTED"
-  | "CANCELLED";
-
 export interface ProjectRow {
   id?: string;
   created_at?: string | null;
@@ -17,9 +10,6 @@ export interface ProjectRow {
   customer_id?: string | null;
   customer_po?: string | null;
   supply_industrial?: string | null;
-  customer_approval?: string | null;
-  project_status?: ProjectStatus;
-  project_complete?: boolean | null;
   /** Sales command board column id (see salesCommandBoardColumn). */
   sales_command_stage?: string | null;
   /** Cash received flag; see also invoiced_at / invoiced_amount. */
@@ -36,6 +26,8 @@ export interface ProjectRow {
   completed_at?: string | null;
   delivered_at?: string | null;
   invoiced_at?: string | null;
+  lost_at?: string | null;
+  cancelled_at?: string | null;
   total_quoted?: number | null;
   /** Raw vendor / materials spend (before internal markup helper). */
   materials_vendor_cost?: number | null;
@@ -79,9 +71,6 @@ export const PROJECT_UPDATE_KEYS = [
   "project_name",
   "customer_po",
   "supply_industrial",
-  "customer_approval",
-  "project_status",
-  "project_complete",
   "sales_command_stage",
   "payment_received",
   "rfq_received_at",
@@ -96,6 +85,8 @@ export const PROJECT_UPDATE_KEYS = [
   "completed_at",
   "delivered_at",
   "invoiced_at",
+  "lost_at",
+  "cancelled_at",
   "total_quoted",
   "materials_vendor_cost",
   "material_markup_pct",
@@ -134,69 +125,4 @@ export function pickProjectUpdatePayload(
     if (v !== undefined) out[key] = v;
   }
   return out;
-}
-
-function isLostOrCancelledLifecycle(row: ProjectRow): boolean {
-  if (row.project_status === "cancelled") return true;
-  if (row.sales_command_stage === "lost") return true;
-  const a = String(row.customer_approval || "").toUpperCase();
-  return a === "REJECTED" || a === "CANCELLED";
-}
-
-/**
- * When the job is still in an active pipeline stage, align ops flags with the sales board stage
- * so `project_status` / `project_complete` do not drift from `sales_command_stage` on project save.
- * Does not run for lost or cancelled rows so manual ops status stays authoritative there.
- */
-export function syncLifecycleFromNonLostStage(row: ProjectRow): ProjectRow {
-  const stage = row.sales_command_stage;
-  if (stage == null || String(stage).trim() === "" || stage === "lost") {
-    return row;
-  }
-
-  const next = { ...row };
-
-  switch (stage) {
-    case "rfq_customer":
-    case "rfq_vendors":
-    case "quote_sent":
-    case "po_issued":
-      next.project_complete = false;
-      if (next.project_status !== "cancelled") {
-        next.project_status = "in_process";
-      }
-      break;
-    case "in_process":
-      next.project_complete = false;
-      next.project_status = "in_process";
-      break;
-    case "complete":
-      next.project_complete = true;
-      next.project_status = "done";
-      break;
-    case "delivered":
-    case "invoiced":
-      next.project_complete = true;
-      next.project_status = "done";
-      break;
-    default:
-      break;
-  }
-
-  return next;
-}
-
-/** Align completion flag with ops status on save; reconcile board stage vs ops when applicable. */
-export function normalizeProjectLifecycle(row: ProjectRow): ProjectRow {
-  let next = { ...row };
-  let project_complete = !!next.project_complete;
-  if (next.project_status === "done") project_complete = true;
-  if (next.project_status === "cancelled") project_complete = false;
-  next = { ...next, project_complete };
-
-  if (!isLostOrCancelledLifecycle(next)) {
-    next = syncLifecycleFromNonLostStage(next);
-  }
-
-  return next;
 }

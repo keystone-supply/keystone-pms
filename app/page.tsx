@@ -180,7 +180,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
+      <div className="mx-auto max-w-[92.4rem] px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
         <DashboardHeader
           userName={session?.user?.name}
           lastUpdated={lastUpdated}
@@ -216,7 +216,7 @@ export default function Dashboard() {
           <KpiCard
             label="Open quotes"
             value={metrics.openQuotes}
-            hint="Awaiting customer approval"
+            hint="In RFQ / quote stages"
             icon={FolderKanban}
             href="/projects"
           />

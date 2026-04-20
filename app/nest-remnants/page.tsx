@@ -1652,12 +1652,10 @@ export default function NestRemnantsPage() {
     setNestDxfProjectsLoading(true);
     const { data, error } = await supabase
       .from("projects")
-      .select(
-        "project_number, project_name, customer, project_status, customer_approval",
-      )
-      .eq("project_complete", false)
-      .or("customer_approval.is.null,customer_approval.neq.CANCELLED")
-      .or("project_status.is.null,project_status.neq.cancelled")
+      .select("project_number, project_name, customer")
+      .neq("sales_command_stage", "invoiced")
+      .neq("sales_command_stage", "cancelled")
+      .neq("sales_command_stage", "lost")
       .order("project_number", { ascending: false });
     if (error) console.error("Error fetching projects for DXF export:", error);
     setNestDxfProjects((data as NestDxfProjectRow[]) || []);
@@ -3584,7 +3582,7 @@ export default function NestRemnantsPage() {
   return (
     <>
       <div className="min-h-screen bg-zinc-950 text-white">
-        <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
+        <div className="mx-auto max-w-[92.4rem] px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
           <DashboardHeader
             userName={session?.user?.name}
             lastUpdated={pageLastUpdated}

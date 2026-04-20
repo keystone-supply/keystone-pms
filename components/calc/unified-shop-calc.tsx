@@ -188,12 +188,10 @@ export function UnifiedShopCalc({
     setProjectsLoading(true);
     const { data, error } = await supabase
       .from("projects")
-      .select(
-        "project_number, project_name, customer, project_status, customer_approval",
-      )
-      .eq("project_complete", false)
-      .or("customer_approval.is.null,customer_approval.neq.CANCELLED")
-      .or("project_status.is.null,project_status.neq.cancelled")
+      .select("project_number, project_name, customer")
+      .neq("sales_command_stage", "invoiced")
+      .neq("sales_command_stage", "cancelled")
+      .neq("sales_command_stage", "lost")
       .order("project_number", { ascending: false });
     if (error) console.error("Error fetching projects:", error);
     setProjects(data || []);
@@ -542,7 +540,7 @@ export function UnifiedShopCalc({
       <div
         className={
           layout === "page"
-            ? "mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10"
+            ? "mx-auto max-w-[92.4rem] px-4 py-8 sm:px-6 lg:px-8 lg:py-10"
             : "rounded-3xl border border-zinc-800 bg-zinc-900 p-5 sm:p-6"
         }
       >

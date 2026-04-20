@@ -79,6 +79,17 @@ Migration: `20260410022000_add_db_signed_bridge_token_function.sql`
 - Enables DB-signed bridge token fallback for environments without
   `SUPABASE_JWT_SECRET` in app runtime env
 
+Migration: `20260421000000_single_source_lifecycle.sql`
+
+- Makes `projects.sales_command_stage` the single lifecycle source of truth.
+- Adds terminal-stage timestamps: `lost_at` and `cancelled_at`.
+- Rebuilds `public.projects_role_filtered` to align with lifecycle field removal.
+- Drops legacy lifecycle columns now superseded by `sales_command_stage`:
+  - `status`
+  - `project_status`
+  - `project_complete`
+  - `customer_approval`
+
 ## Strict Production Target
 
 Final target is now the default deployment path:
@@ -238,4 +249,4 @@ Safe-creation protocol:
 - verify expected new filename before editing
 - never push with empty unintended stub files present
 
-Last updated: 2026-04-19
+Last updated: 2026-04-20

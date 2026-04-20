@@ -40,11 +40,10 @@ describe("deriveProjectStatusTicker", () => {
     assert.equal(ticker.staleDays, 0);
   });
 
-  it("uses approval/board fallbacks when timestamps are missing", () => {
+  it("uses stage fallback when timestamps are missing", () => {
     const ticker = deriveProjectStatusTicker(
       r({
         created_at: "2026-04-01T00:00:00.000Z",
-        customer_approval: "ACCEPTED",
         sales_command_stage: "in_process",
       }),
       new Date("2026-04-10T00:00:00.000Z"),
@@ -75,11 +74,11 @@ describe("deriveProjectStatusTicker", () => {
     assert.equal(ticker.staleDays, 1);
   });
 
-  it("marks lifecycle lost for rejected jobs", () => {
+  it("marks lifecycle lost for lost stage", () => {
     const ticker = deriveProjectStatusTicker(
       r({
         created_at: "2026-04-01T00:00:00.000Z",
-        customer_approval: "REJECTED",
+        sales_command_stage: "lost",
       }),
       new Date("2026-04-02T00:00:00.000Z"),
     );
@@ -87,11 +86,11 @@ describe("deriveProjectStatusTicker", () => {
     assert.equal(ticker.lifecycle, "lost");
   });
 
-  it("marks lifecycle cancelled for cancelled jobs", () => {
+  it("marks lifecycle cancelled for cancelled stage", () => {
     const ticker = deriveProjectStatusTicker(
       r({
         created_at: "2026-04-01T00:00:00.000Z",
-        project_status: "cancelled",
+        sales_command_stage: "cancelled",
       }),
       new Date("2026-04-02T00:00:00.000Z"),
     );

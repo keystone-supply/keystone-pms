@@ -10,6 +10,10 @@ import {
   deriveProjectStatusTicker,
   type TickerStageId,
 } from "@/lib/projectStatusTicker";
+import {
+  PIPELINE_STAGE_LABELS,
+  SALES_PROJECT_COLUMNS,
+} from "@/lib/salesCommandBoardColumn";
 import type { ProjectBasicsField, ProjectRow } from "@/lib/projectTypes";
 
 const detailFieldClass =
@@ -139,53 +143,20 @@ export function ProjectOverviewPanel({
               </p>
             ) : null}
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="mb-1 block text-xs text-zinc-500">APPROVAL</label>
-              <select
-                value={project.customer_approval || "PENDING"}
-                onChange={(e) => updateField("customer_approval", e.target.value)}
-                className={detailFieldClass}
-              >
-                <option value="PENDING">PENDING</option>
-                <option value="ACCEPTED">ACCEPTED</option>
-                <option value="REJECTED">REJECTED</option>
-                <option value="CANCELLED">CANCELLED</option>
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-zinc-500">
-                PROJECT STATUS
-              </label>
-              <select
-                value={project.project_status || ""}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  updateField(
-                    "project_status",
-                    v === ""
-                      ? null
-                      : (v as NonNullable<ProjectRow["project_status"]>),
-                  );
-                }}
-                className={detailFieldClass}
-              >
-                <option value="">—</option>
-                <option value="in_process">IN PROCESS</option>
-                <option value="done">DONE</option>
-                <option value="cancelled">CANCELLED</option>
-              </select>
-            </div>
+          <div>
+            <label className="mb-1 block text-xs text-zinc-500">STAGE</label>
+            <select
+              value={project.sales_command_stage || "rfq_customer"}
+              onChange={(e) => updateField("sales_command_stage", e.target.value)}
+              className={detailFieldClass}
+            >
+              {SALES_PROJECT_COLUMNS.map((stage) => (
+                <option key={stage} value={stage}>
+                  {PIPELINE_STAGE_LABELS[stage]}
+                </option>
+              ))}
+            </select>
           </div>
-          <label className="flex cursor-pointer select-none items-center gap-3">
-            <input
-              type="checkbox"
-              checked={!!project.project_complete}
-              onChange={(e) => updateField("project_complete", e.target.checked)}
-              className="size-4 rounded border-zinc-600 bg-zinc-900 text-blue-500 focus:ring-2 focus:ring-blue-500/40"
-            />
-            <span className="text-sm text-zinc-300">Project complete</span>
-          </label>
           <label className="flex cursor-pointer select-none items-center gap-3">
             <input
               type="checkbox"

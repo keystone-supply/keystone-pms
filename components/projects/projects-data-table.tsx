@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  type ColumnSizingState,
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
@@ -36,6 +37,10 @@ import {
   TICKER_STAGES,
 } from "@/lib/projectStatusTicker";
 import { projectRowHealth } from "@/lib/projectListUtils";
+import {
+  PIPELINE_STAGE_LABELS,
+  boardColumnForProject,
+} from "@/lib/salesCommandBoardColumn";
 import { cn } from "@/lib/utils";
 
 function formatUsd(n: number): string {
@@ -91,16 +96,12 @@ function compareProjectNumber(a: DashboardProjectRow, b: DashboardProjectRow): n
   );
 }
 
-function approvalBadgeClass(approval: string): string {
-  if (approval === "ACCEPTED")
-    return "bg-emerald-500/10 text-emerald-400 ring-emerald-500/30";
-  if (approval === "REJECTED")
-    return "bg-red-500/10 text-red-400 ring-red-500/30";
-  if (approval === "CANCELLED")
-    return "bg-violet-500/10 text-violet-300 ring-violet-500/35";
-  if (approval === "PENDING")
-    return "bg-amber-500/10 text-amber-400 ring-amber-500/30";
-  return "bg-zinc-500/10 text-zinc-400 ring-zinc-500/30";
+function stageLabel(p: DashboardProjectRow): string {
+  return PIPELINE_STAGE_LABELS[boardColumnForProject(p)];
+}
+
+function isCompleted(p: DashboardProjectRow): boolean {
+  return boardColumnForProject(p) === "invoiced";
 }
 
 function healthBadgeClass(health: string): string {
@@ -122,6 +123,9 @@ const baseColumns = [
   columnHelper.display({
     id: "actions",
     header: "",
+    size: 84,
+    minSize: 84,
+    maxSize: 84,
     cell: ({ row }) => (
       <Link
         href={`/projects/${row.original.id}`}
@@ -133,11 +137,15 @@ const baseColumns = [
     ),
     enableSorting: false,
     enableHiding: false,
+    enableResizing: false,
     meta: { sticky: true },
   }),
   columnHelper.accessor((row) => row.project_number, {
     id: "project_number",
     header: "Project #",
+    size: 88,
+    minSize: 88,
+    maxSize: 88,
     cell: (info) => (
       <span className="font-mono text-sm font-semibold tabular-nums">
         {info.getValue() ?? "—"}
@@ -145,6 +153,7 @@ const baseColumns = [
     ),
     sortingFn: (a, b) => compareProjectNumber(a.original, b.original),
     enableHiding: false,
+    enableResizing: false,
   }),
   columnHelper.accessor((row) => row.customer, {
     id: "customer",
@@ -212,62 +221,19 @@ const baseColumns = [
       return aRank - bRank;
     },
   }),
-  columnHelper.accessor((row) => row.project_status ?? "—", {
-    id: "project_status",
-    header: "Ops status",
+  columnHelper.accessor((row) => stageLabel(row), {
+    id: "sales_command_stage",
+    header: "Stage",
     cell: (info) => {
       const v = info.getValue();
-      if (!v || v === "—")
-        return <span className="text-zinc-600">—</span>;
-      const label =
-        v === "in_process"
-          ? "In process"
-          : v === "done"
-            ? "Done"
-            : v === "cancelled"
-              ? "Cancelled"
-              : String(v);
-      return <span className="text-zinc-200">{label}</span>;
-    },
-    sortingFn: (a, b) =>
-      String(a.original.project_status ?? "").localeCompare(
-        String(b.original.project_status ?? ""),
-      ),
-  }),
-  columnHelper.accessor((row) => row.customer_approval, {
-    id: "customer_approval",
-    header: "Approval",
-    cell: (info) => {
-      const v = info.getValue();
-      if (!v) return <span className="text-zinc-500">—</span>;
       return (
-        <Badge
-          variant="outline"
-          className={cn(
-            "border-0 px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset",
-            approvalBadgeClass(String(v)),
-          )}
-        >
-          {String(v)}
-        </Badge>
+        <span className={v ? "text-zinc-200" : "text-zinc-600"}>
+          {v || "—"}
+        </span>
       );
     },
     sortingFn: (a, b) =>
-      String(a.original.customer_approval ?? "").localeCompare(
-        String(b.original.customer_approval ?? ""),
-      ),
-  }),
-  columnHelper.accessor((row) => row.project_complete, {
-    id: "project_complete",
-    header: "Complete",
-    cell: (info) =>
-      info.getValue() ? (
-        <span className="text-emerald-400">Yes</span>
-      ) : (
-        <span className="text-zinc-400">No</span>
-      ),
-    sortingFn: (a, b) =>
-      Number(!!a.original.project_complete) - Number(!!b.original.project_complete),
+      stageLabel(a.original).localeCompare(stageLabel(b.original)),
   }),
   columnHelper.accessor((row) => projectRowHealth(row), {
     id: "health",
@@ -355,12 +321,6 @@ const baseColumns = [
 ];
 
 export type CompletionFilter = "all" | "active" | "complete" | "cancelled";
-export type ApprovalFilter =
-  | "all"
-  | "PENDING"
-  | "ACCEPTED"
-  | "REJECTED"
-  | "CANCELLED";
 export type SegmentFilter = "all" | "supply" | "industrial" | "other";
 export type YearFilter = "all" | number;
 
@@ -375,24 +335,36 @@ const FINANCIAL_COLUMN_IDS = [
   "realized_margin",
   "estimated_margin",
 ] as const;
+const VISIBLE_ROW_COUNT = 20;
+const TABLE_HEADER_HEIGHT_PX = 44;
+const TABLE_ROW_HEIGHT_PX = 52;
 
 export function ProjectsDataTable({
   data,
   canViewFinancialColumns,
 }: ProjectsDataTableProps) {
+  const tableViewportMaxHeight =
+    TABLE_HEADER_HEIGHT_PX + VISIBLE_ROW_COUNT * TABLE_ROW_HEIGHT_PX;
   const [sorting, setSorting] = useState<SortingState>([
     { id: "project_number", desc: true },
   ]);
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
   const [globalFilter, setGlobalFilter] = useState("");
   const [completion, setCompletion] = useState<CompletionFilter>("all");
-  const [approval, setApproval] = useState<ApprovalFilter>("all");
   const [segment, setSegment] = useState<SegmentFilter>("all");
   const [year, setYear] = useState<YearFilter>("all");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
-    project_status: false,
-    total_quoted: canViewFinancialColumns,
-    invoiced_amount: canViewFinancialColumns,
-    realized_margin: canViewFinancialColumns,
+    project_number: true,
+    customer: true,
+    created_at: true,
+    project_name: true,
+    ticker: true,
+    sales_command_stage: false,
+    health: false,
+    segment: false,
+    total_quoted: false,
+    invoiced_amount: false,
+    realized_margin: false,
     estimated_margin: false,
   });
 
@@ -404,6 +376,25 @@ export function ProjectsDataTable({
       invoiced_amount: false,
       realized_margin: false,
       estimated_margin: false,
+    }));
+  }, [canViewFinancialColumns]);
+
+  useEffect(() => {
+    if (!canViewFinancialColumns) return;
+    setColumnVisibility((prev) => ({
+      ...prev,
+      project_number: prev.project_number ?? true,
+      customer: prev.customer ?? true,
+      created_at: prev.created_at ?? true,
+      project_name: prev.project_name ?? true,
+      ticker: prev.ticker ?? true,
+      sales_command_stage: prev.sales_command_stage ?? false,
+      health: prev.health ?? false,
+      segment: prev.segment ?? false,
+      total_quoted: prev.total_quoted ?? false,
+      invoiced_amount: prev.invoiced_amount ?? false,
+      realized_margin: prev.realized_margin ?? false,
+      estimated_margin: prev.estimated_margin ?? false,
     }));
   }, [canViewFinancialColumns]);
 
@@ -420,13 +411,10 @@ export function ProjectsDataTable({
     return data.filter((p) => {
       const cancelled = isCancelledProject(p);
       if (completion === "active") {
-        if (p.project_complete || cancelled) return false;
+        if (isCompleted(p) || cancelled) return false;
       }
-      if (completion === "complete" && !p.project_complete) return false;
+      if (completion === "complete" && !isCompleted(p)) return false;
       if (completion === "cancelled" && !cancelled) return false;
-      if (approval !== "all" && (p.customer_approval || "") !== approval) {
-        return false;
-      }
       const seg = classifySupplyIndustrial(p.supply_industrial);
       if (segment !== "all" && seg !== segment) return false;
       if (year !== "all") {
@@ -435,16 +423,23 @@ export function ProjectsDataTable({
       }
       return true;
     });
-  }, [data, completion, approval, segment, year]);
+  }, [data, completion, segment, year]);
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table hook is intentionally used here.
   const table = useReactTable({
     data: filteredSource,
     columns: baseColumns,
-    state: { sorting, globalFilter, columnVisibility },
+    defaultColumn: {
+      size: 180,
+      minSize: 56,
+      maxSize: 2000,
+    },
+    state: { sorting, globalFilter, columnVisibility, columnSizing },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
     onColumnVisibilityChange: setColumnVisibility,
+    onColumnSizingChange: setColumnSizing,
+    columnResizeMode: "onChange",
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -501,23 +496,6 @@ export function ProjectsDataTable({
               <option value="active">Active (incomplete)</option>
               <option value="complete">Complete</option>
               <option value="cancelled">Cancelled</option>
-            </select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-zinc-500">Approval</span>
-            <select
-              value={approval}
-              onChange={(e) =>
-                setApproval(e.target.value as ApprovalFilter)
-              }
-              className="rounded-xl border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-              aria-label="Filter by customer approval"
-            >
-              <option value="all">All</option>
-              <option value="PENDING">Pending</option>
-              <option value="ACCEPTED">Accepted</option>
-              <option value="REJECTED">Rejected</option>
-              <option value="CANCELLED">Cancelled</option>
             </select>
           </div>
           <div className="flex flex-col gap-1">
@@ -616,7 +594,14 @@ export function ProjectsDataTable({
       </p>
 
       <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/50">
-        <Table className="border-0 text-white">
+        <div
+          className="overflow-auto"
+          style={{ maxHeight: `${tableViewportMaxHeight}px` }}
+        >
+          <Table
+            className="w-max table-fixed border-0 text-white"
+            style={{ minWidth: table.getTotalSize() }}
+          >
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow
@@ -631,10 +616,14 @@ export function ProjectsDataTable({
                     <TableHead
                       key={header.id}
                       className={cn(
-                        "h-11 whitespace-nowrap bg-zinc-950 px-3 text-xs font-medium uppercase tracking-wider text-zinc-400",
+                        "relative h-11 whitespace-nowrap bg-zinc-950 px-3 text-xs font-medium uppercase tracking-wider text-zinc-400",
                         sticky &&
                           "sticky left-0 z-20 border-r border-zinc-800 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.5)]",
                       )}
+                      style={{
+                        width: header.getSize(),
+                        minWidth: header.column.columnDef.minSize,
+                      }}
                     >
                       {header.isPlaceholder ? null : (
                         <button
@@ -678,6 +667,20 @@ export function ProjectsDataTable({
                           ) : null}
                         </button>
                       )}
+                      {header.column.getCanResize() ? (
+                        <div
+                          role="separator"
+                          aria-label={`Resize ${String(header.column.columnDef.header)} column`}
+                          onClick={(event) => event.stopPropagation()}
+                          onDoubleClick={() => header.column.resetSize()}
+                          onMouseDown={header.getResizeHandler()}
+                          onTouchStart={header.getResizeHandler()}
+                          className={cn(
+                            "absolute right-0 top-0 h-full w-2 translate-x-1/2 cursor-col-resize select-none touch-none bg-zinc-700/20 transition-colors hover:bg-blue-400/60",
+                            header.column.getIsResizing() && "bg-blue-400/80",
+                          )}
+                        />
+                      ) : null}
                     </TableHead>
                   );
                 })}
@@ -712,6 +715,10 @@ export function ProjectsDataTable({
                           sticky &&
                             "sticky left-0 z-10 border-r border-zinc-800 bg-zinc-900 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.45)]",
                         )}
+                        style={{
+                          width: cell.column.getSize(),
+                          minWidth: cell.column.columnDef.minSize,
+                        }}
                       >
                         {flexRender(
                           cell.column.columnDef.cell,
@@ -724,7 +731,8 @@ export function ProjectsDataTable({
               ))
             )}
           </TableBody>
-        </Table>
+          </Table>
+        </div>
       </div>
     </div>
   );

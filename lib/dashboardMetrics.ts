@@ -11,13 +11,6 @@ import {
 import { computeQuotedInternalCostTotal } from "@/lib/projectFinancials";
 import type { ProjectStatusTicker } from "@/lib/projectStatusTicker";
 
-export type CustomerApproval =
-  | "PENDING"
-  | "ACCEPTED"
-  | "REJECTED"
-  | "CANCELLED"
-  | string;
-
 /** Fields required for dashboard aggregation (subset of full project row). */
 export type DashboardProjectRow = {
   id: string;
@@ -25,10 +18,6 @@ export type DashboardProjectRow = {
   project_name?: string | null;
   customer?: string | null;
   customer_id?: string | null;
-  customer_approval?: CustomerApproval | null;
-  project_complete?: boolean | null;
-  /** Ops lifecycle: in_process, done, cancelled (distinct from customer_approval). */
-  project_status?: "in_process" | "done" | "cancelled" | string | null;
   supply_industrial?: string | null;
   created_at?: string | null;
   total_quoted?: number | null;
@@ -69,6 +58,8 @@ export type DashboardProjectRow = {
   completed_at?: string | null;
   delivered_at?: string | null;
   invoiced_at?: string | null;
+  lost_at?: string | null;
+  cancelled_at?: string | null;
 };
 
 export type AttentionItem = {
@@ -121,6 +112,20 @@ export type DashboardMetrics = {
   topCustomers: Array<{ rank: number; customer: string; revenue: number }>;
   /** Open quotes: non-cancelled rows with customer_approval PENDING (oldest created_at first). */
   needsAttention: AttentionItem[];
+  /** Median days RFQ received to PO issued. */
+  quoteTurnaroundDaysMedian: number | null;
+  /** Median days PO issued to invoiced. */
+  cashToCashDaysMedian: number | null;
+  /** Median days in process to complete. */
+  shopThroughputDaysMedian: number | null;
+  /** Median days materials ordered to material received. */
+  materialsLeadTimeDaysMedian: number | null;
+  /** Median days in process to materials ordered. */
+  waitForMaterialsDaysMedian: number | null;
+  /** Median days material received to labor completed. */
+  pureLaborDaysMedian: number | null;
+  /** Median days labor completed to stage complete. */
+  shopToStageLagDaysMedian: number | null;
 };
 
 /** TV / shop floor specific summary focused on command board job stages. */
@@ -137,13 +142,63 @@ export type TvProjectTickerRow = {
   project_number: string;
   project_name: string;
   customer: string;
-  customer_approval: string | null;
   ticker: ProjectStatusTicker;
   moved_in_last_24h: boolean;
 };
 
 function ytdStartIso(year: number): string {
   return `${year}-01-01`;
+}
+
+const OPEN_QUOTE_STAGES = new Set(["rfq_customer", "rfq_vendors", "quote_sent"]);
+const ACTIVE_PIPELINE_STAGES = new Set([
+  "rfq_customer",
+  "rfq_vendors",
+  "quote_sent",
+  "po_issued",
+  "in_process",
+  "complete",
+  "delivered",
+]);
+const ACCEPTED_STAGES = new Set([
+  "po_issued",
+  "in_process",
+  "complete",
+  "delivered",
+  "invoiced",
+  "cancelled",
+]);
+
+function stageOf(p: DashboardProjectRow): SalesProjectColumn {
+  return boardColumnForProject(p);
+}
+
+function parseIso(v: string | null | undefined): number | null {
+  if (!v) return null;
+  const n = Date.parse(v);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
+function diffDays(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): number | null {
+  const s = parseIso(start);
+  const e = parseIso(end);
+  if (s == null || e == null || e < s) return null;
+  return (e - s) / (1000 * 60 * 60 * 24);
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const raw =
+    sorted.length % 2 === 0
+      ? (sorted[mid - 1] + sorted[mid]) / 2
+      : sorted[mid];
+  return Math.round(raw * 10) / 10;
 }
 
 function totalCostActual(p: DashboardProjectRow): number {
@@ -195,15 +250,12 @@ export function classifySupplyIndustrial(
   return "other";
 }
 
-/** Cancelled jobs (ops or approval) are excluded from active / pipeline counts. */
 export function isCancelledProject(p: DashboardProjectRow): boolean {
-  return (
-    p.project_status === "cancelled" || p.customer_approval === "CANCELLED"
-  );
+  return stageOf(p) === "cancelled";
 }
 
 function isActivePipelineJob(p: DashboardProjectRow): boolean {
-  return !p.project_complete && !isCancelledProject(p);
+  return ACTIVE_PIPELINE_STAGES.has(stageOf(p));
 }
 
 /**
@@ -225,6 +277,13 @@ export function aggregateDashboardMetrics(
   let quotesAccepted = 0;
   let quotesRejected = 0;
   let quotesCancelled = 0;
+  const quoteTurnaroundSamples: number[] = [];
+  const cashToCashSamples: number[] = [];
+  const shopThroughputSamples: number[] = [];
+  const materialsLeadTimeSamples: number[] = [];
+  const waitForMaterialsSamples: number[] = [];
+  const pureLaborSamples: number[] = [];
+  const shopToStageLagSamples: number[] = [];
 
   const pipelineColumnCounts = {} as Record<SalesProjectColumn, number>;
   for (const c of SALES_PROJECT_COLUMNS) pipelineColumnCounts[c] = 0;
@@ -238,11 +297,9 @@ export function aggregateDashboardMetrics(
   const customerMap = new Map<string, number>();
 
   for (const p of projects) {
-    const approval = String(p.customer_approval || "");
-    const approvalU = approval.toUpperCase();
-    pipelineColumnCounts[boardColumnForProject(p)] += 1;
-
-    if (approvalU === "PENDING" && !isCancelledProject(p)) openQuotes += 1;
+    const stage = stageOf(p);
+    pipelineColumnCounts[stage] += 1;
+    if (OPEN_QUOTE_STAGES.has(stage)) openQuotes += 1;
 
     const created = p.created_at || "";
     if (created >= ytdCutoff) {
@@ -260,13 +317,13 @@ export function aggregateDashboardMetrics(
       const si = classifySupplyIndustrial(p.supply_industrial);
       if (si === "supply") supplyActiveCount += 1;
       else if (si === "industrial") industrialActiveCount += 1;
-    } else if (p.project_complete) {
+    } else if (stage === "invoiced") {
       completedProjects += 1;
     }
 
-    if (approvalU === "ACCEPTED") quotesAccepted += 1;
-    if (approvalU === "REJECTED") quotesRejected += 1;
-    if (approvalU === "CANCELLED") quotesCancelled += 1;
+    if (ACCEPTED_STAGES.has(stage)) quotesAccepted += 1;
+    if (stage === "lost") quotesRejected += 1;
+    if (stage === "cancelled") quotesCancelled += 1;
 
     const m = realizedMarginPct(p);
     if (m !== null) marginSamples.push(m);
@@ -276,6 +333,20 @@ export function aggregateDashboardMetrics(
       const c = p.customer.toUpperCase();
       customerMap.set(c, (customerMap.get(c) || 0) + rev);
     }
+    const quoteTurnaround = diffDays(p.rfq_received_at, p.po_issued_at);
+    if (quoteTurnaround != null) quoteTurnaroundSamples.push(quoteTurnaround);
+    const cashToCash = diffDays(p.po_issued_at, p.invoiced_at);
+    if (cashToCash != null) cashToCashSamples.push(cashToCash);
+    const shopThroughput = diffDays(p.in_process_at, p.completed_at);
+    if (shopThroughput != null) shopThroughputSamples.push(shopThroughput);
+    const materialsLead = diffDays(p.materials_ordered_at, p.material_received_at);
+    if (materialsLead != null) materialsLeadTimeSamples.push(materialsLead);
+    const waitForMaterials = diffDays(p.in_process_at, p.materials_ordered_at);
+    if (waitForMaterials != null) waitForMaterialsSamples.push(waitForMaterials);
+    const pureLabor = diffDays(p.material_received_at, p.labor_completed_at);
+    if (pureLabor != null) pureLaborSamples.push(pureLabor);
+    const shopToStageLag = diffDays(p.labor_completed_at, p.completed_at);
+    if (shopToStageLag != null) shopToStageLagSamples.push(shopToStageLag);
   }
 
   const winDenom = quotesAccepted + quotesRejected;
@@ -303,8 +374,8 @@ export function aggregateDashboardMetrics(
     item: AttentionItem;
   }[] = [];
   for (const p of projects) {
-    const au = String(p.customer_approval || "").toUpperCase();
-    if (au !== "PENDING" || isCancelledProject(p)) continue;
+    const stage = stageOf(p);
+    if (!OPEN_QUOTE_STAGES.has(stage)) continue;
     const est = estimatedMarginPctQuoted(p);
     pendingOpenQuotes.push({
       p,
@@ -314,7 +385,7 @@ export function aggregateDashboardMetrics(
         project_name: (p.project_name || "").toUpperCase() || "—",
         customer: (p.customer || "").toUpperCase() || "—",
         created_at: p.created_at ?? null,
-        reason: "Pending approval",
+        reason: "Open quote stage",
         estimatedMarginPct:
           est !== null ? Math.round(est * 10) / 10 : 0,
       },
@@ -350,6 +421,13 @@ export function aggregateDashboardMetrics(
     engineeringLoadQuoted,
     topCustomers,
     needsAttention,
+    quoteTurnaroundDaysMedian: median(quoteTurnaroundSamples),
+    cashToCashDaysMedian: median(cashToCashSamples),
+    shopThroughputDaysMedian: median(shopThroughputSamples),
+    materialsLeadTimeDaysMedian: median(materialsLeadTimeSamples),
+    waitForMaterialsDaysMedian: median(waitForMaterialsSamples),
+    pureLaborDaysMedian: median(pureLaborSamples),
+    shopToStageLagDaysMedian: median(shopToStageLagSamples),
   };
 }
 

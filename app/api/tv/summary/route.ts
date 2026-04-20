@@ -5,7 +5,9 @@ import {
   getCommandBoardTVSummaryWithTickers,
   type TvProjectTickerRow,
   type DashboardProjectRow,
+  isCancelledProject,
 } from "@/lib/dashboardMetrics";
+import { boardColumnForProject } from "@/lib/salesCommandBoardColumn";
 import { withProjectSelectFallback } from "@/lib/projectQueries";
 import { requireApiRole } from "@/lib/auth/api-guard";
 import { canViewShopTv } from "@/lib/auth/roles";
@@ -61,10 +63,10 @@ export async function GET(request: NextRequest) {
   const dayAgoMs = now.getTime() - 24 * 60 * 60 * 1000;
   const tickerRows: TvProjectTickerRow[] = projects
     .filter((project) => {
-      const cancelled =
-        project.project_status === "cancelled" ||
-        String(project.customer_approval ?? "").toUpperCase() === "CANCELLED";
-      return !cancelled && !project.project_complete;
+      return (
+        !isCancelledProject(project) &&
+        boardColumnForProject(project) !== "invoiced"
+      );
     })
     .map((project) => {
       const ticker = deriveProjectStatusTicker(project, now);
@@ -77,8 +79,6 @@ export async function GET(request: NextRequest) {
         project_number: String(project.project_number ?? ""),
         project_name: String(project.project_name ?? ""),
         customer: String(project.customer ?? ""),
-        customer_approval:
-          project.customer_approval == null ? null : String(project.customer_approval),
         ticker,
         moved_in_last_24h: movedInLast24h,
       };

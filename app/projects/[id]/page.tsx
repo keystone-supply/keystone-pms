@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
-import { Save, X } from "lucide-react";
+import { ChevronDown, Save, X } from "lucide-react";
 
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { QuickLinksBar } from "@/components/dashboard/quick-links-bar";
@@ -70,6 +71,10 @@ function WorkspaceBody({
   const docsRef = useRef<HTMLDivElement | null>(null);
   const calcRef = useRef<HTMLDivElement | null>(null);
   const filesRef = useRef<HTMLDivElement | null>(null);
+  const [documentsExpanded, setDocumentsExpanded] = useState(false);
+  const [projectFinancialsExpanded, setProjectFinancialsExpanded] = useState(false);
+  const [actualsExpanded, setActualsExpanded] = useState(false);
+  const [filesExpanded, setFilesExpanded] = useState(false);
 
   useEffect(() => {
     if (workspace.focusTarget === "docs") {
@@ -150,6 +155,18 @@ function WorkspaceBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchState.kind]);
 
+  useEffect(() => {
+    if (workspace.focusTarget === "docs") {
+      setDocumentsExpanded(true);
+    }
+  }, [workspace.focusTarget]);
+
+  useEffect(() => {
+    if (workspace.focusTarget === "files") {
+      setFilesExpanded(true);
+    }
+  }, [workspace.focusTarget]);
+
   return (
     <ProjectWorkspaceTwoColumn
       leftTop={
@@ -163,29 +180,59 @@ function WorkspaceBody({
           onAdvanceStage={onAdvanceStage}
         />
       }
-      leftMiddle={
-        <div ref={docsRef}>
-          <ProjectDocumentsSection
-            projectId={id}
-            project={workspace.project}
-            supabase={supabase}
-            onProjectRefresh={() => void workspace.refreshProject()}
-            onApplyQuoteFinancialsSnapshot={applyProjectPatch}
-            canManageDocuments={roleAllowsDocEdits}
-          />
-        </div>
-      }
+      leftMiddle={null}
       leftBottom={
         canViewProjectFinancials ? (
           <div className="grid grid-cols-1 items-start gap-6 2xl:grid-cols-2">
-            <ProjectQuoteFinancialsPanel
-              project={workspace.project}
-              applyFinancialPatch={applyProjectPatch}
-            />
-            <ProjectActualsFinancialsPanel
-              project={workspace.project}
-              applyFinancialPatch={applyProjectPatch}
-            />
+            <section className="rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
+              <button
+                type="button"
+                onClick={() => setProjectFinancialsExpanded((prev) => !prev)}
+                className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left transition hover:bg-zinc-800/60"
+                aria-expanded={projectFinancialsExpanded}
+                aria-controls="project-financials-panel"
+              >
+                <span className="text-sm font-semibold text-white">Project financials</span>
+                <ChevronDown
+                  className={`size-4 text-zinc-400 transition-transform ${projectFinancialsExpanded ? "rotate-180" : ""}`}
+                  aria-hidden
+                />
+              </button>
+
+              {projectFinancialsExpanded ? (
+                <div id="project-financials-panel" className="mt-3">
+                  <ProjectQuoteFinancialsPanel
+                    project={workspace.project}
+                    applyFinancialPatch={applyProjectPatch}
+                  />
+                </div>
+              ) : null}
+            </section>
+
+            <section className="rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
+              <button
+                type="button"
+                onClick={() => setActualsExpanded((prev) => !prev)}
+                className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left transition hover:bg-zinc-800/60"
+                aria-expanded={actualsExpanded}
+                aria-controls="project-actuals-panel"
+              >
+                <span className="text-sm font-semibold text-white">Actuals (P&L)</span>
+                <ChevronDown
+                  className={`size-4 text-zinc-400 transition-transform ${actualsExpanded ? "rotate-180" : ""}`}
+                  aria-hidden
+                />
+              </button>
+
+              {actualsExpanded ? (
+                <div id="project-actuals-panel" className="mt-3">
+                  <ProjectActualsFinancialsPanel
+                    project={workspace.project}
+                    applyFinancialPatch={applyProjectPatch}
+                  />
+                </div>
+              ) : null}
+            </section>
           </div>
         ) : (
           <div className="rounded-2xl border border-zinc-800/90 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-400">
@@ -194,6 +241,38 @@ function WorkspaceBody({
         )
       }
       rightTop={
+        <div ref={docsRef}>
+          <section className="rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
+            <button
+              type="button"
+              onClick={() => setDocumentsExpanded((prev) => !prev)}
+              className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left transition hover:bg-zinc-800/60"
+              aria-expanded={documentsExpanded}
+              aria-controls="project-documents-panel"
+            >
+              <span className="text-sm font-semibold text-white">Project documents</span>
+              <ChevronDown
+                className={`size-4 text-zinc-400 transition-transform ${documentsExpanded ? "rotate-180" : ""}`}
+                aria-hidden
+              />
+            </button>
+
+            {documentsExpanded ? (
+              <div id="project-documents-panel" className="mt-3">
+                <ProjectDocumentsSection
+                  projectId={id}
+                  project={workspace.project}
+                  supabase={supabase}
+                  onProjectRefresh={() => void workspace.refreshProject()}
+                  onApplyQuoteFinancialsSnapshot={applyProjectPatch}
+                  canManageDocuments={roleAllowsDocEdits}
+                />
+              </div>
+            ) : null}
+          </section>
+        </div>
+      }
+      rightMiddle={
         <div ref={calcRef}>
           <ProjectCalcPanel
             projectId={id}
@@ -203,23 +282,43 @@ function WorkspaceBody({
           />
         </div>
       }
-      rightMiddle={
-        <div ref={filesRef}>
-          {workspace.project.files_phase1_enabled !== false ? (
-            <ProjectFilesPanel projectId={id} />
-          ) : (
-            <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
-              Project files are not enabled for this job yet.
-            </div>
-          )}
-        </div>
-      }
       rightBottom={
-        <ProjectToolsDock
-          customer={workspace.project.customer ?? null}
-          projectNumber={workspace.project.project_number ?? null}
-          projectName={workspace.project.project_name ?? null}
-        />
+        <>
+          <div ref={filesRef}>
+            <section className="rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
+              <button
+                type="button"
+                onClick={() => setFilesExpanded((prev) => !prev)}
+                className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left transition hover:bg-zinc-800/60"
+                aria-expanded={filesExpanded}
+                aria-controls="project-files-window"
+              >
+                <span className="text-sm font-semibold text-white">Project files</span>
+                <ChevronDown
+                  className={`size-4 text-zinc-400 transition-transform ${filesExpanded ? "rotate-180" : ""}`}
+                  aria-hidden
+                />
+              </button>
+
+              {filesExpanded ? (
+                <div id="project-files-window" className="mt-3">
+                  {workspace.project.files_phase1_enabled !== false ? (
+                    <ProjectFilesPanel projectId={id} />
+                  ) : (
+                    <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
+                      Project files are not enabled for this job yet.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </section>
+          </div>
+          <ProjectToolsDock
+            customer={workspace.project.customer ?? null}
+            projectNumber={workspace.project.project_number ?? null}
+            projectName={workspace.project.project_name ?? null}
+          />
+        </>
       }
     />
   );
@@ -323,8 +422,6 @@ export default function ProjectDetail() {
           onSignOut={() => signOut({ callbackUrl: "/" })}
           title={headerTitle}
           subtitle={headerSubtitle}
-          backHref="/projects"
-          backLabel="All projects"
           showLastUpdated={!!project && !loading}
         />
 
@@ -345,7 +442,10 @@ export default function ProjectDetail() {
           <div className="mt-16 text-center text-lg text-zinc-400">Project not found</div>
         ) : (
           <div className="mx-auto mt-10 max-w-[1700px]">
-            <div className="mb-6 flex flex-wrap items-center justify-end gap-3">
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <Button type="button" variant="outline" asChild>
+                <Link href="/projects">All projects</Link>
+              </Button>
               <Button
                 type="button"
                 onClick={() => void saveProject()}

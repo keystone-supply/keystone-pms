@@ -47,12 +47,6 @@ function extractBaseKey(projectNumRaw: string): string {
   return m ? m[1] : String(projectNumRaw ?? "").trim();
 }
 
-function normApproval(raw: string | undefined): string {
-  const u = (raw || "").trim().toUpperCase();
-  if (["PENDING", "ACCEPTED", "REJECTED", "CANCELLED"].includes(u)) return u;
-  return "PENDING";
-}
-
 function parseBool(raw: string | undefined): boolean | null {
   if (raw == null || raw === "") return null;
   const u = raw.trim().toUpperCase();
@@ -61,28 +55,36 @@ function parseBool(raw: string | undefined): boolean | null {
   return null;
 }
 
-function mapLifecycle(projectCompleteCol: string | undefined): {
-  project_complete: boolean;
-  project_status: "in_process" | "done" | "cancelled" | null;
-} {
+function mapSalesStage(
+  projectCompleteCol: string | undefined,
+  approvalCol: string | undefined,
+  totalQuoted: number,
+  invoicedAmount: number,
+): string {
   const v = (projectCompleteCol || "").trim().toUpperCase();
-  if (v === "DONE") return { project_complete: true, project_status: "done" };
-  if (v === "CANCELLED")
-    return { project_complete: false, project_status: "cancelled" };
-  if (v === "IN PROCESS")
-    return { project_complete: false, project_status: "in_process" };
-  return { project_complete: false, project_status: null };
+  const approval = (approvalCol || "").trim().toUpperCase();
+  if (v === "CANCELLED" || approval === "CANCELLED") return "cancelled";
+  if (approval === "REJECTED") return "lost";
+  if (invoicedAmount > 0) return "invoiced";
+  if (v === "DONE") return "complete";
+  if (approval === "ACCEPTED" || v === "IN PROCESS") return "in_process";
+  if (totalQuoted > 0) return "quote_sent";
+  return "rfq_customer";
 }
 
 function rowToPayload(
   row: Record<string, string>,
   project_number: string,
 ): Record<string, unknown> {
-  const { project_complete, project_status } = mapLifecycle(
-    row["PROJECT COMPLETE"],
-  );
-
   const created_at = parseUsShortDate(row["CUSTOMER RFQ"]);
+  const total_quoted = parseMoney(row["TOTAL QUOTED"]);
+  const invoiced_amount = parseMoney(row["INVOICED AMOUNT"]);
+  const sales_command_stage = mapSalesStage(
+    row["PROJECT COMPLETE"],
+    row["CUSTOMER APPROVAL"],
+    total_quoted,
+    invoiced_amount,
+  );
 
   return {
     project_number,
@@ -91,10 +93,8 @@ function rowToPayload(
     supply_industrial: (row["SUPPLY / INDUSTRIAL"] || "SUPPLY")
       .trim()
       .toUpperCase(),
-    customer_approval: normApproval(row["CUSTOMER APPROVAL"]),
+    sales_command_stage,
     customer_po: (row["CUSTOMER PO #"] || "").trim() || null,
-    project_complete,
-    project_status,
     materials_quoted: parseMoney(row["MATERIALS QUOTED"]),
     labor_quoted: parseMoney(row["LABOR QUOTED"]),
     engineering_quoted: parseMoney(row["ENGINEERING QUOTED"]),
@@ -107,8 +107,8 @@ function rowToPayload(
     equipment_cost: parseMoney(row["EQUIPMENT COST"]),
     logistics_cost: parseMoney(row["LOGISTICS COST"]),
     additional_costs: parseMoney(row["ADDITIONAL COSTS"]),
-    total_quoted: parseMoney(row["TOTAL QUOTED"]),
-    invoiced_amount: parseMoney(row["INVOICED AMOUNT"]),
+    total_quoted,
+    invoiced_amount,
     payment_received: parseBool(row["PAYMENT RECEIVED"]) ?? false,
     ...(created_at ? { created_at } : {}),
     ...(() => {

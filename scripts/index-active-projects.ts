@@ -32,8 +32,10 @@ async function main() {
 
   let query = client
     .from("projects")
-    .select("id,project_number,project_name,project_status")
-    .or("project_status.is.null,project_status.eq.in_process")
+    .select("id,project_number,project_name,sales_command_stage")
+    .neq("sales_command_stage", "invoiced")
+    .neq("sales_command_stage", "lost")
+    .neq("sales_command_stage", "cancelled")
     .order("created_at", { ascending: false });
 
   if (mode === "dogfood") {

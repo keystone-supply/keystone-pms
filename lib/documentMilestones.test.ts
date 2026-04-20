@@ -9,7 +9,6 @@ function baseRow(): ProjectRow {
     id: "p1",
     project_number: "100",
     sales_command_stage: "rfq_customer",
-    customer_approval: "PENDING",
   };
 }
 

@@ -14,10 +14,7 @@ import {
 } from "@/lib/projectFinancials";
 import { withProjectSelectFallback } from "@/lib/projectQueries";
 import type { ProjectBasicsField, ProjectRow } from "@/lib/projectTypes";
-import {
-  normalizeProjectLifecycle,
-  pickProjectUpdatePayload,
-} from "@/lib/projectTypes";
+import { pickProjectUpdatePayload } from "@/lib/projectTypes";
 import { supabase } from "@/lib/supabaseClient";
 
 type FetchMode = "full" | "soft";
@@ -165,15 +162,14 @@ export function useProjectDetail(
       ...syncQuoteDerivations(project),
       ...syncActualLaborCost(project),
     });
-    const normalized = normalizeProjectLifecycle(synced);
-    const payload = pickProjectUpdatePayload(normalized);
+    const payload = pickProjectUpdatePayload(synced);
     const { error } = await supabase
       .from("projects")
       .update(payload)
       .eq("id", projectId);
 
     if (!error) {
-      setProject(normalized);
+      setProject(synced);
       setSaveMessage("Saved — realtime update sent to all connected sessions.");
       setLastUpdated(new Date());
       await fetchProject("soft");
@@ -203,15 +199,14 @@ export function useProjectDetail(
         ...syncQuoteDerivations(next),
         ...syncActualLaborCost(next),
       });
-      const normalized = normalizeProjectLifecycle(synced);
-      const payload = pickProjectUpdatePayload(normalized);
+      const payload = pickProjectUpdatePayload(synced);
       const { error } = await supabase
         .from("projects")
         .update(payload)
         .eq("id", projectId);
 
       if (!error) {
-        setProject(normalized);
+        setProject(synced);
         setSaveMessage("Saved — realtime update sent to all connected sessions.");
         setLastUpdated(new Date());
         await fetchProject("soft");

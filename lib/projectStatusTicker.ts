@@ -72,11 +72,8 @@ const SALES_STAGE_RANK: Record<string, number> = {
   complete: 7,
   delivered: 8,
   invoiced: 9,
+  cancelled: 9,
 };
-
-function normalizeApproval(v: string | null | undefined): string {
-  return String(v || "").trim().toUpperCase();
-}
 
 function parseIsoMs(iso: string | null | undefined): number | null {
   if (!iso) return null;
@@ -94,11 +91,10 @@ function isReachedBySalesStage(
 }
 
 function deriveLifecycle(p: RowWithTickerFields): ProjectTickerLifecycle {
-  const approval = normalizeApproval(p.customer_approval);
-  if (p.project_status === "cancelled" || approval === "CANCELLED") {
+  if (p.sales_command_stage === "cancelled") {
     return "cancelled";
   }
-  if (p.sales_command_stage === "lost" || approval === "REJECTED") {
+  if (p.sales_command_stage === "lost") {
     return "lost";
   }
   return "active";
@@ -137,7 +133,6 @@ function reachedAtForStage(
 }
 
 function isStageReached(id: TickerStageId, p: RowWithTickerFields): boolean {
-  const approval = normalizeApproval(p.customer_approval);
   const stage = p.sales_command_stage ?? null;
   const reachedAt = reachedAtForStage(id, p);
   if (reachedAt) return true;
@@ -150,7 +145,7 @@ function isStageReached(id: TickerStageId, p: RowWithTickerFields): boolean {
     case "quoted":
       return isReachedBySalesStage(stage, 2);
     case "approved":
-      return approval === "ACCEPTED" || isReachedBySalesStage(stage, 3);
+      return isReachedBySalesStage(stage, 3);
     case "materials_ordered":
       return isReachedBySalesStage(stage, 4);
     case "materials_in":
@@ -170,26 +165,58 @@ function isStageReached(id: TickerStageId, p: RowWithTickerFields): boolean {
   }
 }
 
+function timestampForCurrentSalesStage(p: RowWithTickerFields): string | null {
+  switch (p.sales_command_stage) {
+    case "rfq_customer":
+      return p.rfq_received_at ?? p.created_at ?? null;
+    case "rfq_vendors":
+      return p.rfq_vendors_sent_at ?? null;
+    case "quote_sent":
+      return p.quote_sent_at ?? null;
+    case "po_issued":
+      return p.po_issued_at ?? null;
+    case "in_process":
+      return p.in_process_at ?? null;
+    case "complete":
+      return p.completed_at ?? null;
+    case "delivered":
+      return p.delivered_at ?? null;
+    case "invoiced":
+      return p.invoiced_at ?? null;
+    case "lost":
+      return p.lost_at ?? null;
+    case "cancelled":
+      return p.cancelled_at ?? null;
+    default:
+      return null;
+  }
+}
+
 function staleDaysForTicker(
   stages: TickerStage[],
   p: RowWithTickerFields,
   now: Date,
 ): number {
-  let latestMs: number | null = null;
+  const currentStageMs = parseIsoMs(timestampForCurrentSalesStage(p));
+  if (currentStageMs !== null) {
+    return Math.floor(Math.max(0, now.getTime() - currentStageMs) / 86400000);
+  }
+
+  let latestReachedMs: number | null = null;
 
   for (const stage of stages) {
     if (!stage.reached) continue;
     const ms = parseIsoMs(stage.reachedAt);
-    if (ms !== null && (latestMs === null || ms > latestMs)) {
-      latestMs = ms;
+    if (ms !== null && (latestReachedMs === null || ms > latestReachedMs)) {
+      latestReachedMs = ms;
     }
   }
 
-  if (latestMs === null) {
-    latestMs = parseIsoMs(p.created_at) ?? now.getTime();
+  if (latestReachedMs === null) {
+    latestReachedMs = parseIsoMs(p.created_at) ?? now.getTime();
   }
 
-  const diffMs = Math.max(0, now.getTime() - latestMs);
+  const diffMs = Math.max(0, now.getTime() - latestReachedMs);
   return Math.floor(diffMs / 86400000);
 }
 
