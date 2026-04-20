@@ -30,6 +30,12 @@ import {
   type ProjectWorkspaceLayoutState,
 } from "@/lib/projectWorkspaceLayout";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  shouldSkipUrlFileSelectionSync,
+  type PendingFileUrlSync,
+} from "@/lib/workspaceFileSelection";
+
+const URL_FILE_SYNC_TIMEOUT_MS = 2_000;
 
 function WorkspaceBody({
   searchState,
@@ -60,6 +66,7 @@ function WorkspaceBody({
 }) {
   const workspace = useProjectWorkspace();
   const sequenceRef = useRef<string[]>([]);
+  const pendingFileUrlSyncRef = useRef<PendingFileUrlSync | null>(null);
   const docsRef = useRef<HTMLDivElement | null>(null);
   const calcRef = useRef<HTMLDivElement | null>(null);
   const filesRef = useRef<HTMLDivElement | null>(null);
@@ -84,6 +91,10 @@ function WorkspaceBody({
       kind: workspace.focusedDocKind,
     });
     if (next.file !== searchState.file || next.kind !== searchState.kind) {
+      pendingFileUrlSyncRef.current = {
+        file: next.file,
+        expiresAtMs: Date.now() + URL_FILE_SYNC_TIMEOUT_MS,
+      };
       setSearchState(next);
     }
   }, [searchState, setSearchState, workspace.focusedDocKind, workspace.selectedFileId]);
@@ -120,6 +131,13 @@ function WorkspaceBody({
   }, [workspace]);
 
   useEffect(() => {
+    const sync = shouldSkipUrlFileSelectionSync({
+      pending: pendingFileUrlSyncRef.current,
+      searchFile: searchState.file,
+      nowMs: Date.now(),
+    });
+    pendingFileUrlSyncRef.current = sync.pending;
+    if (sync.skip) return;
     if (!searchState.file) return;
     if (workspace.selectedFileId === searchState.file) return;
     workspace.selectFile(searchState.file);

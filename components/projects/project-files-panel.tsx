@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { parseDxfToShapes } from "@/lib/parseDxf";
 import type { ProjectFileRow, ProjectFolderSlot } from "@/lib/projectFiles";
 import { useProjectWorkspaceOptional } from "@/lib/projectWorkspaceContext";
+import { buildPdfPageNumbers } from "@/lib/files/pdfPreview";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -44,12 +45,23 @@ const OFFICE_EXTENSIONS = [
   ".ppt",
   ".pptx",
 ];
+const MIRROR_STATUSES: ProjectFileRow["mirror_status"][] = [
+  "not_mirrored",
+  "mirroring",
+  "synced",
+  "stale",
+  "error",
+];
 
 type PreviewPayload = {
   url: string;
   mimeType: string | null;
   mirrorStatus: string;
 };
+
+function isMirrorStatus(value: string): value is ProjectFileRow["mirror_status"] {
+  return MIRROR_STATUSES.includes(value as ProjectFileRow["mirror_status"]);
+}
 
 function readableBytes(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -90,6 +102,7 @@ export function ProjectFilesPanel({
   const selectedFileId = workspace?.selectedFileId ?? selectedFileIdLocal;
   const setSelectedFileId = workspace?.selectFile ?? setSelectedFileIdLocal;
   const [preview, setPreview] = useState<PreviewPayload | null>(null);
+  const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -170,6 +183,7 @@ export function ProjectFilesPanel({
   async function openPreview(file: ProjectFileRow) {
     setSelectedFileId(file.id);
     setPreview(null);
+    setPdfPageCount(null);
     setPreviewError(null);
     if (isOfficeLike(file)) return;
     if (file.name.toLowerCase().endsWith(".dxf")) return;
@@ -199,6 +213,14 @@ export function ProjectFilesPanel({
       mimeType: body.mimeType ?? null,
       mirrorStatus: body.mirrorStatus ?? "unknown",
     });
+    if (body.mirrorStatus && isMirrorStatus(body.mirrorStatus)) {
+      const nextMirrorStatus = body.mirrorStatus;
+      setFiles((current) =>
+        current.map((row) =>
+          row.id === file.id ? { ...row, mirror_status: nextMirrorStatus } : row,
+        ),
+      );
+    }
     setPreviewBusy(false);
   }
 
@@ -386,8 +408,20 @@ export function ProjectFilesPanel({
                 />
               ) : preview?.mimeType === "application/pdf" ? (
                 <div className="overflow-auto rounded-xl border border-zinc-800 bg-zinc-900/50 p-2">
-                  <Document file={preview.url}>
-                    <Page pageNumber={1} width={900} />
+                  <Document
+                    file={preview.url}
+                    onLoadSuccess={({ numPages }) => {
+                      setPdfPageCount(numPages);
+                    }}
+                    onLoadError={(error) => {
+                      setPreviewError(error.message);
+                    }}
+                  >
+                    <div className="space-y-3">
+                      {buildPdfPageNumbers(pdfPageCount).map((pageNumber) => (
+                        <Page key={pageNumber} pageNumber={pageNumber} width={900} />
+                      ))}
+                    </div>
                   </Document>
                 </div>
               ) : preview?.url ? (

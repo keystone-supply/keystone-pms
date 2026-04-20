@@ -1,6 +1,8 @@
 "use client";
 
 import "./globals.css";
+import "react-pdf/dist/Page/AnnotationLayer.css";
+import "react-pdf/dist/Page/TextLayer.css";
 import { SessionProvider } from "next-auth/react";
 import { Geist } from "next/font/google";
 import { SupabaseBridgeProvider } from "@/components/providers/supabase-bridge-provider";

@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 
 import { adminSupabase } from "@/lib/supabaseAdmin";
+import { deriveMirrorStatusPatch } from "@/lib/files/mirrorStatus";
 import type { ProjectFileRow, ProjectFolderSlot } from "@/lib/projectFiles";
 
 const PROJECT_FILES_BUCKET = "project-files";
@@ -184,7 +185,7 @@ async function upsertDeltaItem(projectId: string, item: GraphDeltaItem): Promise
   const isFolder = Boolean(item.folder);
   const existing = await client
     .from("project_files")
-    .select("storage_object_key,onedrive_etag")
+    .select("onedrive_etag")
     .eq("project_id", projectId)
     .eq("onedrive_item_id", item.id)
     .maybeSingle();
@@ -192,14 +193,13 @@ async function upsertDeltaItem(projectId: string, item: GraphDeltaItem): Promise
   if (existing.error) {
     throw new Error(existing.error.message);
   }
-  const existingData = existing.data as
-    | { storage_object_key: string | null; onedrive_etag: string | null }
-    | null;
+  const existingData = existing.data as { onedrive_etag: string | null } | null;
   const etagChanged =
     existingData != null &&
     existingData.onedrive_etag != null &&
     item.eTag != null &&
     existingData.onedrive_etag !== item.eTag;
+  const mirrorStatusPatch = deriveMirrorStatusPatch({ isFolder, etagChanged });
 
   const { error: upsertError } = await client.from("project_files").upsert(
     {
@@ -216,19 +216,26 @@ async function upsertDeltaItem(projectId: string, item: GraphDeltaItem): Promise
       onedrive_etag: item.eTag ?? null,
       onedrive_ctag: item.cTag ?? null,
       web_url: item.webUrl ?? null,
-      mirror_status:
-        isFolder || !existingData?.storage_object_key
-          ? "not_mirrored"
-          : etagChanged
-            ? "stale"
-            : "synced",
-      mirror_error: null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "onedrive_item_id" },
   );
   if (upsertError) {
     throw new Error(upsertError.message);
+  }
+  if (!mirrorStatusPatch) {
+    return;
+  }
+  const { error: patchError } = await client
+    .from("project_files")
+    .update({
+      ...mirrorStatusPatch,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("project_id", projectId)
+    .eq("onedrive_item_id", item.id);
+  if (patchError) {
+    throw new Error(patchError.message);
   }
 }
 
