@@ -3,6 +3,8 @@ import { DollarSign, FolderKanban } from "lucide-react";
 
 import type { DashboardMetrics } from "@/lib/dashboardMetrics";
 
+import { MetricTile } from "./metric-tile";
+
 function formatUsd(n: number): string {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
@@ -48,40 +50,40 @@ export function SecondaryPanels({
                   Finance &amp; accounting
                 </h2>
                 <p className="text-xs text-zinc-500">
-                  Revenue, margin, and realized P&amp;L
+                  Year-to-date revenue, margin, and realized P&amp;L
                 </p>
               </div>
             </div>
             <div className="space-y-3 text-sm">
-              <div className="flex items-baseline justify-between gap-4">
-                <span className="text-zinc-500">YTD quoted</span>
-                <span className="font-mono text-sm font-medium tabular-nums text-white">
-                  {formatUsd(metrics.ytdQuoted)}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-4">
-                <span className="text-zinc-500">YTD invoiced</span>
-                <span className="font-mono text-sm font-medium tabular-nums text-white">
-                  {formatUsd(metrics.ytdInvoiced)}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-4">
-                <span className="text-zinc-500">Total P&amp;L (all jobs, realized)</span>
-                <span
-                  className={
-                    metrics.totalPl >= 0
-                      ? "font-mono text-sm font-medium tabular-nums text-emerald-400"
-                      : "font-mono text-sm font-medium tabular-nums text-red-400"
+              <div className="grid grid-cols-2 gap-3">
+                <MetricTile
+                  label="YTD quoted"
+                  value={formatUsd(metrics.ytdQuoted)}
+                  hint="Quoted this year"
+                />
+                <MetricTile
+                  label="YTD invoiced"
+                  value={formatUsd(metrics.ytdInvoiced)}
+                  hint="Invoiced this year"
+                />
+                <MetricTile
+                  label="Total P&L"
+                  value={formatUsd(metrics.totalPl)}
+                  hint="YTD jobs, realized"
+                  tone={metrics.totalPl >= 0 ? "positive" : "negative"}
+                />
+                <MetricTile
+                  label="Avg margin"
+                  value={marginDisplay}
+                  hint="YTD invoiced jobs"
+                  tone={
+                    metrics.avgMarginPct === null
+                      ? "default"
+                      : metrics.avgMarginPct >= 0
+                        ? "positive"
+                        : "negative"
                   }
-                >
-                  {formatUsd(metrics.totalPl)}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-4">
-                <span className="text-zinc-500">Avg margin % (invoiced jobs)</span>
-                <span className="font-mono text-sm font-medium tabular-nums text-white">
-                  {marginDisplay}
-                </span>
+                />
               </div>
               <div className="pt-2">
                 <Link

@@ -3,19 +3,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import {
-  Activity,
-  DollarSign,
-  FolderKanban,
-  Percent,
-  TrendingUp,
-} from "lucide-react";
 import { signIn, signOut, useSession } from "next-auth/react";
 
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
-import { KpiCard } from "@/components/dashboard/kpi-card";
 import { QuickLinksBar } from "@/components/dashboard/quick-links-bar";
-import { RoleZones } from "@/components/dashboard/role-zones";
+import {
+  RoleZones,
+  type DashboardSheetRecord,
+} from "@/components/dashboard/role-zones";
 import { SecondaryPanels } from "@/components/dashboard/secondary-panels";
 import {
   canManageSheetStock,
@@ -29,22 +24,17 @@ import {
 } from "@/lib/dashboardMetrics";
 import { withProjectSelectFallback } from "@/lib/projectQueries";
 
-function formatUsd(n: number): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(n);
-}
-
 export default function Dashboard() {
   const [metrics, setMetrics] = useState<DashboardMetrics>(() =>
-    aggregateDashboardMetrics([]),
+    aggregateDashboardMetrics([], new Date(), "dashboard_ytd_except_open_quotes"),
   );
   const [loading, setLoading] = useState(true);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [sheetStockCount, setSheetStockCount] = useState<number | null>(null);
+  const [activeSheetRecords, setActiveSheetRecords] = useState<
+    DashboardSheetRecord[]
+  >([]);
   const [sheetStockLoading, setSheetStockLoading] = useState(true);
 
   const { data: session, status } = useSession();
@@ -63,7 +53,13 @@ export default function Dashboard() {
         );
       }
       const rows = (data ?? []) as DashboardProjectRow[];
-      setMetrics(aggregateDashboardMetrics(rows));
+      setMetrics(
+        aggregateDashboardMetrics(
+          rows,
+          new Date(),
+          "dashboard_ytd_except_open_quotes",
+        ),
+      );
       setLastUpdated(new Date());
       setQueryError(null);
     }
@@ -72,12 +68,66 @@ export default function Dashboard() {
 
   const fetchSheetStockCount = useCallback(async () => {
     setSheetStockLoading(true);
-    const { count, error } = await supabase
+    const { data, count, error } = await supabase
       .from("sheet_stock")
-      .select("*", { count: "exact", head: true })
-      .or("is_archived.is.null,is_archived.eq.false");
-    if (error) setSheetStockCount(null);
-    else setSheetStockCount(count ?? 0);
+      .select(
+        "id,label,svg_path,material,length_in,width_in,thickness_in,est_weight_lbs,status,notes,is_archived,created_at",
+        { count: "exact" },
+      )
+      .or("is_archived.is.null,is_archived.eq.false")
+      .order("created_at", { ascending: false });
+    if (error) {
+      setSheetStockCount(null);
+      setActiveSheetRecords([]);
+    } else {
+      setSheetStockCount(count ?? 0);
+      const rows = (data ?? []) as Array<{
+        id?: string | null;
+        label?: string | null;
+        svg_path?: string | null;
+        material?: string | null;
+        length_in?: number | string | null;
+        width_in?: number | string | null;
+        thickness_in?: number | string | null;
+        est_weight_lbs?: number | string | null;
+        status?: string | null;
+        notes?: string | null;
+        is_archived?: boolean | null;
+      }>;
+      const mapped: DashboardSheetRecord[] = rows.map((row) => {
+        const statusRaw = String(row.status ?? "available").toLowerCase();
+        const normalized = statusRaw === "scrapped" ? "scrap" : statusRaw;
+        const status =
+          row.is_archived === true
+            ? "Archived"
+            : normalized === "allocated"
+              ? "Allocated"
+              : normalized === "consumed"
+                ? "Consumed"
+                : normalized === "scrap"
+                  ? "Scrap"
+                  : "Available";
+        return {
+          id: String(row.id ?? ""),
+          label: typeof row.label === "string" ? row.label : null,
+          svgPath:
+            typeof row.svg_path === "string" && row.svg_path.trim()
+              ? row.svg_path.trim()
+              : null,
+          material:
+            typeof row.material === "string" && row.material.trim()
+              ? row.material
+              : "Unknown",
+          lengthIn: Number(row.length_in) || null,
+          widthIn: Number(row.width_in) || null,
+          thicknessIn: Number(row.thickness_in) || null,
+          estWeightLbs: Number(row.est_weight_lbs) || null,
+          status,
+          notes: typeof row.notes === "string" ? row.notes : null,
+        };
+      });
+      setActiveSheetRecords(mapped);
+    }
     setSheetStockLoading(false);
   }, []);
 
@@ -89,6 +139,7 @@ export default function Dashboard() {
       void Promise.resolve().then(() => fetchSheetStockCount());
     } else {
       queueMicrotask(() => setSheetStockCount(null));
+      queueMicrotask(() => setActiveSheetRecords([]));
       queueMicrotask(() => setSheetStockLoading(false));
     }
 
@@ -173,8 +224,6 @@ export default function Dashboard() {
     );
   }
 
-  const marginDisplay =
-    metrics.avgMarginPct === null ? "—" : `${metrics.avgMarginPct}%`;
   const capabilities = getSessionCapabilitySet(session);
   const showFinancials = canViewFinancials(capabilities);
 
@@ -195,67 +244,11 @@ export default function Dashboard() {
           />
         </div>
 
-        <section
-          aria-label="Primary KPIs"
-          className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
-        >
-          <KpiCard
-            label="Pipeline (incomplete)"
-            value={formatUsd(metrics.pipelineDollars)}
-            hint="Sum of quoted $ on open jobs"
-            icon={TrendingUp}
-            href="/projects"
-          />
-          <KpiCard
-            label="YTD invoiced"
-            value={formatUsd(metrics.ytdInvoiced)}
-            hint="Invoiced this calendar year"
-            icon={DollarSign}
-            href="/projects"
-          />
-          <KpiCard
-            label="Open quotes"
-            value={metrics.openQuotes}
-            hint="In RFQ / quote stages"
-            icon={FolderKanban}
-            href="/projects"
-          />
-          <KpiCard
-            label="Active jobs"
-            value={metrics.activeProjects}
-            hint={`${metrics.completedProjects} completed (lifetime)`}
-            icon={Activity}
-            href="/projects"
-          />
-        </section>
-
-        {showFinancials ? (
-          <section
-            aria-label="Profitability snapshot"
-            className="mt-4 grid gap-4 sm:grid-cols-2"
-          >
-            <KpiCard
-              label="Total P&L (realized)"
-              value={formatUsd(metrics.totalPl)}
-              icon={TrendingUp}
-              href="/projects"
-              valueClassName={
-                metrics.totalPl >= 0 ? "text-emerald-400" : "text-red-400"
-              }
-            />
-            <KpiCard
-              label="Avg margin (invoiced jobs)"
-              value={marginDisplay}
-              icon={Percent}
-              href="/projects"
-            />
-          </section>
-        ) : null}
-
         <div className="mt-10 space-y-10">
           <RoleZones
             metrics={metrics}
             sheetStockCount={sheetStockCount}
+            activeSheetRecords={activeSheetRecords}
             sheetStockLoading={sheetStockLoading}
             capabilities={capabilities}
           />

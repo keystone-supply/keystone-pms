@@ -156,9 +156,9 @@ export type TvProjectTickerRow = {
   moved_in_last_24h: boolean;
 };
 
-function ytdStartIso(year: number): string {
-  return `${year}-01-01`;
-}
+export type DashboardMetricsAggregationMode =
+  | "legacy"
+  | "dashboard_ytd_except_open_quotes";
 
 const OPEN_QUOTE_STAGES = new Set(["rfq_customer", "rfq_vendors", "quote_sent"]);
 const ACTIVE_PIPELINE_STAGES = new Set([
@@ -276,8 +276,12 @@ function isActivePipelineJob(p: DashboardProjectRow): boolean {
 export function aggregateDashboardMetrics(
   projects: DashboardProjectRow[],
   now: Date = new Date(),
+  mode: DashboardMetricsAggregationMode = "legacy",
 ): DashboardMetrics {
-  const ytdCutoff = ytdStartIso(now.getFullYear());
+  const ytdStartMs = new Date(now.getFullYear(), 0, 1).getTime();
+  const ytdEndMs = new Date(now.getFullYear() + 1, 0, 1).getTime();
+  const shouldScopeNonOpenQuoteMetricsToYtd =
+    mode === "dashboard_ytd_except_open_quotes";
 
   let openQuotes = 0;
   let ytdQuoted = 0;
@@ -307,19 +311,23 @@ export function aggregateDashboardMetrics(
   const customerMap = new Map<string, number>();
 
   for (const p of projects) {
+    const createdTs = parseIso(p.created_at);
+    const isCreatedInYtd =
+      createdTs !== null && createdTs >= ytdStartMs && createdTs < ytdEndMs;
+    const includeNonOpenQuoteMetrics =
+      !shouldScopeNonOpenQuoteMetricsToYtd || isCreatedInYtd;
     const stage = stageOf(p);
     pipelineColumnCounts[stage] += 1;
     if (OPEN_QUOTE_STAGES.has(stage)) openQuotes += 1;
 
-    const created = p.created_at || "";
-    if (created >= ytdCutoff) {
+    if (isCreatedInYtd) {
       ytdQuoted += p.total_quoted || 0;
       ytdInvoiced += p.invoiced_amount || 0;
     }
 
-    totalPl += realizedPl(p);
+    if (includeNonOpenQuoteMetrics) totalPl += realizedPl(p);
 
-    if (isActivePipelineJob(p)) {
+    if (includeNonOpenQuoteMetrics && isActivePipelineJob(p)) {
       activeProjects += 1;
       pipelineDollars += p.total_quoted || 0;
       engineeringLoadQuoted += p.engineering_quoted || 0;
@@ -327,36 +335,44 @@ export function aggregateDashboardMetrics(
       const si = classifySupplyIndustrial(p.supply_industrial);
       if (si === "supply") supplyActiveCount += 1;
       else if (si === "industrial") industrialActiveCount += 1;
-    } else if (stage === "invoiced") {
+    } else if (includeNonOpenQuoteMetrics && stage === "invoiced") {
       completedProjects += 1;
     }
 
-    if (ACCEPTED_STAGES.has(stage)) quotesAccepted += 1;
-    if (stage === "lost") quotesRejected += 1;
-    if (stage === "cancelled") quotesCancelled += 1;
+    if (includeNonOpenQuoteMetrics && ACCEPTED_STAGES.has(stage)) {
+      quotesAccepted += 1;
+    }
+    if (includeNonOpenQuoteMetrics && stage === "lost") quotesRejected += 1;
+    if (includeNonOpenQuoteMetrics && stage === "cancelled") {
+      quotesCancelled += 1;
+    }
 
-    const m = realizedMarginPct(p);
-    if (m !== null) marginSamples.push(m);
+    if (includeNonOpenQuoteMetrics) {
+      const m = realizedMarginPct(p);
+      if (m !== null) marginSamples.push(m);
+    }
 
     const rev = p.invoiced_amount || 0;
-    if (rev > 0 && p.customer && created >= ytdCutoff) {
+    if (rev > 0 && p.customer && isCreatedInYtd) {
       const c = p.customer.toUpperCase();
       customerMap.set(c, (customerMap.get(c) || 0) + rev);
     }
-    const quoteTurnaround = diffDays(p.rfq_received_at, p.po_issued_at);
-    if (quoteTurnaround != null) quoteTurnaroundSamples.push(quoteTurnaround);
-    const cashToCash = diffDays(p.po_issued_at, p.invoiced_at);
-    if (cashToCash != null) cashToCashSamples.push(cashToCash);
-    const shopThroughput = diffDays(p.in_process_at, p.completed_at);
-    if (shopThroughput != null) shopThroughputSamples.push(shopThroughput);
-    const materialsLead = diffDays(p.materials_ordered_at, p.material_received_at);
-    if (materialsLead != null) materialsLeadTimeSamples.push(materialsLead);
-    const waitForMaterials = diffDays(p.in_process_at, p.materials_ordered_at);
-    if (waitForMaterials != null) waitForMaterialsSamples.push(waitForMaterials);
-    const pureLabor = diffDays(p.material_received_at, p.labor_completed_at);
-    if (pureLabor != null) pureLaborSamples.push(pureLabor);
-    const shopToStageLag = diffDays(p.labor_completed_at, p.completed_at);
-    if (shopToStageLag != null) shopToStageLagSamples.push(shopToStageLag);
+    if (includeNonOpenQuoteMetrics) {
+      const quoteTurnaround = diffDays(p.rfq_received_at, p.po_issued_at);
+      if (quoteTurnaround != null) quoteTurnaroundSamples.push(quoteTurnaround);
+      const cashToCash = diffDays(p.po_issued_at, p.invoiced_at);
+      if (cashToCash != null) cashToCashSamples.push(cashToCash);
+      const shopThroughput = diffDays(p.in_process_at, p.completed_at);
+      if (shopThroughput != null) shopThroughputSamples.push(shopThroughput);
+      const materialsLead = diffDays(p.materials_ordered_at, p.material_received_at);
+      if (materialsLead != null) materialsLeadTimeSamples.push(materialsLead);
+      const waitForMaterials = diffDays(p.in_process_at, p.materials_ordered_at);
+      if (waitForMaterials != null) waitForMaterialsSamples.push(waitForMaterials);
+      const pureLabor = diffDays(p.material_received_at, p.labor_completed_at);
+      if (pureLabor != null) pureLaborSamples.push(pureLabor);
+      const shopToStageLag = diffDays(p.labor_completed_at, p.completed_at);
+      if (shopToStageLag != null) shopToStageLagSamples.push(shopToStageLag);
+    }
   }
 
   const winDenom = quotesAccepted + quotesRejected;
@@ -385,6 +401,11 @@ export function aggregateDashboardMetrics(
   }[] = [];
   const purchasingQueueRaw: PurchasingItem[] = [];
   for (const p of projects) {
+    const createdTs = parseIso(p.created_at);
+    const isCreatedInYtd =
+      createdTs !== null && createdTs >= ytdStartMs && createdTs < ytdEndMs;
+    const includeNonOpenQuoteMetrics =
+      !shouldScopeNonOpenQuoteMetricsToYtd || isCreatedInYtd;
     const stage = stageOf(p);
     if (!OPEN_QUOTE_STAGES.has(stage)) continue;
     const est = estimatedMarginPctQuoted(p);
@@ -403,6 +424,7 @@ export function aggregateDashboardMetrics(
     });
 
     if (
+      includeNonOpenQuoteMetrics &&
       p.materials_ordered_at &&
       !p.material_received_at &&
       stage !== "cancelled" &&
