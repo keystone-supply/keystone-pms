@@ -10,9 +10,11 @@ import {
   HardDriveDownload,
   History,
   Plus,
+  Printer,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { HelpPopoverButton } from "@/components/ui/help-popover-button";
 import {
   buildDocumentLinesFromCalc,
   type ImportStrategy,
@@ -51,6 +53,7 @@ import {
 import { generateProjectDocumentPdfBuffer } from "@/lib/documents/composePdfInput";
 import { formatRiversideDateStampYmd } from "@/lib/documents/riversideTime";
 import { uploadPdfToDocs } from "@/lib/onedrive";
+import { openPdfPrintWindow } from "@/lib/print/openPrintWindow";
 import {
   buildQuoteFinancialsSnapshot,
   documentKindSupportsQuoteFinancialsSnapshot,
@@ -618,9 +621,9 @@ export function ProjectDocumentsSection({
         : normalizeRevisionIndex(preferredRevisionIndex),
     );
     setExportRevisionsLoading(true);
-    setExportMethod("download");
+    setExportMethod("onedrive");
     setExportError("");
-    setUpdateMilestones(false);
+    setUpdateMilestones(true);
     setExportOpen(true);
     const revisions = await loadRevisionHistoryForRow(r.id);
     setExportRevisions(revisions);
@@ -630,7 +633,27 @@ export function ProjectDocumentsSection({
     setExportRevisionsLoading(false);
   };
 
-  const quickPreview = async (r: ProjectDocumentRow) => {
+  const openPdfBuffer = (buffer: Uint8Array, shouldPrint = false) => {
+    const blob = new Blob([buffer], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    if (!shouldPrint) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return;
+    }
+    const opened = openPdfPrintWindow({
+      url,
+      onSettled: () => {
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      },
+    });
+    if (!opened) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    }
+  };
+
+  const quickPreview = async (r: ProjectDocumentRow, shouldPrint = false) => {
     try {
       const logo = await fetchLogoDataUrl(r.kind);
       const buffer = generateProjectDocumentPdfBuffer({
@@ -648,8 +671,7 @@ export function ProjectDocumentsSection({
         defaultShipTo,
         revisionIndex: normalizeRevisionIndex(r.current_revision_index),
       });
-      const blob = new Blob([buffer], { type: "application/pdf" });
-      window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+      openPdfBuffer(buffer, shouldPrint);
     } catch {
       /* ignore */
     }
@@ -685,8 +707,43 @@ export function ProjectDocumentsSection({
         defaultShipTo,
         revisionIndex: normalizeRevisionIndex(selectedRevision.revisionIndex),
       });
-      const blob = new Blob([buffer], { type: "application/pdf" });
-      window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+      openPdfBuffer(buffer);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const printSelectedRevision = async () => {
+    if (!exportingRow) return;
+    try {
+      const selectedRevision = pickRevisionForExport(
+        exportingRow,
+        exportRevisions,
+        selectedExportRevisionIndex,
+      );
+      const logo = await fetchLogoDataUrl(exportingRow.kind);
+      const vendorForRow =
+        (exportingRow.kind === "rfq" ||
+          exportingRow.kind === "purchase_order") &&
+        selectedRevision.vendorId
+          ? (vendors.find((v) => v.id === selectedRevision.vendorId) ?? null)
+          : null;
+      const buffer = generateProjectDocumentPdfBuffer({
+        kind: exportingRow.kind,
+        documentNumber:
+          selectedRevision.number ??
+          exportingRow.number ??
+          suggestDocNumber(project, exportingRow.kind),
+        issuedDate: new Date(),
+        logoDataUrl: logo,
+        project,
+        meta: normalizeMeta(selectedRevision.metadata),
+        vendor: vendorForRow,
+        customer: crm,
+        defaultShipTo,
+        revisionIndex: normalizeRevisionIndex(selectedRevision.revisionIndex),
+      });
+      openPdfBuffer(buffer, true);
     } catch {
       /* ignore */
     }
@@ -695,6 +752,7 @@ export function ProjectDocumentsSection({
   const previewRevisionFromHistory = async (
     row: ProjectDocumentRow,
     revision: ProjectDocumentRevisionRow,
+    shouldPrint = false,
   ) => {
     try {
       const logo = await fetchLogoDataUrl(row.kind);
@@ -715,8 +773,7 @@ export function ProjectDocumentsSection({
         defaultShipTo,
         revisionIndex: picked.revisionIndex,
       });
-      const blob = new Blob([buffer], { type: "application/pdf" });
-      window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+      openPdfBuffer(buffer, shouldPrint);
     } catch {
       /* ignore */
     }
@@ -818,6 +875,16 @@ export function ProjectDocumentsSection({
                 </Button>
                 <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => void quickPreview(r, true)}
+                >
+                  <Printer className="size-4" />
+                  Print
+                </Button>
+                <Button
+                  type="button"
                   variant="secondary"
                   size="sm"
                   disabled={!canManageDocuments}
@@ -912,6 +979,16 @@ export function ProjectDocumentsSection({
                               onClick={() => void previewRevisionFromHistory(r, rev)}
                             >
                               Preview
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-1"
+                              onClick={() => void previewRevisionFromHistory(r, rev, true)}
+                            >
+                              <Printer className="size-4" />
+                              Print
                             </Button>
                             <Button
                               type="button"
@@ -1531,16 +1608,21 @@ export function ProjectDocumentsSection({
               )}
             </div>
 
-            <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm text-zinc-300 select-none">
-              <input
-                type="checkbox"
-                checked={updateMilestones}
-                onChange={(e) => setUpdateMilestones(e.target.checked)}
-                className="size-4 rounded border-zinc-600"
+            <div className="mt-4 flex items-center justify-between gap-2">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-300 select-none">
+                <input
+                  type="checkbox"
+                  checked={updateMilestones}
+                  onChange={(e) => setUpdateMilestones(e.target.checked)}
+                  className="size-4 rounded border-zinc-600"
+                />
+                Update job milestones
+              </label>
+              <HelpPopoverButton
+                detail="Milestones updated by document type: quote -> quote sent, RFQ -> vendors, vendor PO -> materials ordered, invoice -> invoiced, BOL -> delivered."
+                align="right"
               />
-              Update job milestones (quote → quote sent, RFQ → vendors, vendor PO
-              → materials ordered, invoice → invoiced, BOL → delivered)
-            </label>
+            </div>
 
             {exportError ? (
               <p className="mt-3 text-sm text-red-400">{exportError}</p>
@@ -1554,6 +1636,15 @@ export function ProjectDocumentsSection({
                 onClick={() => void previewSelectedRevision()}
               >
                 Preview selected REV
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="flex-1 gap-1"
+                onClick={() => void printSelectedRevision()}
+              >
+                <Printer className="size-4" />
+                Print selected REV
               </Button>
               <Button
                 type="button"

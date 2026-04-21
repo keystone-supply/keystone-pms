@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileUp, RefreshCw, ExternalLink, FileWarning } from "lucide-react";
+import { FileUp, RefreshCw, ExternalLink, FileWarning, Printer } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import Image from "next/image";
 
@@ -16,6 +16,7 @@ import {
   getPdfPreviewPageWidth,
   getPdfPreviewRenderConfig,
 } from "@/lib/files/pdfPreview";
+import { openPdfPrintWindow, openPrintWindow } from "@/lib/print/openPrintWindow";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -110,6 +111,7 @@ export function ProjectFilesPanel({
   const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [printBusy, setPrintBusy] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
   const pdfViewportRef = useRef<HTMLDivElement | null>(null);
   const [pdfViewportWidth, setPdfViewportWidth] = useState<number | null>(null);
@@ -278,6 +280,40 @@ export function ProjectFilesPanel({
     await loadFiles();
   }
 
+  function printViewedFile() {
+    if (!selected || !preview?.url) return;
+    setPrintBusy(true);
+    const printUrl = `/api/projects/${projectId}/files/${selected.id}/print`;
+    const looksLikePdf =
+      (preview.mimeType ?? selected.mime_type)?.toLowerCase() === "application/pdf" ||
+      selected.name.toLowerCase().endsWith(".pdf");
+    if (looksLikePdf) {
+      const opened = openPdfPrintWindow({
+        url: printUrl,
+        onSettled: () => {
+          setPrintBusy(false);
+        },
+      });
+      if (!opened) {
+        setPrintBusy(false);
+      }
+      return;
+    }
+    const opened = openPrintWindow({
+      url: printUrl,
+      mimeType: preview.mimeType ?? selected.mime_type ?? null,
+      title: selected.name,
+      framePrintDelayMs: 500,
+      fallbackPrintDelayMs: 3500,
+      onSettled: () => {
+        setPrintBusy(false);
+      },
+    });
+    if (!opened) {
+      setPrintBusy(false);
+    }
+  }
+
   return (
     <section className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6 sm:p-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -400,6 +436,23 @@ export function ProjectFilesPanel({
                       Start calc referencing this file
                     </Button>
                   ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    disabled={
+                      printBusy ||
+                      previewBusy ||
+                      !preview?.url ||
+                      isOfficeLike(selected) ||
+                      selected.name.toLowerCase().endsWith(".dxf")
+                    }
+                    onClick={printViewedFile}
+                  >
+                    <Printer className="size-4" />
+                    {printBusy ? "Printing..." : "Print"}
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
