@@ -265,10 +265,10 @@ export function RoleZones({
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 pt-2">
             <Link
-              href="/sales"
+              href="/projects"
               className="text-xs font-medium text-blue-400 hover:text-blue-300"
             >
-              Sales hub &amp; accounts →
+              Projects &amp; accounts →
             </Link>
             <Link
               href="/projects"

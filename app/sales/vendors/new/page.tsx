@@ -143,22 +143,22 @@ export default function NewVendorPage() {
           onSignOut={() => signOut({ callbackUrl: "/" })}
           title="New vendor"
           subtitle="Vendor master for RFQs and purchase orders."
-          backHref="/sales"
-          backLabel="Sales hub"
+          backHref="/projects"
+          backLabel="Projects"
         />
 
         <div className="mt-8">
           <QuickLinksBar
             openQuotesCount={openQuotes}
-            activeHref="/sales"
-            newProjectHref="/new-project?returnTo=%2Fsales"
+            activeHref="/projects"
+            newProjectHref="/new-project?returnTo=%2Fprojects"
             capabilities={capabilities}
           />
         </div>
 
         <div className="mt-8">
           <Link
-            href="/sales"
+            href="/projects"
             className="mb-6 inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white"
           >
             <ArrowLeft className="size-4" />
@@ -182,7 +182,7 @@ export default function NewVendorPage() {
                 {busy ? "Saving…" : "Create vendor"}
               </Button>
               <Button type="button" variant="outline" asChild>
-                <Link href="/sales">Cancel</Link>
+                <Link href="/projects">Cancel</Link>
               </Button>
             </div>
           </form>

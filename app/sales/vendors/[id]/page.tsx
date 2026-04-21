@@ -243,27 +243,27 @@ export default function VendorDetailPage() {
                 : "Vendor not found"
           }
           subtitle="RFQ and purchase order counterparties."
-          backHref="/sales"
-          backLabel="Sales hub"
+          backHref="/projects"
+          backLabel="Projects"
           showLastUpdated={!!vendor && !loading}
         />
 
         <div className="mt-8">
           <QuickLinksBar
             openQuotesCount={openQuotes}
-            activeHref="/sales"
-            newProjectHref="/new-project?returnTo=%2Fsales"
+            activeHref="/projects"
+            newProjectHref="/new-project?returnTo=%2Fprojects"
             capabilities={capabilities}
           />
         </div>
 
         <div className="mt-8">
           <Link
-            href="/sales"
+            href="/projects"
             className="mb-6 inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white"
           >
             <ArrowLeft className="size-4" />
-            Back to hub
+            Back to projects
           </Link>
 
           {loading ? (
@@ -306,7 +306,7 @@ export default function VendorDetailPage() {
                     {saving ? "Saving…" : "Save changes"}
                   </Button>
                   <Button type="button" variant="outline" asChild>
-                    <Link href="/sales">Back to hub</Link>
+                    <Link href="/projects">Back to projects</Link>
                   </Button>
                 </div>
               </form>

@@ -152,7 +152,6 @@ const baseColumns = [
       </span>
     ),
     sortingFn: (a, b) => compareProjectNumber(a.original, b.original),
-    enableHiding: false,
     enableResizing: false,
   }),
   columnHelper.accessor((row) => row.customer, {
@@ -354,13 +353,13 @@ export function ProjectsDataTable({
   const [segment, setSegment] = useState<SegmentFilter>("all");
   const [year, setYear] = useState<YearFilter>("all");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
-    project_number: true,
+    project_number: false,
     customer: true,
     created_at: true,
     project_name: true,
-    ticker: true,
+    ticker: false,
     sales_command_stage: false,
-    health: false,
+    health: true,
     segment: false,
     total_quoted: false,
     invoiced_amount: false,
@@ -387,9 +386,9 @@ export function ProjectsDataTable({
       customer: prev.customer ?? true,
       created_at: prev.created_at ?? true,
       project_name: prev.project_name ?? true,
-      ticker: prev.ticker ?? true,
+      ticker: prev.ticker ?? false,
       sales_command_stage: prev.sales_command_stage ?? false,
-      health: prev.health ?? false,
+      health: prev.health ?? true,
       segment: prev.segment ?? false,
       total_quoted: prev.total_quoted ?? false,
       invoiced_amount: prev.invoiced_amount ?? false,

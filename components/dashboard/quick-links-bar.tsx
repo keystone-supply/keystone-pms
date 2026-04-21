@@ -1,6 +1,5 @@
 import Link from "next/link";
 import {
-  Briefcase,
   FolderOpen,
   LayoutDashboard,
   Layers,
@@ -12,7 +11,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  canAccessSales,
   canCreateProjects,
   canManageUsers,
   canRunNesting,
@@ -41,7 +39,6 @@ export function QuickLinksBar({
   capabilities?: AppCapabilitySet;
 }) {
   const onDashboard = activeHref === "/";
-  const showSales = capabilities == null ? true : canAccessSales(capabilities);
   const showNewProject = capabilities == null ? true : canCreateProjects(capabilities);
   const showNest = capabilities == null ? true : canRunNesting(capabilities);
   const showAdmin = capabilities == null ? false : canManageUsers(capabilities);
@@ -93,21 +90,6 @@ export function QuickLinksBar({
             ) : null}
           </Link>
         </Button>
-        {showSales ? (
-          <Button variant="outline" size="sm" asChild>
-            <Link
-              href="/sales"
-              className={cn(
-                "gap-2",
-                activeHref === "/sales" && quickLinkActiveClassName,
-              )}
-              aria-current={activeHref === "/sales" ? "page" : undefined}
-            >
-              <Briefcase className="size-4" />
-              Sales
-            </Link>
-          </Button>
-        ) : null}
         {showNest ? (
           <Button variant="outline" size="sm" asChild>
             <Link

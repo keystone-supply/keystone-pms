@@ -336,7 +336,7 @@ export default function CustomerDetailPage() {
       <div className="min-h-screen bg-zinc-950 px-6 py-16 text-white">
         <p className="mb-4 text-zinc-400">Account not found.</p>
         <Button variant="outline" asChild>
-          <Link href="/sales">Back to Sales</Link>
+          <Link href="/projects">Back to projects</Link>
         </Button>
       </div>
     );
@@ -354,22 +354,22 @@ export default function CustomerDetailPage() {
           onSignOut={() => signOut({ callbackUrl: "/" })}
           title={customer.legal_name}
           subtitle="Account profile, ship-tos, and related jobs."
-          backHref="/sales"
-          backLabel="Sales hub"
+          backHref="/projects"
+          backLabel="Projects"
         />
 
         <div className="mt-8">
           <QuickLinksBar
             openQuotesCount={openQuotes}
-            activeHref="/sales"
-            newProjectHref="/new-project?returnTo=%2Fsales"
+            activeHref="/projects"
+            newProjectHref="/new-project?returnTo=%2Fprojects"
             capabilities={capabilities}
           />
         </div>
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <Link
-            href="/sales"
+            href="/projects"
             className="inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white"
           >
             <ArrowLeft className="size-4" />
@@ -410,7 +410,7 @@ export default function CustomerDetailPage() {
                   {saving ? "Saving…" : "Save changes"}
                 </Button>
                 <Button type="button" variant="outline" asChild>
-                  <Link href="/sales">Cancel</Link>
+                  <Link href="/projects">Cancel</Link>
                 </Button>
               </div>
             </form>
@@ -456,7 +456,7 @@ export default function CustomerDetailPage() {
                 )}
               </ul>
               <Button variant="outline" size="sm" className="mt-4 w-full" asChild>
-                <Link href="/new-project?returnTo=%2Fsales">New project</Link>
+                <Link href="/new-project?returnTo=%2Fprojects">New project</Link>
               </Button>
             </section>
 
