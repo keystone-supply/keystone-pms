@@ -7,7 +7,7 @@ Project management system for a fabrication/CNC shop: projects, quotes, P&L trac
 - **Next.js 16** (App Router), **React 19**, **TypeScript**
 - **Tailwind CSS 4**, **shadcn/ui** (Radix), **Lucide** icons
 - **Supabase** – Postgres database and realtime subscriptions for projects
-- **NextAuth** – Azure AD (Microsoft work/school) sign-in; JWT stores Microsoft Graph access token with refresh
+- **NextAuth** – Azure AD and credentials sign-in; JWT/session include app capability grants
 - **Microsoft Graph** – OneDrive: create project folder structures and upload files (e.g. shop calculator tape exports from `/weight-calc`)
 
 ## Getting started
@@ -15,7 +15,7 @@ Project management system for a fabrication/CNC shop: projects, quotes, P&L trac
 1. Install dependencies: `npm install`
 2. Copy `.env.example` to `.env.local` and fill in the values (see [Environment variables](#environment-variables)).
 3. Run the dev server: `npm run dev`
-4. Open [http://localhost:3000](http://localhost:3000). Sign in with Azure AD; ensure Supabase is configured so projects load.
+4. Open [http://localhost:3000](http://localhost:3000). Sign in with Azure AD or credentials (if seeded); ensure Supabase is configured so projects load.
 
 ## Environment variables
 
@@ -35,6 +35,16 @@ Copy `.env.example` to `.env.local` and set:
 | `SUPABASE_BRIDGE_TOKEN_TTL_SECONDS` | Optional short-lived bridge token TTL in seconds (default: `600`) |
 
 Azure AD app must request scope `Files.ReadWrite.All` for OneDrive folder creation and file uploads.
+
+## Authorization model
+
+- App authorization is capability-based (`app_user_capabilities`) with optional per-project overrides (`app_user_project_access`).
+- Use `docs/rbac-role-matrix.md` as the canonical capability matrix for UI/API and DB policy expectations.
+- Before merging access-policy changes, run:
+  - `npm run test:rbac-roles`
+  - `npm run test:rbac-api-guards`
+  - `npm run test:rbac-sql`
+  - `npm run security:db-schema-guard`
 
 ## Project structure
 

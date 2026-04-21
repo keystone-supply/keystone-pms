@@ -72,14 +72,6 @@ export function markupDollarsFromBasis(basis: number, customerLine: number): num
   return Math.round((c - b) * 100) / 100;
 }
 
-/** @deprecated Prefer customerLineFromBasis for customer line; kept for any legacy callers. */
-export function materialsQuotedFromBasis(
-  basis: number,
-  markupPct: number,
-): number {
-  return customerLineFromBasis(basis, markupPct);
-}
-
 /** Materials internal basis: vendor / purchase cost only. */
 export function quotedMaterialsInternalBasis(project: ProjectFinancialsInput): number {
   const vendor = project.materials_vendor_cost;

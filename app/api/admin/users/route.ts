@@ -31,10 +31,23 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const [{ data: capabilities }, { data: projectAccess }] = await Promise.all([
+  const [capabilitiesResult, projectAccessResult] = await Promise.all([
     adminSupabase.from("app_user_capabilities").select("user_id,capability"),
     adminSupabase.from("app_user_project_access").select("user_id"),
   ]);
+  if (capabilitiesResult.error || projectAccessResult.error) {
+    return NextResponse.json(
+      {
+        error:
+          capabilitiesResult.error?.message ??
+          projectAccessResult.error?.message ??
+          "Unable to load user capability metadata.",
+      },
+      { status: 500 },
+    );
+  }
+  const capabilities = capabilitiesResult.data;
+  const projectAccess = projectAccessResult.data;
 
   const capabilityCountByUser = new Map<string, number>();
   for (const row of capabilities ?? []) {

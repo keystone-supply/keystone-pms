@@ -1,12 +1,15 @@
 # RBAC Staging Checklist
 
-Use this checklist before promoting RBAC changes to production.
+Use this checklist before promoting authorization changes to production.
 
 ## Preconditions
 
-- Migrations applied through `20260410130000_align_full_app_rbac_matrix.sql`.
-- At least one active test user exists for each role:
-  - `admin`, `manager`, `sales`, `engineering`, `fabrication`, `viewer`.
+- Capability migrations are applied through:
+  - `20260423000000_add_app_capabilities_system.sql`
+  - `20260423001000_rewrite_projects_role_filtered_view.sql`
+  - `20260423002000_rewrite_rls_to_capabilities.sql`
+  - `20260423003000_drop_role_column_and_enum.sql`
+- At least one active test user exists for each capability bundle you support in production.
 - App is running with NextAuth + Supabase bridge enabled.
 
 ## Automated checks
@@ -22,7 +25,7 @@ Expected:
 - `test:rbac-sql` prints all `PASS`.
 - `test:rbac-api-guards` returns unauthorized statuses for unauthenticated calls.
 
-## Per-role manual smoke checks
+## Capability-bundle manual smoke checks
 
 ### Admin
 - Can open all pages.
@@ -57,6 +60,8 @@ Expected:
 - Cannot open Sales hub or Nest/remnants.
 - Cannot open Shop TV.
 - Financial panels/cards are hidden.
+
+Reference: `docs/rbac-role-matrix.md` is the canonical capability mapping for surfaces and database policy intent.
 
 ## Security checks
 

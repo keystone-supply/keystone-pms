@@ -1,4 +1,14 @@
 /** Microsoft Graph: create project folders in OneDrive, upload tape exports to project _DOCS. */
+const ONEDRIVE_VERBOSE_LOGS =
+  process.env.ONEDRIVE_VERBOSE_LOGS === "1" &&
+  process.env.NODE_ENV !== "production";
+
+function onedriveDebugLog(message: string) {
+  if (ONEDRIVE_VERBOSE_LOGS) {
+    console.log(message);
+  }
+}
+
 export async function createProjectFolders(
   accessToken: string,
   customer: string,
@@ -20,7 +30,7 @@ export async function createProjectFolders(
     "Content-Type": "application/json",
   };
 
-  console.log("=== PERSONAL DOCUMENTS DEBUG START ===");
+  onedriveDebugLog("=== PERSONAL DOCUMENTS DEBUG START ===");
 
   // Start in your personal Documents folder (you own this 100%)
   const baseSegments = ["0 PROJECT FOLDERS", customerUpper, folderName];
@@ -43,7 +53,7 @@ export async function createProjectFolders(
     await ensureFolder(headers, `${currentPath}/${sub}`);
   }
 
-  console.log("=== PERSONAL DOCUMENTS DEBUG END ===");
+  onedriveDebugLog("=== PERSONAL DOCUMENTS DEBUG END ===");
   return `Documents/0 PROJECT FOLDERS/${customerUpper}/${folderName}`;
 }
 
@@ -101,7 +111,7 @@ export async function uploadTapeToDocs(
     Authorization: `Bearer ${accessToken}`,
   };
 
-  console.log(
+  onedriveDebugLog(
     `📁 Ensuring project folders for ${projectNumber} (${customer})...`,
   );
 
@@ -167,7 +177,7 @@ export async function uploadTapeToDocs(
   const fullPath = `${docsFolderPath}/${finalFilename}`;
   const url = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(fullPath)}:/content`;
 
-  console.log(
+  onedriveDebugLog(
     `📤 Uploading to: ${fullPath} ${version > 1 ? `(v${version})` : ""}`,
   );
 
@@ -177,16 +187,16 @@ export async function uploadTapeToDocs(
     body: content,
   });
 
-  console.log(`Upload response: status=${res.status}, ok=${res.ok}`);
+  onedriveDebugLog(`Upload response: status=${res.status}, ok=${res.ok}`);
 
   const text = await res.text().catch(() => "no body");
-  console.log(`Upload body: ${text.slice(0, 500)}`);
+  onedriveDebugLog(`Upload body preview: ${text.slice(0, 200)}`);
 
   if (!res.ok) {
     throw new Error(`Upload failed for "${fullPath}": ${res.status} ${text}`);
   }
 
-  console.log(`✅ Uploaded successfully: ${fullPath}`);
+  onedriveDebugLog(`Uploaded successfully: ${fullPath}`);
   return fullPath;
 }
 

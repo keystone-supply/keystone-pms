@@ -8,11 +8,7 @@ import {
 } from "@/lib/dashboardMetrics";
 import { canViewShopTv } from "@/lib/auth/roles";
 import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
-
-type TvSummaryResponse = {
-  summary?: Omit<CommandBoardTVSummary, "lastUpdated"> & { lastUpdated: string };
-  error?: string;
-};
+import { fetchTvSummary } from "@/lib/tv/fetchTvSummary";
 
 export default function TVStaticPage() {
   const { data: session, status } = useSession();
@@ -26,24 +22,10 @@ export default function TVStaticPage() {
   const fetchSummary = useCallback(async () => {
     try {
       setError(null);
-      const response = await fetch("/api/tv/summary", {
-        method: "GET",
-        cache: "no-store",
-      });
-      const payload = (await response
-        .json()
-        .catch(() => ({ error: "Invalid TV summary response." }))) as TvSummaryResponse;
-      if (!response.ok || !payload.summary) {
-        setError(payload.error ?? "Failed to load project data");
-        return;
-      }
-      setSummary({
-        ...payload.summary,
-        lastUpdated: new Date(payload.summary.lastUpdated),
-      });
+      setSummary(await fetchTvSummary());
     } catch (err) {
       console.error("Unexpected error fetching projects:", err);
-      setError("Failed to load project data");
+      setError(err instanceof Error ? err.message : "Failed to load project data");
     } finally {
       setLoading(false);
     }

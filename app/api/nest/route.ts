@@ -129,7 +129,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[api/nest] NestNow OK in ${proxyDurationMs}ms`);
     return NextResponse.json({ ...data, proxyDurationMs });
   } catch (err) {
     const proxyDurationMs = Date.now() - started;
