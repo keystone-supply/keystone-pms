@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { HelpCircle } from "lucide-react";
+import { HelpPopoverButton } from "@/components/ui/help-popover-button";
 import {
   computeLaborCostFromActualBreakdown,
   customerLineFromBasis,
@@ -44,19 +44,6 @@ function parseMoneyInput(raw: string): number | null {
   const parsed = parseFloat(normalized);
   if (Number.isNaN(parsed)) return 0;
   return roundToCents(parsed);
-}
-
-function InfoHintButton({ detail }: { detail: string }) {
-  return (
-    <button
-      type="button"
-      className="inline-flex size-5 items-center justify-center rounded-full border border-zinc-700 text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
-      aria-label={detail}
-      title={detail}
-    >
-      <HelpCircle className="size-3.5" />
-    </button>
-  );
 }
 
 type QuoteBasisBucketConfig = {
@@ -171,7 +158,7 @@ export function ProjectQuoteFinancialsPanel({
         <h2 className="text-xl font-semibold">Project financials</h2>
         <div className="mt-1 flex items-center gap-2 text-sm text-zinc-500">
           <p>Estimate math and markup controls.</p>
-          <InfoHintButton detail="Each markable line has its own markup %. Labor uses sell $/hr, and taxes pass through without markup." />
+          <HelpPopoverButton detail="Each markable line has its own markup %. Labor uses sell $/hr, and taxes pass through without markup." />
         </div>
       </div>
 
@@ -179,7 +166,7 @@ export function ProjectQuoteFinancialsPanel({
         <div className={`${topMetricCardClass} border-sky-800/60 bg-sky-950/40`}>
           <div className="flex items-center justify-between gap-2 text-sm text-zinc-500">
             <span>Customer quote total</span>
-            <InfoHintButton detail="Auto-calculated from all quote lines and stored on save." />
+            <HelpPopoverButton detail="Auto-calculated from all quote lines and stored on save." />
           </div>
           <div className="mt-2 text-2xl font-mono font-bold text-sky-100 sm:text-3xl">
             {formatMoney(totalQuoted)}
@@ -188,7 +175,7 @@ export function ProjectQuoteFinancialsPanel({
         <div className={topMetricCardClass}>
           <div className="flex items-center justify-between gap-2 text-sm text-zinc-500">
             <span>Estimated internal costs</span>
-            <InfoHintButton detail="Sum of vendor materials, labor at cost/hr, taxes, and other basis costs." />
+            <HelpPopoverButton detail="Sum of vendor materials, labor at cost/hr, taxes, and other basis costs." />
           </div>
           <div className="mt-2 text-2xl font-mono font-bold text-zinc-200 sm:text-3xl">
             {formatMoney(totalQuotedCosts)}
@@ -197,7 +184,7 @@ export function ProjectQuoteFinancialsPanel({
         <div className={`${topMetricCardClass} border-sky-800/60 bg-sky-950/30`}>
           <div className="flex items-center justify-between gap-2 text-sm text-sky-400">
             <span>Estimated P&amp;L</span>
-            <InfoHintButton detail="Quote total minus estimated internal costs." />
+            <HelpPopoverButton detail="Quote total minus estimated internal costs." />
           </div>
           <div className="mt-2 text-2xl font-mono font-bold text-sky-200 sm:text-3xl">
             {formatMoney(estimatedPl)}
@@ -212,7 +199,7 @@ export function ProjectQuoteFinancialsPanel({
         </h4>
         <div className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
           <p>Vendor spend plus markup for customer pricing.</p>
-          <InfoHintButton detail="Internal cost is vendor spend. Customer line = basis × (1 + markup%)." />
+          <HelpPopoverButton detail="Internal cost is vendor spend. Customer line = basis × (1 + markup%)." />
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
@@ -275,7 +262,7 @@ export function ProjectQuoteFinancialsPanel({
         </h4>
         <div className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
           <p>Hours drive internal and customer labor lines.</p>
-          <InfoHintButton detail="Internal labor = hours × internal cost/hr. Customer labor = hours × sell/hr, with no markup %." />
+          <HelpPopoverButton detail="Internal labor = hours × internal cost/hr. Customer labor = hours × sell/hr, with no markup %." />
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
@@ -382,9 +369,12 @@ export function ProjectQuoteFinancialsPanel({
               key={basisKey}
               className="rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4"
             >
-              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                {title} (internal / cost basis)
-              </h4>
+              <div className="mb-3 flex items-center gap-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                  {title} (internal / cost basis)
+                </h4>
+                <HelpPopoverButton detail="Set an internal basis and markup %. Customer line is auto-calculated from those values." />
+              </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs text-zinc-500">
@@ -434,9 +424,12 @@ export function ProjectQuoteFinancialsPanel({
           );
         })}
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4">
-          <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">
-            Taxes &amp; fees (pass-through)
-          </h4>
+          <div className="mb-3 flex items-center gap-2">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              Taxes &amp; fees (pass-through)
+            </h4>
+            <HelpPopoverButton detail="Pass-through line: internal and customer values match, so no markup is applied." />
+          </div>
           <label className="mb-1 block text-xs text-zinc-500">
             Amount (internal = customer, no markup)
           </label>
@@ -504,23 +497,28 @@ export function ProjectActualsFinancialsPanel({
         <h2 className="text-xl font-semibold">Actuals (P&amp;L)</h2>
         <div className="mt-1 flex items-center gap-2 text-sm text-zinc-500">
           <p>Realized revenue and cost tracking.</p>
-          <InfoHintButton detail="Invoiced revenue and job costs as work completes. Labor cost follows hours × cost/hr when both are set." />
+          <HelpPopoverButton detail="Invoiced revenue and job costs as work completes. Labor cost follows hours × cost/hr when both are set." />
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 text-sm">
         <div className={topMetricCardClass}>
           <div className="flex items-center justify-between gap-2 text-sm text-zinc-500">
-            <span>Invoiced amount</span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-[11px]"
-              onClick={copyQuoteToInvoiced}
-            >
-              Copy quote
-            </Button>
+            <div className="flex items-center gap-2">
+              <span>Invoiced amount</span>
+              <HelpPopoverButton detail="Realized customer revenue for the job. Use Copy quote as a starting point, then adjust to actual invoiced value." />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={copyQuoteToInvoiced}
+              >
+                Copy quote
+              </Button>
+            </div>
           </div>
           <input
             type="text"
@@ -541,13 +539,19 @@ export function ProjectActualsFinancialsPanel({
           />
         </div>
         <div className={topMetricCardClass}>
-          <div className="text-sm text-zinc-500">Total actual costs</div>
+          <div className="flex items-center gap-2 text-sm text-zinc-500">
+            <span>Total actual costs</span>
+            <HelpPopoverButton detail="Sum of actual material, labor, engineering, equipment, logistics, and additional costs." />
+          </div>
           <div className="mt-2 text-2xl font-mono font-bold text-red-400 sm:text-3xl">
             {formatMoney(totalActualCosts)}
           </div>
         </div>
         <div className={`${topMetricCardClass} border-emerald-800/70 bg-emerald-950/30`}>
-          <div className="text-sm text-emerald-400">Realized P&amp;L</div>
+          <div className="flex items-center gap-2 text-sm text-emerald-400">
+            <span>Realized P&amp;L</span>
+            <HelpPopoverButton detail="Invoiced amount minus total actual costs. Margin is based on invoiced revenue." />
+          </div>
           <div className="mt-2 text-2xl font-mono font-bold text-emerald-300 sm:text-3xl">
             {formatMoney(pl)}
           </div>
@@ -556,9 +560,12 @@ export function ProjectActualsFinancialsPanel({
       </div>
 
       <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-          Actual labor (hours)
-        </h4>
+        <div className="flex items-center gap-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+            Actual labor (hours)
+          </h4>
+          <HelpPopoverButton detail="When both hours and cost/hr are set, actual labor cost is computed automatically from those values." />
+        </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs text-zinc-500">Hours</label>
