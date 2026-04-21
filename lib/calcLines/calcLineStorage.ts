@@ -7,6 +7,7 @@ import {
   type ProjectCalcLineRow,
   type ProjectCalcTapeRow,
 } from "@/lib/calcLines/types";
+import { formatRiversideDateWithMt } from "@/lib/time/riversideDisplay";
 import type { UnifiedTapeLine } from "@/lib/unifiedTapeTypes";
 
 function toError(err: unknown, fallback: string): Error {
@@ -21,12 +22,13 @@ function toError(err: unknown, fallback: string): Error {
 }
 
 function defaultTapeName(lines: UnifiedTapeLine[]): string {
+  const dateLabel = formatRiversideDateWithMt(new Date());
   const firstWeight = lines.find((line) => line.kind === "weight");
   if (firstWeight?.kind === "weight") {
     const material = firstWeight.item.materialName || "Material";
-    return `${material} tape ${new Date().toLocaleDateString("en-US")}`;
+    return `${material} tape ${dateLabel}`;
   }
-  return `Tape ${new Date().toLocaleDateString("en-US")}`;
+  return `Tape ${dateLabel}`;
 }
 
 export async function saveTapeToProject(

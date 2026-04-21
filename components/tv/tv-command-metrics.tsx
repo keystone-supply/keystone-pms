@@ -5,6 +5,7 @@ import { Activity, AlertTriangle } from "lucide-react";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import type { CommandBoardTVSummary } from "@/lib/dashboardMetrics";
 import { PIPELINE_STAGE_LABELS } from "@/lib/salesCommandBoardColumn";
+import { formatRiversideTimeWithMt } from "@/lib/time/riversideDisplay";
 import { cn } from "@/lib/utils";
 
 interface TVCommandMetricsProps {
@@ -65,10 +66,7 @@ export function TVCommandMetrics({ summary, className }: TVCommandMetricsProps) 
           <div className="text-right text-xs text-zinc-500">
             LAST UPDATED
             <div className="font-mono text-lg text-white tabular-nums">
-              {summary.lastUpdated.toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
+              {formatRiversideTimeWithMt(summary.lastUpdated)}
             </div>
           </div>
         </div>

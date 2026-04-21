@@ -105,8 +105,8 @@ export function composeProjectDocumentPdfInput(args: {
   vendor: VendorRow | null;
   customer: CustomerRow | null;
   defaultShipTo: CustomerShippingRow | null;
-  /** Row `version` from `project_documents`; PDF `REV.` uses `pdfRevFromDocumentVersion`. */
-  documentVersion?: number;
+  /** Immutable revision index for REV / filename `(vN)`. */
+  revisionIndex?: number;
 }): BuildProjectDocumentPdfInput {
   const company = getCompanyBlock();
   const fromParty =
@@ -243,8 +243,10 @@ export function composeProjectDocumentPdfInput(args: {
       }
       break;
     }
-    default:
-      toParty = { label: "To", name: "", lines: [] };
+    default: {
+      const exhaustiveKind: never = args.kind;
+      throw new Error(`Unhandled document kind: ${exhaustiveKind}`);
+    }
   }
 
   let quoteResolved: QuotePdfResolved | undefined;
@@ -282,7 +284,7 @@ export function composeProjectDocumentPdfInput(args: {
     toParty,
     toPartySecondary,
     meta: args.meta,
-    documentVersion: args.documentVersion,
+    revisionIndex: args.revisionIndex,
     quoteResolved,
   };
 }
@@ -297,7 +299,7 @@ export function generateProjectDocumentPdfBuffer(args: {
   vendor: VendorRow | null;
   customer: CustomerRow | null;
   defaultShipTo: CustomerShippingRow | null;
-  documentVersion?: number;
+  revisionIndex?: number;
 }): ArrayBuffer {
   const input = composeProjectDocumentPdfInput(args);
   return buildProjectDocumentPdf(input);

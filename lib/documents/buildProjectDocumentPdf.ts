@@ -19,6 +19,10 @@ import {
   formatPhysicalAddress,
   type CompanyBlock,
 } from "@/lib/documents/company";
+import {
+  formatRiversideDateLong,
+  formatRiversideDateStampMdY,
+} from "@/lib/documents/riversideTime";
 
 export type PdfProjectContext = {
   project_number: string;
@@ -56,8 +60,8 @@ export type BuildProjectDocumentPdfInput = {
   /** Optional second column under “to” (e.g. ship-to) */
   toPartySecondary?: PdfParty;
   meta: ProjectDocumentDraftMeta;
-  /** Export-time `project_documents.version` (before the post-export +1); PDF `REV.` via `pdfRevFromDocumentVersion`. */
-  documentVersion?: number;
+  /** Immutable document revision index (0-based). */
+  revisionIndex?: number;
   quoteResolved?: QuotePdfResolved;
 };
 
@@ -67,30 +71,22 @@ const PAGE_H = 279.4;
 const TERMS_LINE_HEIGHT = 3.5;
 const FOOTER_GAP = 16;
 
-/**
- * REV index (`REV. N` / OneDrive `(vN)`) for a PDF built with **export-time**
- * `documentVersion` (the row value **before** the post-export bump).
- * Examples: `1` → `0`, `2` → `1`.
- */
-export function pdfRevFromDocumentVersion(version?: number): number {
-  const v = version ?? 1;
-  return Math.max(0, v - 1);
+export function normalizeRevisionIndex(revisionIndex?: number): number {
+  if (typeof revisionIndex !== "number" || !Number.isFinite(revisionIndex)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(revisionIndex));
 }
 
-/**
- * REV / `(vK)` index of the **most recent** export, from **stored**
- * `project_documents.version` (after the usual `+1` bump following each export).
- * Matches the last PDF header and OneDrive suffix for that row.
- */
-export function lastExportedFileRevisionIndex(storedVersion?: number): number {
-  return pdfRevFromDocumentVersion((storedVersion ?? 1) - 1);
+export function formatRevisionSuffix(revisionIndex?: number): string {
+  return `(v${normalizeRevisionIndex(revisionIndex)})`;
 }
 
 export function formatPdfJobRevLine(
   projectNumber: string,
-  documentVersion?: number,
+  revisionIndex?: number,
 ): string {
-  return `${projectNumber} REV. ${pdfRevFromDocumentVersion(documentVersion)}`;
+  return `${projectNumber} REV. ${normalizeRevisionIndex(revisionIndex)}`;
 }
 
 function fmtMoney(n: number): string {
@@ -98,14 +94,6 @@ function fmtMoney(n: number): string {
     style: "currency",
     currency: "USD",
   }).format(n);
-}
-
-function fmtDateLong(d: Date): string {
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  }).format(d);
 }
 
 export async function fetchLogoDataUrl(kind?: ProjectDocumentKind): Promise<string | null> {
@@ -273,7 +261,7 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
   doc.text(
     formatPdfJobRevLine(
       input.project.project_number,
-      input.documentVersion,
+      input.revisionIndex,
     ),
     PAGE_W - MARGIN,
     jobRevY,
@@ -286,7 +274,7 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
   doc.text(`Doc No. ${input.documentNumber}`, PAGE_W - MARGIN, docNoY, { align: "right" });
   doc.setFontSize(8);
   doc.setTextColor(40, 40, 40);
-  doc.text(`Date: ${fmtDateLong(input.issuedDate)}`, PAGE_W - MARGIN, dateY, {
+  doc.text(`Date: ${formatRiversideDateLong(input.issuedDate)}`, PAGE_W - MARGIN, dateY, {
     align: "right",
   });
   y = Math.max(companyY + 20, dateY + 1.5, MARGIN + 32);
@@ -522,7 +510,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
   doc.text(
     formatPdfJobRevLine(
       input.project.project_number,
-      input.documentVersion,
+      input.revisionIndex,
     ),
     PAGE_W - MARGIN,
     jobRevY,
@@ -537,7 +525,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
   });
 
   doc.setFontSize(8);
-  doc.text(`Date: ${fmtDateLong(input.issuedDate)}`, PAGE_W - MARGIN, dateY, {
+  doc.text(`Date: ${formatRiversideDateLong(input.issuedDate)}`, PAGE_W - MARGIN, dateY, {
     align: "right",
   });
   rfqDateBaselineY = dateY;
@@ -848,13 +836,6 @@ export const DOCUMENT_KIND_FILE_CODE: Record<ProjectDocumentKind, string> = {
   purchase_order: "PO",
 };
 
-function formatLocalDateMdY(d: Date): string {
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const y = String(d.getFullYear());
-  return `${m}.${day}.${y}`;
-}
-
 function sanitizeProjectNameForFilename(raw: string): string {
   let s = raw
     .trim()
@@ -870,15 +851,17 @@ export function buildDocumentDownloadFilename(
   projectNumber: string,
   kind: ProjectDocumentKind,
   projectName: string,
+  revisionIndex?: number,
   issuedAt?: Date,
 ): string {
   const d = issuedAt ?? new Date();
-  const stamp = formatLocalDateMdY(d);
+  const stamp = formatRiversideDateStampMdY(d);
   const safeName = sanitizeProjectNameForFilename(projectName);
   const code = DOCUMENT_KIND_FILE_CODE[kind];
   const pn = String(projectNumber).replace(/\s+/g, "");
-  return `${pn}_${code}-${safeName}-${stamp}.pdf`.replace(
-    /[^a-zA-Z0-9._-]/g,
+  const revision = formatRevisionSuffix(revisionIndex);
+  return `${pn}_${code}-${safeName}-${stamp} ${revision}.pdf`.replace(
+    /[^a-zA-Z0-9._()\- ]/g,
     "",
   );
 }

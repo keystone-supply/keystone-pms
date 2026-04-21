@@ -23,17 +23,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { CustomerRow, CustomerStatus } from "@/lib/customerQueries";
+import { formatRiversideDateWithMt } from "@/lib/time/riversideDisplay";
 import { cn } from "@/lib/utils";
 
 function formatFollowUp(raw: string | null | undefined): string {
-  if (raw == null || raw === "") return "—";
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  }).format(d);
+  return formatRiversideDateWithMt(raw);
 }
 
 function statusBadgeClass(s: CustomerStatus): string {

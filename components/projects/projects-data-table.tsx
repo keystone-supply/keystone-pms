@@ -41,6 +41,10 @@ import {
   PIPELINE_STAGE_LABELS,
   boardColumnForProject,
 } from "@/lib/salesCommandBoardColumn";
+import {
+  formatRiversideDateWithMt,
+  riversideYear,
+} from "@/lib/time/riversideDisplay";
 import { cn } from "@/lib/utils";
 
 function formatUsd(n: number): string {
@@ -57,14 +61,7 @@ function formatPct(n: number | null): string {
 }
 
 function formatCreatedAt(raw: string | null | undefined): string {
-  if (raw == null || raw === "") return "—";
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  }).format(d);
+  return formatRiversideDateWithMt(raw);
 }
 
 function segmentLabel(p: DashboardProjectRow): string {
@@ -74,13 +71,9 @@ function segmentLabel(p: DashboardProjectRow): string {
   return "—";
 }
 
-/** Calendar year from `created_at` (local), or null if missing / invalid. */
+/** Calendar year from `created_at` in Riverside local time, or null if invalid. */
 function projectCreatedYear(p: DashboardProjectRow): number | null {
-  const raw = p.created_at;
-  if (raw == null || raw === "") return null;
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.getFullYear();
+  return riversideYear(p.created_at);
 }
 
 function compareProjectNumber(a: DashboardProjectRow, b: DashboardProjectRow): number {

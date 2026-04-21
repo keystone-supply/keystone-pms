@@ -9,6 +9,26 @@ function onedriveDebugLog(message: string) {
   }
 }
 
+function normalizeRevisionIndex(revisionIndex?: number): number {
+  if (typeof revisionIndex !== "number" || !Number.isFinite(revisionIndex)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(revisionIndex));
+}
+
+export function buildVersionedPdfFilename(
+  filename: string,
+  revisionIndex?: number,
+): string {
+  const normalizedFilename = filename.replace(/ \(v\d+\)\.pdf$/i, ".pdf");
+  if (!normalizedFilename.toLowerCase().endsWith(".pdf")) {
+    throw new Error("Filename must end with .pdf");
+  }
+  const baseNoExt = normalizedFilename.slice(0, -4);
+  const rev = normalizeRevisionIndex(revisionIndex);
+  return `${baseNoExt} (v${rev}).pdf`;
+}
+
 export async function createProjectFolders(
   accessToken: string,
   customer: string,
@@ -297,6 +317,7 @@ export async function uploadPdfToDocs(
   projectNumber: string,
   projectName: string,
   filename: string,
+  revisionIndex: number,
   content: ArrayBuffer | Uint8Array,
 ): Promise<string> {
   const headers = {
@@ -328,41 +349,7 @@ export async function uploadPdfToDocs(
   const docsFolderPath = `${currentPath}/${projectNumber}_DOCS`;
   await ensureFolder(headers, docsFolderPath);
 
-  const normalizedFilename = filename.replace(/ \(v\d+\)\.pdf$/i, ".pdf");
-  if (!normalizedFilename.toLowerCase().endsWith(".pdf")) {
-    throw new Error("Filename must end with .pdf");
-  }
-  const baseNoExt = normalizedFilename.slice(0, -4);
-  const plainFilename = normalizedFilename;
-  const listUrl = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(docsFolderPath)}:/children`;
-  const listRes = await fetch(listUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!listRes.ok) {
-    const listText = await listRes.text();
-    throw new Error(
-      `Failed to list ${docsFolderPath}: ${listRes.status} ${listText}`,
-    );
-  }
-  const listData = await listRes.json();
-  /** Highest occupied slot: legacy `base.pdf` counts as 0; `base (vN).pdf` counts as N. Next upload is (v{max+1}). */
-  let maxOccupied = -1;
-  if (listData.value) {
-    for (const item of listData.value) {
-      if (item.name === plainFilename) {
-        maxOccupied = Math.max(maxOccupied, 0);
-      } else if (item.name.toLowerCase().endsWith(".pdf")) {
-        const escapedBase = baseNoExt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(`^${escapedBase} \\(v(\\d+)\\)\\.pdf$`, "i");
-        const match = item.name.match(regex);
-        if (match) {
-          maxOccupied = Math.max(maxOccupied, parseInt(match[1], 10));
-        }
-      }
-    }
-  }
-  const nextVersion = maxOccupied + 1;
-  const finalFilename = `${baseNoExt} (v${nextVersion}).pdf`;
+  const finalFilename = buildVersionedPdfFilename(filename, revisionIndex);
   const fullPath = `${docsFolderPath}/${finalFilename}`;
   const url = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(fullPath)}:/content`;
 

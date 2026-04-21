@@ -2,6 +2,7 @@ import Link from "next/link";
 import { DollarSign, FolderKanban } from "lucide-react";
 
 import type { DashboardMetrics } from "@/lib/dashboardMetrics";
+import { formatRiversideDateWithMt } from "@/lib/time/riversideDisplay";
 
 import { MetricTile } from "./metric-tile";
 
@@ -14,14 +15,7 @@ function formatUsd(n: number): string {
 }
 
 function formatCreatedAt(raw: string | null): string {
-  if (raw == null || raw === "") return "—";
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  }).format(d);
+  return formatRiversideDateWithMt(raw);
 }
 
 type SecondaryPanelsProps = {

@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeft, LogOut, Users } from "lucide-react";
+import { formatRiversideDateTimeWithMt } from "@/lib/time/riversideDisplay";
 
 type DashboardHeaderProps = {
   userName: string | null | undefined;
@@ -18,11 +19,7 @@ type DashboardHeaderProps = {
 };
 
 function formatUpdated(d: Date | null): string {
-  if (!d) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(d);
+  return formatRiversideDateTimeWithMt(d);
 }
 
 const DEFAULT_TITLE = "Operations dashboard";

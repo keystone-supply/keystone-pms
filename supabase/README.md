@@ -242,9 +242,11 @@ If strict cutover causes blocking issues:
    - Add migration SQL under `supabase/migrations`.
    - Never rely on dashboard-only changes without capturing SQL in repo.
    - Create one migration file per schema intent.
+   - Use `npm run supabase:migration:new -- <name>` for migration file creation.
+     This wrapper forces non-interactive stdin handling and bounded runtime.
 2. **Apply and verify**
-   - Run `npx supabase db push --linked --include-all --yes`.
-   - Run `npx supabase migration list --linked` and confirm local/remote alignment.
+   - Run `npm run db:push`.
+   - Run `npm run supabase:migration:list:linked` and confirm local/remote alignment.
 3. **MCP boundaries**
    - Use MCP for inspection/diagnostics (list/read/advisors/logs) by default.
    - Do not use MCP `apply_migration` for routine schema mutations.
@@ -252,12 +254,12 @@ If strict cutover causes blocking issues:
      and run migration repair to restore deterministic history.
 4. **If drift exists (MCP/manual apply mismatch)**
    - Map remote-only versions to canonical local migration files.
-   - Use `npx supabase migration repair --linked --status reverted <remote_version...> --yes`
+   - Use `./node_modules/.bin/supabase --agent no migration repair --linked --status reverted <remote_version...> --yes --workdir .`
      for superseded remote-only versions.
-   - Use `npx supabase migration repair --linked --status applied <local_version...> --yes`
+   - Use `./node_modules/.bin/supabase --agent no migration repair --linked --status applied <local_version...> --yes --workdir .`
      for canonical replacements that already exist in schema.
-   - Re-run `npx supabase db push --linked --include-all --yes`.
-   - Re-run `npx supabase migration list --linked` until fully deterministic.
+   - Re-run `npm run db:push`.
+   - Re-run `npm run supabase:migration:list:linked` until fully deterministic.
 5. **Security and guard checks before merge**
    - `npm run test:rbac-api-guards`
    - `npm run test:rbac-sql`
@@ -268,7 +270,7 @@ If strict cutover causes blocking issues:
 
 ## Accidental Empty-Stub Incident Runbook
 
-If `supabase migration new` hangs, is interrupted, or creates duplicate timestamped stubs:
+If migration file creation hangs, is interrupted, or creates duplicate timestamped stubs:
 
 1. **Treat as partial failure immediately**
    - Do not run `db push` yet.
@@ -277,17 +279,52 @@ If `supabase migration new` hangs, is interrupted, or creates duplicate timestam
    - Remove unintended local stubs before any apply.
 3. **If accidental stubs were already pushed**
    - Mark accidental versions reverted:
-     - `npx supabase migration repair --linked --status reverted <accidental_versions...> --yes`
+     - `./node_modules/.bin/supabase --agent no migration repair --linked --status reverted <accidental_versions...> --yes --workdir .`
    - Re-run:
-     - `npx supabase migration list --linked`
+     - `npm run supabase:migration:list:linked`
 4. **Restore canonical state**
    - Keep a single canonical migration file for the intended change.
-   - Run `npx supabase db push --linked --include-all --yes`.
-   - Re-run `npx supabase migration list --linked` and confirm deterministic alignment.
+   - Run `npm run db:push`.
+   - Re-run `npm run supabase:migration:list:linked` and confirm deterministic alignment.
 
 Safe-creation protocol:
 - create one migration file per intent
 - verify expected new filename before editing
 - never push with empty unintended stub files present
+
+## Hang Triage: Local vs Linked Commands
+
+Supabase migration failures in this repo fall into two distinct classes:
+
+1. **Local file-creation hangs (`migration new`)**
+   - Symptom:
+     - Output includes `Created new migration at supabase/migrations/...sql`
+     - Process does not exit cleanly in non-interactive shells.
+   - Cause:
+     - CLI can wait on non-interactive stdin/TTY lifecycle.
+   - Fix:
+     - Use `npm run supabase:migration:new -- <name>` (wrapper enforces closed stdin and timeout).
+2. **Linked remote hangs (`db push`, `migration list`, `migration repair`)**
+   - Symptom:
+     - Command stalls while initializing login role or connecting to remote.
+   - Cause:
+     - Supabase auth/session/link/pooler/network path issues.
+   - Fix:
+     - Run `npm run supabase:preflight` first (CLI version + linked project + auth check).
+     - If preflight fails, re-run `./node_modules/.bin/supabase login` then
+       `./node_modules/.bin/supabase link --project-ref <ref>`.
+
+## Non-Interactive Repro Checklist
+
+Use this matrix to validate behavior after environment upgrades:
+
+1. `npm run supabase:migration:new -- repro_safe_wrapper`
+   - Expected: exits cleanly with `supabase:migration:new:safe: ok (...)`.
+2. `./node_modules/.bin/supabase --agent no migration new repro_raw_local --workdir . --yes`
+   - Expected: file creation succeeds; may intermittently linger in non-interactive shells.
+3. `npx --yes supabase migration new repro_npx_path`
+   - Expected: highest variance (npx resolution + non-interactive behavior); avoid for agent workflows.
+
+Always delete repro files after validating the matrix.
 
 Last updated: 2026-04-21

@@ -75,7 +75,7 @@ test("BOL consignee uses customer and shipping address", () => {
     vendor: null,
     customer,
     defaultShipTo: shipping,
-    documentVersion: 1,
+    revisionIndex: 0,
   });
 
   assert.equal(input.toParty.label, "Consignee");
@@ -98,7 +98,7 @@ test("packing list consignee uses customer and shipping address", () => {
     vendor: null,
     customer,
     defaultShipTo: shipping,
-    documentVersion: 1,
+    revisionIndex: 0,
   });
 
   assert.equal(input.toParty.label, "Consignee");

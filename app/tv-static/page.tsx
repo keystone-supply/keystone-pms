@@ -8,6 +8,7 @@ import {
 } from "@/lib/dashboardMetrics";
 import { canViewShopTv } from "@/lib/auth/roles";
 import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
+import { formatRiversideTimeWithMt } from "@/lib/time/riversideDisplay";
 import { fetchTvSummary } from "@/lib/tv/fetchTvSummary";
 
 export default function TVStaticPage() {
@@ -410,7 +411,7 @@ export default function TVStaticPage() {
         fontSize: "13px",
         fontFamily: "monospace"
       }}>
-        Updated {summary.lastUpdated.toLocaleTimeString()} • Keystone PMS
+        Updated {formatRiversideTimeWithMt(summary.lastUpdated)} • Keystone PMS
       </div>
 
       <style jsx global>{`

@@ -15,10 +15,10 @@
 
 ## Required Commands Per Schema Change
 
-1. `supabase migration new <name>`
+1. `npm run supabase:migration:new -- <name>`
 2. edit one migration SQL file under `supabase/migrations/`
 3. `npm run db:push`
-4. `npx supabase migration list --linked`
+4. `npm run supabase:migration:list:linked`
 5. `npm run security:db-schema-guard`
 6. `npm run test:rbac-api-guards`
 7. `npm run test:rbac-sql`
@@ -28,12 +28,12 @@
 
 1. Map remote-only versions to canonical local migration files.
 2. Revert superseded remote-only versions:
-   - `npx supabase migration repair --linked --status reverted <versions...> --yes`
+   - `./node_modules/.bin/supabase --agent no migration repair --linked --status reverted <versions...> --yes --workdir .`
 3. Mark canonical replacements applied when schema already matches:
-   - `npx supabase migration repair --linked --status applied <versions...> --yes`
+   - `./node_modules/.bin/supabase --agent no migration repair --linked --status applied <versions...> --yes --workdir .`
 4. Re-run:
-   - `npx supabase db push --linked --include-all --yes`
-   - `npx supabase migration list --linked`
+   - `npm run db:push`
+   - `npm run supabase:migration:list:linked`
 
 ## Empty-Stub Incident Response
 

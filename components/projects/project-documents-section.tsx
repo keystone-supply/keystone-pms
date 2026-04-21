@@ -8,6 +8,7 @@ import {
   Eye,
   FileText,
   HardDriveDownload,
+  History,
   Plus,
 } from "lucide-react";
 
@@ -31,6 +32,10 @@ import type {
 import { milestonePatchForDocumentExport } from "@/lib/documentMilestones";
 import {
   PROJECT_DOCUMENT_SELECT,
+  PROJECT_DOCUMENT_REVISION_SELECT,
+  buildRevisionHistoryLabel,
+  pickRevisionForExport,
+  type ProjectDocumentRevisionRow,
   type ProjectDocumentRow,
 } from "@/lib/projectDocumentDb";
 import { buildDefaultDocumentMetaFromProject } from "@/lib/projectDocumentDefaults";
@@ -40,9 +45,11 @@ import { VENDOR_LIST_SELECT, type VendorRow } from "@/lib/vendorQueries";
 import {
   buildDocumentDownloadFilename,
   fetchLogoDataUrl,
-  lastExportedFileRevisionIndex,
+  formatRevisionSuffix,
+  normalizeRevisionIndex,
 } from "@/lib/documents/buildProjectDocumentPdf";
 import { generateProjectDocumentPdfBuffer } from "@/lib/documents/composePdfInput";
+import { formatRiversideDateStampYmd } from "@/lib/documents/riversideTime";
 import { uploadPdfToDocs } from "@/lib/onedrive";
 import {
   buildQuoteFinancialsSnapshot,
@@ -104,7 +111,7 @@ function suggestDocNumber(project: ProjectRow, kind: ProjectDocumentKind): strin
               : kind === "packing_list"
                 ? "PK"
                 : "DOC";
-  return `${prefix}-${pn}-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
+  return `${prefix}-${pn}-${formatRiversideDateStampYmd(new Date())}`;
 }
 
 export function ProjectDocumentsSection({
@@ -140,6 +147,11 @@ export function ProjectDocumentsSection({
 
   const [exportOpen, setExportOpen] = useState(false);
   const [exportingRow, setExportingRow] = useState<ProjectDocumentRow | null>(null);
+  const [exportRevisions, setExportRevisions] = useState<ProjectDocumentRevisionRow[]>([]);
+  const [selectedExportRevisionIndex, setSelectedExportRevisionIndex] = useState<number | null>(
+    null,
+  );
+  const [exportRevisionsLoading, setExportRevisionsLoading] = useState(false);
   const [exportMethod, setExportMethod] = useState<"download" | "onedrive">("download");
   const [exportBusy, setExportBusy] = useState(false);
   const [exportError, setExportError] = useState("");
@@ -154,6 +166,14 @@ export function ProjectDocumentsSection({
   const [calcMarkupPct, setCalcMarkupPct] = useState<number>(
     project.material_markup_pct ?? 30,
   );
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
+  const [rowRevisionCache, setRowRevisionCache] = useState<
+    Record<string, ProjectDocumentRevisionRow[]>
+  >({});
+  const [rowRevisionLoading, setRowRevisionLoading] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [rowRevisionError, setRowRevisionError] = useState<Record<string, string>>({});
 
   const defaultShipTo = useMemo(() => {
     const addrs = crm?.customer_shipping_addresses;
@@ -250,7 +270,6 @@ export function ProjectDocumentsSection({
       const payload = {
         project_id: projectId,
         kind,
-        status: "draft",
         number: docNumber.trim() || null,
         metadata: metaToSave,
         vendor_id:
@@ -259,18 +278,27 @@ export function ProjectDocumentsSection({
             : null,
       };
       if (editingId) {
-        const { error } = await supabase
-          .from("project_documents")
-          .update({
-            kind: payload.kind,
-            number: payload.number,
-            metadata: payload.metadata,
-            vendor_id: payload.vendor_id,
-          })
-          .eq("id", editingId);
+        const { error } = await supabase.rpc(
+          "append_project_document_revision",
+          {
+            p_document_id: editingId,
+            p_number: payload.number,
+            p_metadata: payload.metadata,
+            p_vendor_id: payload.vendor_id,
+          },
+        );
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("project_documents").insert(payload);
+        const { error } = await supabase.rpc(
+          "create_project_document_with_initial_revision",
+          {
+            p_project_id: payload.project_id,
+            p_kind: payload.kind,
+            p_number: payload.number,
+            p_metadata: payload.metadata,
+            p_vendor_id: payload.vendor_id,
+          },
+        );
         if (error) throw error;
       }
 
@@ -442,35 +470,43 @@ export function ProjectDocumentsSection({
     setExportBusy(true);
     setExportError("");
     try {
+      const selectedRevision = pickRevisionForExport(
+        exportingRow,
+        exportRevisions,
+        selectedExportRevisionIndex,
+      );
       const logo = await fetchLogoDataUrl(exportingRow.kind);
       const vendorForRow =
         (exportingRow.kind === "rfq" ||
           exportingRow.kind === "purchase_order") &&
-        exportingRow.vendor_id
-          ? (vendors.find((v) => v.id === exportingRow.vendor_id) ?? null)
+        selectedRevision.vendorId
+          ? (vendors.find((v) => v.id === selectedRevision.vendorId) ?? null)
           : null;
       const issuedDate = new Date();
+      const revisionIndex = normalizeRevisionIndex(selectedRevision.revisionIndex);
       const buffer = generateProjectDocumentPdfBuffer({
         kind: exportingRow.kind,
-        documentNumber: exportingRow.number ?? docNumber,
+        documentNumber:
+          selectedRevision.number ??
+          exportingRow.number ??
+          suggestDocNumber(project, exportingRow.kind),
         issuedDate,
         logoDataUrl: logo,
         project,
-        meta: normalizeMeta(exportingRow.metadata),
+        meta: normalizeMeta(selectedRevision.metadata),
         vendor: vendorForRow,
         customer: crm,
         defaultShipTo,
-        documentVersion: exportingRow.version ?? 1,
+        revisionIndex,
       });
 
       const filename = buildDocumentDownloadFilename(
         String(project.project_number ?? "JOB"),
         exportingRow.kind,
         project.project_name ?? "",
+        revisionIndex,
         issuedDate,
       );
-
-      const nextVersion = (exportingRow.version ?? 1) + 1;
 
       if (exportMethod === "download") {
         const blob = new Blob([buffer], { type: "application/pdf" });
@@ -480,11 +516,18 @@ export function ProjectDocumentsSection({
         a.download = filename;
         a.click();
         URL.revokeObjectURL(url);
-        const { error: verErr } = await supabase
-          .from("project_documents")
-          .update({ version: nextVersion })
-          .eq("id", exportingRow.id);
-        if (verErr) throw verErr;
+        const { error: exportErr } = await supabase.rpc(
+          "mark_project_document_revision_exported",
+          {
+            p_document_id: exportingRow.id,
+            p_revision_index: revisionIndex,
+            p_export_channel: "download",
+            p_pdf_path: null,
+            p_filename: filename,
+            p_issued_at: issuedDate.toISOString(),
+          },
+        );
+        if (exportErr) throw exportErr;
       } else {
         const freshSessionRes = await fetch("/api/auth/session");
         const freshSession = await freshSessionRes.json();
@@ -496,13 +539,21 @@ export function ProjectDocumentsSection({
           String(project.project_number ?? ""),
           project.project_name ?? "",
           filename,
+          revisionIndex,
           buffer,
         );
-        const { error: upErr } = await supabase
-          .from("project_documents")
-          .update({ pdf_path: path, version: nextVersion })
-          .eq("id", exportingRow.id);
-        if (upErr) throw upErr;
+        const { error: exportErr } = await supabase.rpc(
+          "mark_project_document_revision_exported",
+          {
+            p_document_id: exportingRow.id,
+            p_revision_index: revisionIndex,
+            p_export_channel: "onedrive",
+            p_pdf_path: path,
+            p_filename: filename,
+            p_issued_at: issuedDate.toISOString(),
+          },
+        );
+        if (exportErr) throw exportErr;
         if (workspace) {
           workspace.requestFilesSync(filename);
           workspace.focus("files");
@@ -531,12 +582,52 @@ export function ProjectDocumentsSection({
     }
   };
 
-  const openExportFor = (r: ProjectDocumentRow) => {
+  const loadRevisionHistoryForRow = useCallback(
+    async (documentId: string): Promise<ProjectDocumentRevisionRow[]> => {
+      const cached = rowRevisionCache[documentId];
+      if (cached) return cached;
+      setRowRevisionLoading((prev) => ({ ...prev, [documentId]: true }));
+      setRowRevisionError((prev) => ({ ...prev, [documentId]: "" }));
+      const { data, error } = await supabase
+        .from("project_document_revisions")
+        .select(PROJECT_DOCUMENT_REVISION_SELECT)
+        .eq("document_id", documentId)
+        .order("revision_index", { ascending: false });
+      if (error) {
+        setRowRevisionLoading((prev) => ({ ...prev, [documentId]: false }));
+        setRowRevisionError((prev) => ({ ...prev, [documentId]: error.message }));
+        return [];
+      }
+      const revisions = (data ?? []) as ProjectDocumentRevisionRow[];
+      setRowRevisionCache((prev) => ({ ...prev, [documentId]: revisions }));
+      setRowRevisionLoading((prev) => ({ ...prev, [documentId]: false }));
+      return revisions;
+    },
+    [rowRevisionCache, supabase],
+  );
+
+  const openExportFor = async (
+    r: ProjectDocumentRow,
+    preferredRevisionIndex?: number,
+  ) => {
     setExportingRow(r);
+    const defaultRevision = normalizeRevisionIndex(r.current_revision_index);
+    setSelectedExportRevisionIndex(
+      preferredRevisionIndex == null
+        ? defaultRevision
+        : normalizeRevisionIndex(preferredRevisionIndex),
+    );
+    setExportRevisionsLoading(true);
     setExportMethod("download");
     setExportError("");
     setUpdateMilestones(false);
     setExportOpen(true);
+    const revisions = await loadRevisionHistoryForRow(r.id);
+    setExportRevisions(revisions);
+    if (revisions.length === 0) {
+      setExportError((prev) => prev || "No revisions found for this document.");
+    }
+    setExportRevisionsLoading(false);
   };
 
   const quickPreview = async (r: ProjectDocumentRow) => {
@@ -555,13 +646,89 @@ export function ProjectDocumentsSection({
             : null,
         customer: crm,
         defaultShipTo,
-        documentVersion: r.version ?? 1,
+        revisionIndex: normalizeRevisionIndex(r.current_revision_index),
       });
       const blob = new Blob([buffer], { type: "application/pdf" });
       window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
     } catch {
       /* ignore */
     }
+  };
+
+  const previewSelectedRevision = async () => {
+    if (!exportingRow) return;
+    try {
+      const selectedRevision = pickRevisionForExport(
+        exportingRow,
+        exportRevisions,
+        selectedExportRevisionIndex,
+      );
+      const logo = await fetchLogoDataUrl(exportingRow.kind);
+      const vendorForRow =
+        (exportingRow.kind === "rfq" ||
+          exportingRow.kind === "purchase_order") &&
+        selectedRevision.vendorId
+          ? (vendors.find((v) => v.id === selectedRevision.vendorId) ?? null)
+          : null;
+      const buffer = generateProjectDocumentPdfBuffer({
+        kind: exportingRow.kind,
+        documentNumber:
+          selectedRevision.number ??
+          exportingRow.number ??
+          suggestDocNumber(project, exportingRow.kind),
+        issuedDate: new Date(),
+        logoDataUrl: logo,
+        project,
+        meta: normalizeMeta(selectedRevision.metadata),
+        vendor: vendorForRow,
+        customer: crm,
+        defaultShipTo,
+        revisionIndex: normalizeRevisionIndex(selectedRevision.revisionIndex),
+      });
+      const blob = new Blob([buffer], { type: "application/pdf" });
+      window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const previewRevisionFromHistory = async (
+    row: ProjectDocumentRow,
+    revision: ProjectDocumentRevisionRow,
+  ) => {
+    try {
+      const logo = await fetchLogoDataUrl(row.kind);
+      const picked = pickRevisionForExport(row, [revision], revision.revision_index);
+      const vendorForRow =
+        (row.kind === "rfq" || row.kind === "purchase_order") && picked.vendorId
+          ? (vendors.find((v) => v.id === picked.vendorId) ?? null)
+          : null;
+      const buffer = generateProjectDocumentPdfBuffer({
+        kind: row.kind,
+        documentNumber: picked.number ?? row.number ?? suggestDocNumber(project, row.kind),
+        issuedDate: new Date(),
+        logoDataUrl: logo,
+        project,
+        meta: normalizeMeta(picked.metadata),
+        vendor: vendorForRow,
+        customer: crm,
+        defaultShipTo,
+        revisionIndex: picked.revisionIndex,
+      });
+      const blob = new Blob([buffer], { type: "application/pdf" });
+      window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const toggleHistoryForRow = async (row: ProjectDocumentRow) => {
+    if (expandedHistoryId === row.id) {
+      setExpandedHistoryId(null);
+      return;
+    }
+    setExpandedHistoryId(row.id);
+    await loadRevisionHistoryForRow(row.id);
   };
 
   return (
@@ -592,7 +759,9 @@ export function ProjectDocumentsSection({
       ) : (
         <ul className="space-y-3">
           {rows.map((r) => {
-            const fileRev = lastExportedFileRevisionIndex(r.version);
+            const currentRevision = normalizeRevisionIndex(
+              r.current_revision_index,
+            );
             return (
             <li
               key={r.id}
@@ -605,7 +774,8 @@ export function ProjectDocumentsSection({
                     {DOCUMENT_KIND_LABEL[r.kind]}
                   </p>
                   <p className="font-mono text-sm text-zinc-400">
-                    {r.number ?? "—"} · REV. {fileRev} (v{fileRev})
+                    {r.number ?? "—"} · REV. {currentRevision}{" "}
+                    {formatRevisionSuffix(currentRevision)}
                     {r.pdf_path ? (
                       <span className="ml-2 text-emerald-500/90">· file saved</span>
                     ) : null}
@@ -657,15 +827,106 @@ export function ProjectDocumentsSection({
                 </Button>
                 <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => void toggleHistoryForRow(r)}
+                >
+                  <History className="size-4" />
+                  {expandedHistoryId === r.id ? "Hide history" : "Show history"}
+                </Button>
+                <Button
+                  type="button"
                   size="sm"
                   className="gap-1"
                   disabled={!canManageDocuments}
-                  onClick={() => openExportFor(r)}
+                  onClick={() => void openExportFor(r)}
                 >
                   <HardDriveDownload className="size-4" />
                   Export
                 </Button>
               </div>
+              {expandedHistoryId === r.id ? (
+                <div className="mt-3 w-full rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
+                  <p className="text-xs font-medium uppercase text-zinc-500">
+                    Revision history
+                  </p>
+                  {rowRevisionLoading[r.id] ? (
+                    <p className="mt-2 text-sm text-zinc-400">Loading revisions…</p>
+                  ) : rowRevisionError[r.id] ? (
+                    <p className="mt-2 text-sm text-red-400">{rowRevisionError[r.id]}</p>
+                  ) : (rowRevisionCache[r.id] ?? []).length === 0 ? (
+                    <p className="mt-2 text-sm text-zinc-400">No revisions found.</p>
+                  ) : (
+                    <div className="mt-2 max-h-44 space-y-2 overflow-y-auto pr-1">
+                      {[...(rowRevisionCache[r.id] ?? [])]
+                        .sort((a, b) => {
+                          const rank = (rev: ProjectDocumentRevisionRow): number => {
+                            if (rev.revision_index === currentRevision) return 0;
+                            if (rev.state === "exported") return 1;
+                            return 2;
+                          };
+                          const rankDiff = rank(a) - rank(b);
+                          if (rankDiff !== 0) return rankDiff;
+                          return b.revision_index - a.revision_index;
+                        })
+                        .map((rev) => (
+                        <div
+                          key={rev.id}
+                          className={`flex flex-col gap-2 rounded-lg border px-3 py-2 sm:flex-row sm:items-center sm:justify-between ${
+                            rev.revision_index === currentRevision
+                              ? "border-sky-500/70 bg-sky-950/20"
+                              : "border-zinc-800 bg-zinc-950/60"
+                          }`}
+                        >
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-mono text-sm text-zinc-200">
+                                {buildRevisionHistoryLabel(rev)}
+                              </p>
+                              {rev.revision_index === currentRevision ? (
+                                <span className="rounded-full border border-sky-500/60 bg-sky-500/20 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-sky-300 uppercase">
+                                  Active
+                                </span>
+                              ) : null}
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${
+                                  rev.state === "exported"
+                                    ? "border border-emerald-500/60 bg-emerald-500/15 text-emerald-300"
+                                    : "border border-amber-500/60 bg-amber-500/15 text-amber-300"
+                                }`}
+                              >
+                                {rev.state}
+                              </span>
+                            </div>
+                            <p className="text-xs text-zinc-500">
+                              {rev.number_snapshot ?? "—"}{" "}
+                              {rev.filename ? `· ${rev.filename}` : ""}
+                            </p>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void previewRevisionFromHistory(r, rev)}
+                            >
+                              Preview
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => void openExportFor(r, rev.revision_index)}
+                            >
+                              Export REV {rev.revision_index}
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </li>
             );
           })}
@@ -1239,6 +1500,37 @@ export function ProjectDocumentsSection({
               </button>
             </div>
 
+            <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+              <p className="text-xs font-medium uppercase text-zinc-500">
+                Revision history
+              </p>
+              {exportRevisionsLoading ? (
+                <p className="mt-2 text-sm text-zinc-400">Loading revisions…</p>
+              ) : exportRevisions.length === 0 ? (
+                <p className="mt-2 text-sm text-zinc-400">
+                  No saved revisions found. Export uses current draft.
+                </p>
+              ) : (
+                <div className="mt-2 max-h-40 space-y-1 overflow-y-auto pr-1">
+                  {exportRevisions.map((rev) => (
+                    <label
+                      key={rev.id}
+                      className="flex cursor-pointer items-center justify-between rounded-lg border border-zinc-800 px-3 py-2 text-sm text-zinc-200 hover:border-zinc-700"
+                    >
+                      <span className="pr-3">{buildRevisionHistoryLabel(rev)}</span>
+                      <input
+                        type="radio"
+                        name="export-revision"
+                        checked={selectedExportRevisionIndex === rev.revision_index}
+                        onChange={() => setSelectedExportRevisionIndex(rev.revision_index)}
+                        className="size-4 rounded border-zinc-600"
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm text-zinc-300 select-none">
               <input
                 type="checkbox"
@@ -1255,6 +1547,14 @@ export function ProjectDocumentsSection({
             ) : null}
 
             <div className="mt-6 flex gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                className="flex-1"
+                onClick={() => void previewSelectedRevision()}
+              >
+                Preview selected REV
+              </Button>
               <Button
                 type="button"
                 variant="outline"

@@ -426,7 +426,7 @@ export default function ProjectDetail() {
           <div className="mt-16 text-center text-lg text-zinc-400">Project not found</div>
         ) : (
           <div className="mx-auto mt-10 max-w-[1700px]">
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-800/90 bg-zinc-900/55 p-3">
               <Button type="button" variant="outline" asChild>
                 <Link href="/projects">All projects</Link>
               </Button>

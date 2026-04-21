@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FileUp, RefreshCw, ExternalLink, FileWarning } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import Image from "next/image";
@@ -10,7 +10,12 @@ import { Badge } from "@/components/ui/badge";
 import { parseDxfToShapes } from "@/lib/parseDxf";
 import type { ProjectFileRow, ProjectFolderSlot } from "@/lib/projectFiles";
 import { useProjectWorkspaceOptional } from "@/lib/projectWorkspaceContext";
-import { buildPdfPageNumbers } from "@/lib/files/pdfPreview";
+import {
+  buildPdfPageNumbers,
+  getPdfPreviewPageClassName,
+  getPdfPreviewPageWidth,
+  getPdfPreviewRenderConfig,
+} from "@/lib/files/pdfPreview";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -106,6 +111,21 @@ export function ProjectFilesPanel({
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
+  const pdfViewportRef = useRef<HTMLDivElement | null>(null);
+  const [pdfViewportWidth, setPdfViewportWidth] = useState<number | null>(null);
+  const pdfRenderConfig = getPdfPreviewRenderConfig();
+  const pdfPageClassName = getPdfPreviewPageClassName();
+  const pdfPageWidth = getPdfPreviewPageWidth(pdfViewportWidth);
+
+  useEffect(() => {
+    if (!pdfViewportRef.current) return;
+    const node = pdfViewportRef.current;
+    const updateWidth = () => setPdfViewportWidth(node.clientWidth);
+    updateWidth();
+    const observer = new ResizeObserver(() => updateWidth());
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   const selected = useMemo(
     () => files.find((file) => file.id === selectedFileId && !file.is_folder) ?? null,
@@ -422,22 +442,33 @@ export function ProjectFilesPanel({
                   className="max-h-[640px] w-full rounded-xl border border-zinc-800 object-contain"
                 />
               ) : preview?.mimeType === "application/pdf" ? (
-                <div className="overflow-auto rounded-xl border border-zinc-800 bg-zinc-900/50 p-2">
-                  <Document
-                    file={preview.url}
-                    onLoadSuccess={({ numPages }) => {
-                      setPdfPageCount(numPages);
-                    }}
-                    onLoadError={(error) => {
-                      setPreviewError(error.message);
-                    }}
-                  >
-                    <div className="space-y-3">
-                      {buildPdfPageNumbers(pdfPageCount).map((pageNumber) => (
-                        <Page key={pageNumber} pageNumber={pageNumber} width={900} />
-                      ))}
-                    </div>
-                  </Document>
+                <div
+                  ref={pdfViewportRef}
+                  className="overflow-auto rounded-xl border border-zinc-800 bg-zinc-900/50 p-2"
+                >
+                  <div className="mx-auto w-fit max-w-full">
+                    <Document
+                      file={preview.url}
+                      onLoadSuccess={({ numPages }) => {
+                        setPdfPageCount(numPages);
+                      }}
+                      onLoadError={(error) => {
+                        setPreviewError(error.message);
+                      }}
+                    >
+                      <div className="space-y-3">
+                        {buildPdfPageNumbers(pdfPageCount).map((pageNumber) => (
+                          <Page
+                            key={pageNumber}
+                            pageNumber={pageNumber}
+                            width={pdfPageWidth}
+                            className={pdfPageClassName}
+                            {...pdfRenderConfig}
+                          />
+                        ))}
+                      </div>
+                    </Document>
+                  </div>
                 </div>
               ) : preview?.url ? (
                 <a

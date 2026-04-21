@@ -14,6 +14,7 @@ import {
   canRunNesting,
   type AppCapabilitySet,
 } from "@/lib/auth/roles";
+import { formatRiversideDateWithMt } from "@/lib/time/riversideDisplay";
 import { svgPathToNestShape } from "@/lib/svgPathToOutline";
 import { cn } from "@/lib/utils";
 
@@ -41,14 +42,7 @@ function formatUsd(n: number): string {
 }
 
 function formatShortDate(raw: string | null): string {
-  if (raw == null || raw === "") return "—";
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  }).format(d);
+  return formatRiversideDateWithMt(raw);
 }
 
 function formatSheetDims(sheet: DashboardSheetRecord): string {

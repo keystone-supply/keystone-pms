@@ -1,7 +1,14 @@
 #!/usr/bin/env node
-import { execSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const MIN_VERSION = "2.81.3";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ROOT = path.join(__dirname, "..", "..");
+const LOCAL_SUPABASE_BIN = path.join(ROOT, "node_modules", ".bin", "supabase");
 
 function parseSemver(input) {
   const match = input.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
@@ -24,13 +31,17 @@ function fail(message) {
 
 function main() {
   let output = "";
+  if (!fs.existsSync(LOCAL_SUPABASE_BIN)) {
+    fail(`missing local Supabase CLI at ${LOCAL_SUPABASE_BIN}; run npm install`);
+  }
+
   try {
-    output = execSync("npx supabase --version", {
+    output = execFileSync(LOCAL_SUPABASE_BIN, ["--version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
   } catch {
-    fail("unable to run `npx supabase --version`");
+    fail(`unable to run \`${LOCAL_SUPABASE_BIN} --version\``);
   }
 
   const current = parseSemver(output);

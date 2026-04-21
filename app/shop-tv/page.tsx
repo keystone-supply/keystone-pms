@@ -11,6 +11,7 @@ import {
 } from "@/lib/dashboardMetrics";
 import { canViewShopTv } from "@/lib/auth/roles";
 import { getSessionCapabilitySet } from "@/lib/auth/session-capabilities";
+import { formatRiversideTimeWithMt } from "@/lib/time/riversideDisplay";
 import { fetchTvSummary } from "@/lib/tv/fetchTvSummary";
 
 export default function ShopTVPage() {
@@ -230,7 +231,7 @@ export default function ShopTVPage() {
       </div>
 
       <div className="fixed bottom-3 right-6 text-[10px] font-mono text-zinc-600">
-        Keystone PMS • Updates every 30s • {summary.lastUpdated.toLocaleTimeString()}
+        Keystone PMS • Updates every 30s • {formatRiversideTimeWithMt(summary.lastUpdated)}
       </div>
     </div>
   );

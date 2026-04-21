@@ -7,10 +7,12 @@
    - Edit SQL in that file before applying.
 2. **Apply via Supabase CLI**
    - Required flow:
-     1. `supabase migration new <name>`
+     1. `npm run supabase:migration:new -- <name>`
      2. edit file
-     3. `supabase db push --linked --include-all --yes`
-     4. `supabase migration list --linked`
+     3. `npm run db:push`
+     4. `npm run supabase:migration:list:linked`
+   - For non-interactive agent/shell sessions, do **not** call raw `supabase migration new`
+     directly. Use the wrapper script above so stdin closes deterministically.
 3. **Do not use MCP `apply_migration` for routine schema changes**
    - MCP tools are for inspection, diagnostics, and read-only verification by default.
    - Emergency drift repair is allowed only with documented follow-up and canonical migration history.
@@ -21,7 +23,7 @@
    - `npm run test:rbac-api-guards`
    - `npm run test:rbac-sql` (must load `.env.local`; use npm script, not raw node/tsx)
    - `npm run build`
-   - `npx supabase migration list --linked`
+   - `npm run supabase:migration:list:linked`
    - Ensure trigger functions set an explicit `search_path` (for example: `set search_path = public, pg_temp`)
 
 ## Drift Repair Rules
@@ -34,5 +36,5 @@ When local and remote history diverge:
 3. Mark canonical replacements as applied when schema already matches:
    - `supabase migration repair --linked --status applied <versions...> --yes`
 4. Re-run:
-   - `supabase db push --linked --include-all --yes`
-   - `supabase migration list --linked`
+   - `npm run db:push`
+   - `npm run supabase:migration:list:linked`

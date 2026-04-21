@@ -70,7 +70,7 @@ export default function AdminUserDetailPage() {
 
   if (!user) {
     return (
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+      <section className="rounded-2xl border border-zinc-800/90 bg-zinc-900/50 p-5 text-zinc-200">
         {error ?? "Loading user…"}
       </section>
     );
@@ -78,27 +78,42 @@ export default function AdminUserDetailPage() {
 
   return (
     <div className="space-y-4">
-      {message ? <p className="text-sm text-emerald-300">{message}</p> : null}
-      {error ? <p className="text-sm text-red-300">{error}</p> : null}
+      <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/50 px-4 py-3 text-xs text-zinc-400">
+        Save identity first, then capabilities, then project-level access for the cleanest permission rollout.
+      </div>
+      {message ? (
+        <p className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+          {message}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="rounded-xl border border-red-500/35 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+          {error}
+        </p>
+      ) : null}
 
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 className="mb-3 text-lg font-semibold">Identity</h2>
+      <section className="rounded-2xl border border-zinc-800/90 bg-zinc-900/45 p-5">
+        <h2 className="mb-3 text-lg font-semibold text-white">Identity</h2>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1 text-sm text-zinc-200">
             Email
-            <input value={user.email} disabled className="rounded-md bg-zinc-950 px-3 py-2" />
+            <input
+              value={user.email}
+              disabled
+              className="rounded-xl bg-zinc-950 px-3 py-2 text-zinc-400"
+            />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1 text-sm text-zinc-200">
             Display name
             <input
               value={user.display_name ?? ""}
               onChange={(event) =>
                 setUser((prev) => (prev ? { ...prev, display_name: event.target.value } : prev))
               }
-              className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2"
+              className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2"
             />
           </label>
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex items-center gap-2 text-sm text-zinc-200">
             <input
               type="checkbox"
               checked={user.is_active}
@@ -110,7 +125,7 @@ export default function AdminUserDetailPage() {
           </label>
           <button
             type="button"
-            className="rounded-md bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700"
+            className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700"
             onClick={() => {
               setMessage(null);
               setError(null);
@@ -130,9 +145,12 @@ export default function AdminUserDetailPage() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 className="mb-3 text-lg font-semibold">Capabilities</h2>
-        <label className="mb-3 flex items-center gap-2 text-sm font-medium">
+      <section className="rounded-2xl border border-zinc-800/90 bg-zinc-900/45 p-5">
+        <h2 className="mb-3 text-lg font-semibold text-white">Capabilities</h2>
+        <p className="mb-3 text-xs text-zinc-500">
+          Capabilities grant broad app access. Project-level overrides are managed below.
+        </p>
+        <label className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-200">
           <input
             type="checkbox"
             checked={allCapabilitiesSelected}
@@ -144,7 +162,7 @@ export default function AdminUserDetailPage() {
         </label>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {APP_CAPABILITIES.map((capability) => (
-            <label key={capability} className="flex items-center gap-2 text-sm">
+            <label key={capability} className="flex items-center gap-2 text-sm text-zinc-200">
               <input
                 type="checkbox"
                 checked={capabilities.includes(capability)}
@@ -162,7 +180,7 @@ export default function AdminUserDetailPage() {
         </div>
         <button
           type="button"
-          className="mt-3 rounded-md bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700"
+          className="mt-3 rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700"
           onClick={() => {
             setMessage(null);
             setError(null);
@@ -178,10 +196,13 @@ export default function AdminUserDetailPage() {
         </button>
       </section>
 
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 className="mb-3 text-lg font-semibold">Project access</h2>
+      <section className="rounded-2xl border border-zinc-800/90 bg-zinc-900/45 p-5">
+        <h2 className="mb-3 text-lg font-semibold text-white">Project access</h2>
+        <p className="mb-3 text-xs text-zinc-500">
+          Write always implies read. Use all toggles for bulk updates, then adjust edge cases per project.
+        </p>
         <div className="mb-3 flex items-center gap-4">
-          <label className="flex items-center gap-2 text-sm font-medium">
+          <label className="flex items-center gap-2 text-sm font-medium text-zinc-200">
             <input
               type="checkbox"
               checked={allProjectReadSelected}
@@ -211,7 +232,7 @@ export default function AdminUserDetailPage() {
             />
             Read (All)
           </label>
-          <label className="flex items-center gap-2 text-sm font-medium">
+          <label className="flex items-center gap-2 text-sm font-medium text-zinc-200">
             <input
               type="checkbox"
               checked={allProjectWriteSelected}
@@ -242,13 +263,13 @@ export default function AdminUserDetailPage() {
             Write (All)
           </label>
         </div>
-        <div className="max-h-96 overflow-auto rounded-lg border border-zinc-800">
+        <div className="max-h-96 overflow-auto rounded-xl border border-zinc-800/90 bg-zinc-950/40">
           <table className="min-w-full text-left text-sm">
-            <thead className="text-zinc-400">
+            <thead className="border-b border-zinc-800 bg-zinc-950/40 text-zinc-400">
               <tr>
-                <th className="px-3 py-2">Project</th>
-                <th className="px-3 py-2">Read</th>
-                <th className="px-3 py-2">Write</th>
+                <th className="px-4 py-3">Project</th>
+                <th className="px-4 py-3">Read</th>
+                <th className="px-4 py-3">Write</th>
               </tr>
             </thead>
             <tbody>
@@ -259,12 +280,12 @@ export default function AdminUserDetailPage() {
                   can_write: false,
                 };
                 return (
-                  <tr key={project.id} className="border-t border-zinc-800">
-                    <td className="px-3 py-2">
+                  <tr key={project.id} className="border-t border-zinc-800 text-zinc-200">
+                    <td className="px-4 py-3">
                       <span className="font-mono text-xs">{project.project_number ?? "—"}</span>{" "}
                       {project.project_name ?? ""}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-4 py-3">
                       <input
                         type="checkbox"
                         checked={access.can_read}
@@ -281,7 +302,7 @@ export default function AdminUserDetailPage() {
                         }}
                       />
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-4 py-3">
                       <input
                         type="checkbox"
                         checked={access.can_write}
@@ -306,7 +327,7 @@ export default function AdminUserDetailPage() {
         </div>
         <button
           type="button"
-          className="mt-3 rounded-md bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700"
+          className="mt-3 rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700"
           onClick={() => {
             setMessage(null);
             setError(null);

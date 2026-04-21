@@ -19,7 +19,7 @@ export default function NewAdminUserPage() {
 
   return (
     <form
-      className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5"
+      className="space-y-4"
       onSubmit={(event) => {
         event.preventDefault();
         setSaving(true);
@@ -39,56 +39,73 @@ export default function NewAdminUserPage() {
           .finally(() => setSaving(false));
       }}
     >
-      {error ? <p className="mb-3 text-sm text-red-300">{error}</p> : null}
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-sm">
-          Email
-          <input
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2"
-            required
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          Display name
-          <input
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          Auth provider
-          <select
-            value={authProvider}
-            onChange={(event) => setAuthProvider(event.target.value as "credentials" | "azure_ad")}
-            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2"
-          >
-            <option value="azure_ad">azure_ad</option>
-            <option value="credentials">credentials</option>
-          </select>
-        </label>
-        {authProvider === "credentials" ? (
-          <label className="flex flex-col gap-1 text-sm">
-            Password
+      <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/50 px-4 py-3 text-xs text-zinc-400">
+        Use Azure AD for SSO users; use credentials only for local app-only accounts.
+      </div>
+
+      {error ? (
+        <p className="rounded-xl border border-red-500/35 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+          {error}
+        </p>
+      ) : null}
+
+      <section className="rounded-2xl border border-zinc-800/90 bg-zinc-900/45 p-5">
+        <h2 className="mb-4 text-base font-semibold text-white">Identity</h2>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="flex flex-col gap-1 text-sm text-zinc-200">
+            Email
             <input
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2"
               required
             />
           </label>
-        ) : null}
-      </div>
+          <label className="flex flex-col gap-1 text-sm text-zinc-200">
+            Display name
+            <input
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-zinc-200">
+            Auth provider
+            <select
+              value={authProvider}
+              onChange={(event) =>
+                setAuthProvider(event.target.value as "credentials" | "azure_ad")
+              }
+              className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2"
+            >
+              <option value="azure_ad">azure_ad</option>
+              <option value="credentials">credentials</option>
+            </select>
+          </label>
+          {authProvider === "credentials" ? (
+            <label className="flex flex-col gap-1 text-sm text-zinc-200">
+              Password
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2"
+                required
+              />
+            </label>
+          ) : null}
+        </div>
+      </section>
 
-      <fieldset className="mt-4 rounded-lg border border-zinc-800 p-3">
-        <legend className="px-1 text-sm text-zinc-300">Capabilities</legend>
+      <fieldset className="rounded-2xl border border-zinc-800/90 bg-zinc-900/45 p-5">
+        <legend className="px-2 text-sm font-medium text-zinc-300">Capabilities</legend>
+        <p className="mb-3 text-xs text-zinc-500">
+          Start with baseline read scopes, then tighten write and admin capabilities as needed.
+        </p>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {APP_CAPABILITIES.map((capability) => {
             const checked = selectedCapabilities.includes(capability);
             return (
-              <label key={capability} className="flex items-center gap-2 text-sm">
+              <label key={capability} className="flex items-center gap-2 text-sm text-zinc-200">
                 <input
                   type="checkbox"
                   checked={checked}
@@ -107,17 +124,17 @@ export default function NewAdminUserPage() {
         </div>
       </fieldset>
 
-      <div className="mt-4 flex items-center gap-2">
+      <div className="flex items-center gap-2">
         <button
           type="submit"
           disabled={saving}
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm hover:bg-blue-500 disabled:opacity-50"
+          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
         >
           {saving ? "Creating…" : "Create user"}
         </button>
         <Link
           href="/admin/users"
-          className="rounded-md bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700"
+          className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-800"
         >
           Cancel
         </Link>

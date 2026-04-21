@@ -7,9 +7,9 @@ import {
   buildDocumentDownloadFilename,
   buildProjectDocumentPdf,
   DOCUMENT_KIND_FILE_CODE,
+  formatRevisionSuffix,
   formatPdfJobRevLine,
-  lastExportedFileRevisionIndex,
-  pdfRevFromDocumentVersion,
+  normalizeRevisionIndex,
   type BuildProjectDocumentPdfInput,
 } from "@/lib/documents/buildProjectDocumentPdf";
 
@@ -81,7 +81,7 @@ test("quote PDF builds without throw and produces non-empty output", () => {
       lines: ["Ogden, UT"],
     },
     meta: baseMeta,
-    documentVersion: 1,
+    revisionIndex: 0,
     quoteResolved: {
       paymentTerms: "NET 30",
       customerContact: "Alex",
@@ -145,7 +145,7 @@ test("non-quote documents use physical address for SELLER block and consistent V
       packingLines: [],
       bolRows: [],
     },
-    documentVersion: 4,
+    revisionIndex: 3,
   };
   const buf = buildProjectDocumentPdf(input);
   assert.ok(buf.byteLength > 2000);
@@ -206,7 +206,7 @@ test("rfq PDF omits Customer PO line and prints heading above job number", () =>
       packingLines: [],
       bolRows: [],
     },
-    documentVersion: 1,
+    revisionIndex: 0,
   };
 
   const buf = buildProjectDocumentPdf(input);
@@ -225,8 +225,8 @@ test("rfq PDF omits Customer PO line and prints heading above job number", () =>
 test("buildDocumentDownloadFilename quote matches plan shape", () => {
   const d = new Date(2026, 2, 29);
   assert.equal(
-    buildDocumentDownloadFilename("101363", "quote", "Bucket liners", d),
-    "101363_Q-Bucket_liners-03.29.2026.pdf",
+    buildDocumentDownloadFilename("101363", "quote", "Bucket liners", 0, d),
+    "101363_Q-Bucket_liners-03.29.2026 (v0).pdf",
   );
 });
 
@@ -234,8 +234,8 @@ test("buildDocumentDownloadFilename uses correct code per kind", () => {
   const d = new Date(2026, 0, 5);
   for (const kind of PROJECT_DOCUMENT_KINDS) {
     assert.equal(
-      buildDocumentDownloadFilename("1", kind, "Job", d),
-      `1_${DOCUMENT_KIND_FILE_CODE[kind]}-Job-01.05.2026.pdf`,
+      buildDocumentDownloadFilename("1", kind, "Job", 3, d),
+      `1_${DOCUMENT_KIND_FILE_CODE[kind]}-Job-01.05.2026 (v3).pdf`,
     );
   }
 });
@@ -243,54 +243,52 @@ test("buildDocumentDownloadFilename uses correct code per kind", () => {
 test("buildDocumentDownloadFilename empty project name becomes PROJECT", () => {
   const d = new Date(2026, 1, 1);
   assert.equal(
-    buildDocumentDownloadFilename("99", "invoice", "", d),
-    "99_INV-PROJECT-02.01.2026.pdf",
+    buildDocumentDownloadFilename("99", "invoice", "", 0, d),
+    "99_INV-PROJECT-02.01.2026 (v0).pdf",
   );
   assert.equal(
-    buildDocumentDownloadFilename("99", "invoice", "   ", d),
-    "99_INV-PROJECT-02.01.2026.pdf",
+    buildDocumentDownloadFilename("99", "invoice", "   ", 0, d),
+    "99_INV-PROJECT-02.01.2026 (v0).pdf",
   );
 });
 
 test("buildDocumentDownloadFilename replaces forbidden characters in name", () => {
   const d = new Date(2026, 5, 15);
   assert.equal(
-    buildDocumentDownloadFilename("1", "bol", 'a/b:c*d?x"y', d),
-    "1_BOL-a-b-c-d-x-y-06.15.2026.pdf",
+    buildDocumentDownloadFilename("1", "bol", 'a/b:c*d?x"y', 0, d),
+    "1_BOL-a-b-c-d-x-y-06.15.2026 (v0).pdf",
   );
 });
 
 test("buildDocumentDownloadFilename truncates long project name", () => {
   const d = new Date(2026, 0, 1);
   const long = "x".repeat(150);
-  const expected = `1_Q-${"x".repeat(100)}-01.01.2026.pdf`;
-  assert.equal(buildDocumentDownloadFilename("1", "quote", long, d), expected);
+  const expected = `1_Q-${"x".repeat(100)}-01.01.2026 (v0).pdf`;
+  assert.equal(buildDocumentDownloadFilename("1", "quote", long, 0, d), expected);
 });
 
 test("buildDocumentDownloadFilename strips spaces from project number", () => {
   const d = new Date(2026, 0, 1);
   assert.equal(
-    buildDocumentDownloadFilename("10 13 63", "quote", "A", d),
-    "101363_Q-A-01.01.2026.pdf",
+    buildDocumentDownloadFilename("10 13 63", "quote", "A", 12, d),
+    "101363_Q-A-01.01.2026 (v12).pdf",
   );
 });
 
-test("pdfRevFromDocumentVersion maps DB version to PDF REV index", () => {
-  assert.equal(pdfRevFromDocumentVersion(undefined), 0);
-  assert.equal(pdfRevFromDocumentVersion(1), 0);
-  assert.equal(pdfRevFromDocumentVersion(2), 1);
-  assert.equal(pdfRevFromDocumentVersion(100), 99);
+test("normalizeRevisionIndex maps nullable values to non-negative revision", () => {
+  assert.equal(normalizeRevisionIndex(undefined), 0);
+  assert.equal(normalizeRevisionIndex(-5), 0);
+  assert.equal(normalizeRevisionIndex(0), 0);
+  assert.equal(normalizeRevisionIndex(2), 2);
 });
 
 test("formatPdfJobRevLine", () => {
-  assert.equal(formatPdfJobRevLine("101363", 2), "101363 REV. 1");
+  assert.equal(formatPdfJobRevLine("101363", 2), "101363 REV. 2");
   assert.equal(formatPdfJobRevLine("101363"), "101363 REV. 0");
 });
 
-test("lastExportedFileRevisionIndex maps stored row version to last PDF / file (vN)", () => {
-  assert.equal(lastExportedFileRevisionIndex(undefined), 0);
-  assert.equal(lastExportedFileRevisionIndex(1), 0);
-  assert.equal(lastExportedFileRevisionIndex(2), 0);
-  assert.equal(lastExportedFileRevisionIndex(3), 1);
-  assert.equal(lastExportedFileRevisionIndex(100), 98);
+test("formatRevisionSuffix always returns (vN) from revision index", () => {
+  assert.equal(formatRevisionSuffix(undefined), "(v0)");
+  assert.equal(formatRevisionSuffix(0), "(v0)");
+  assert.equal(formatRevisionSuffix(12), "(v12)");
 });

@@ -342,21 +342,9 @@ export default function ProjectsPage() {
             </div>
 
             <div className="flex items-center gap-2">
-              <details className="group relative">
-                <summary className="flex size-8 cursor-pointer list-none items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-sm font-semibold text-zinc-300 transition hover:border-zinc-500 hover:text-white">
-                  ?
-                </summary>
-                <div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-xs text-zinc-300 shadow-xl">
-                  <p>
-                    Customer contact, billing, AP, and ship-to details stay on
-                    each account profile.
-                  </p>
-                  <p className="mt-2 text-zinc-400">
-                    Use search and status filters to narrow to active operating
-                    accounts.
-                  </p>
-                </div>
-              </details>
+              <p className="hidden max-w-xs text-right text-xs text-zinc-500 lg:block">
+                Contact, billing, AP, and ship-to details remain on each account profile.
+              </p>
               <Button variant="secondary" size="sm" asChild>
                 <Link href="/sales/customers/new">Add account</Link>
               </Button>

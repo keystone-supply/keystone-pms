@@ -9,6 +9,7 @@ import {
   type TickerStageId,
   type ProjectStatusTicker,
 } from "@/lib/projectStatusTicker";
+import { formatRiversideDateTimeWithMt } from "@/lib/time/riversideDisplay";
 import { cn } from "@/lib/utils";
 
 type ProjectStatusTickerProps = {
@@ -56,9 +57,9 @@ function agingTone(staleDays: number): "none" | "amber" | "red" {
 function stageTitle(label: string, reached: boolean, reachedAt: string | null): string {
   if (!reached) return `${label}: pending`;
   if (!reachedAt) return `${label}: reached`;
-  const d = new Date(reachedAt);
-  if (Number.isNaN(d.getTime())) return `${label}: reached`;
-  return `${label}: ${d.toLocaleString()}`;
+  const formatted = formatRiversideDateTimeWithMt(reachedAt);
+  if (formatted === "—") return `${label}: reached`;
+  return `${label}: ${formatted}`;
 }
 
 export function ProjectStatusTicker({
