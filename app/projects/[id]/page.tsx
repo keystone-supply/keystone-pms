@@ -16,8 +16,6 @@ import {
   ProjectQuoteFinancialsPanel,
 } from "@/components/projects/project-financials-panel";
 import { ProjectOverviewPanel } from "@/components/projects/project-overview-panel";
-import { ProjectToolsDock } from "@/components/projects/project-tools-dock";
-import { ProjectWorkspaceTwoColumn } from "@/components/projects/project-workspace-two-column";
 import { StatusAdvanceDialog } from "@/components/projects/status-advance-dialog";
 import { Button } from "@/components/ui/button";
 import { useProjectDetail } from "@/hooks/useProjectDetail";
@@ -78,8 +76,7 @@ function WorkspaceBody({
   const calcRef = useRef<HTMLDivElement | null>(null);
   const filesRef = useRef<HTMLDivElement | null>(null);
   const [documentsExpanded, setDocumentsExpanded] = useState(false);
-  const [projectFinancialsExpanded, setProjectFinancialsExpanded] = useState(false);
-  const [actualsExpanded, setActualsExpanded] = useState(false);
+  const [financialsExpanded, setFinancialsExpanded] = useState(false);
   const [filesExpanded, setFilesExpanded] = useState(false);
 
   useEffect(() => {
@@ -174,79 +171,69 @@ function WorkspaceBody({
   }, [workspace.focusTarget]);
 
   return (
-    <ProjectWorkspaceTwoColumn
-      leftTop={
-        <ProjectOverviewPanel
-          project={workspace.project}
-          canEditProject={canEditProject}
-          customersList={customersList}
-          canAccessSales={canAccessSalesRole}
-          onBasicsChange={onBasicsChange}
-          updateField={updateField}
-          onAdvanceStage={onAdvanceStage}
-        />
-      }
-      leftMiddle={null}
-      leftBottom={
-        canViewProjectFinancials ? (
-          <div className="grid grid-cols-1 items-start gap-6 2xl:grid-cols-2">
-            <section className="rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
-              <button
-                type="button"
-                onClick={() => setProjectFinancialsExpanded((prev) => !prev)}
-                className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left transition hover:bg-zinc-800/60"
-                aria-expanded={projectFinancialsExpanded}
-                aria-controls="project-financials-panel"
-              >
-                <span className="text-sm font-semibold text-white">Project financials</span>
-                <ChevronDown
-                  className={`size-4 text-zinc-400 transition-transform ${projectFinancialsExpanded ? "rotate-180" : ""}`}
-                  aria-hidden
-                />
-              </button>
+    <div className="space-y-6">
+      <ProjectOverviewPanel
+        project={workspace.project}
+        canEditProject={canEditProject}
+        customersList={customersList}
+        canAccessSales={canAccessSalesRole}
+        onBasicsChange={onBasicsChange}
+        updateField={updateField}
+        onAdvanceStage={onAdvanceStage}
+      />
 
-              {projectFinancialsExpanded ? (
-                <div id="project-financials-panel" className="mt-3">
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-2">
+        {canViewProjectFinancials ? (
+          <section className="xl:col-span-2 rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
+            <button
+              type="button"
+              onClick={() => setFinancialsExpanded((prev) => !prev)}
+              className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left transition hover:bg-zinc-800/60"
+              aria-expanded={financialsExpanded}
+              aria-controls="project-financials-combined-panel"
+            >
+              <span className="text-sm font-semibold text-white">
+                Project financials + Actuals (P&L)
+              </span>
+              <ChevronDown
+                className={`size-4 text-zinc-400 transition-transform ${financialsExpanded ? "rotate-180" : ""}`}
+                aria-hidden
+              />
+            </button>
+
+            {financialsExpanded ? (
+              <div
+                id="project-financials-combined-panel"
+                className="mt-3 grid grid-cols-1 gap-4 xl:grid-cols-2"
+              >
+                <section className="rounded-2xl border border-zinc-800/70 bg-zinc-950/30 p-3 sm:p-4">
+                  <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                    Project financials
+                  </h3>
                   <ProjectQuoteFinancialsPanel
                     project={workspace.project}
                     applyFinancialPatch={applyProjectPatch}
                   />
-                </div>
-              ) : null}
-            </section>
+                </section>
 
-            <section className="rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
-              <button
-                type="button"
-                onClick={() => setActualsExpanded((prev) => !prev)}
-                className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left transition hover:bg-zinc-800/60"
-                aria-expanded={actualsExpanded}
-                aria-controls="project-actuals-panel"
-              >
-                <span className="text-sm font-semibold text-white">Actuals (P&L)</span>
-                <ChevronDown
-                  className={`size-4 text-zinc-400 transition-transform ${actualsExpanded ? "rotate-180" : ""}`}
-                  aria-hidden
-                />
-              </button>
-
-              {actualsExpanded ? (
-                <div id="project-actuals-panel" className="mt-3">
+                <section className="rounded-2xl border border-zinc-800/70 bg-zinc-950/30 p-3 sm:p-4">
+                  <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                    Actuals (P&L)
+                  </h3>
                   <ProjectActualsFinancialsPanel
                     project={workspace.project}
                     applyFinancialPatch={applyProjectPatch}
                   />
-                </div>
-              ) : null}
-            </section>
-          </div>
+                </section>
+              </div>
+            ) : null}
+          </section>
         ) : (
-          <div className="rounded-2xl border border-zinc-800/90 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-400">
+          <div className="xl:col-span-2 rounded-2xl border border-zinc-800/90 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-400">
             Financial panels are hidden for your role.
           </div>
-        )
-      }
-      rightTop={
+        )}
+
         <div ref={docsRef}>
           <section className="rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
             <button
@@ -277,8 +264,7 @@ function WorkspaceBody({
             ) : null}
           </section>
         </div>
-      }
-      rightMiddle={
+
         <div ref={calcRef}>
           <ProjectCalcPanel
             projectId={id}
@@ -287,46 +273,38 @@ function WorkspaceBody({
             projectNumber={workspace.project.project_number ?? null}
           />
         </div>
-      }
-      rightBottom={
-        <>
-          <div ref={filesRef}>
-            <section className="rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
-              <button
-                type="button"
-                onClick={() => setFilesExpanded((prev) => !prev)}
-                className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left transition hover:bg-zinc-800/60"
-                aria-expanded={filesExpanded}
-                aria-controls="project-files-window"
-              >
-                <span className="text-sm font-semibold text-white">Project files</span>
-                <ChevronDown
-                  className={`size-4 text-zinc-400 transition-transform ${filesExpanded ? "rotate-180" : ""}`}
-                  aria-hidden
-                />
-              </button>
+      </div>
 
-              {filesExpanded ? (
-                <div id="project-files-window" className="mt-3">
-                  {workspace.project.files_phase1_enabled !== false ? (
-                    <ProjectFilesPanel projectId={id} />
-                  ) : (
-                    <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
-                      Project files are not enabled for this job yet.
-                    </div>
-                  )}
+      <div ref={filesRef}>
+        <section className="rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
+          <button
+            type="button"
+            onClick={() => setFilesExpanded((prev) => !prev)}
+            className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left transition hover:bg-zinc-800/60"
+            aria-expanded={filesExpanded}
+            aria-controls="project-files-window"
+          >
+            <span className="text-sm font-semibold text-white">Project files</span>
+            <ChevronDown
+              className={`size-4 text-zinc-400 transition-transform ${filesExpanded ? "rotate-180" : ""}`}
+              aria-hidden
+            />
+          </button>
+
+          {filesExpanded ? (
+            <div id="project-files-window" className="mt-3">
+              {workspace.project.files_phase1_enabled !== false ? (
+                <ProjectFilesPanel projectId={id} />
+              ) : (
+                <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
+                  Project files are not enabled for this job yet.
                 </div>
-              ) : null}
-            </section>
-          </div>
-          <ProjectToolsDock
-            customer={workspace.project.customer ?? null}
-            projectNumber={workspace.project.project_number ?? null}
-            projectName={workspace.project.project_name ?? null}
-          />
-        </>
-      }
-    />
+              )}
+            </div>
+          ) : null}
+        </section>
+      </div>
+    </div>
   );
 }
 

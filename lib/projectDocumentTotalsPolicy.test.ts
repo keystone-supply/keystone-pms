@@ -82,6 +82,30 @@ describe("projectPatchFromSavedQuoteOrInvoice", () => {
     assert.deepEqual(patch, { total_quoted: 100 });
   });
 
+  it("maps quote to total_quoted including quote footer adjustments", () => {
+    const patch = projectPatchFromSavedQuoteOrInvoice(
+      "quote",
+      {
+        lines: [
+          {
+            lineNo: 1,
+            description: "x",
+            qty: 1,
+            uom: "EA",
+            unitPrice: 100,
+            extended: 100,
+          },
+        ],
+        quotePdfTaxAmount: 5,
+        quotePdfLogisticsAmount: 10,
+        quotePdfOtherAmount: 2.5,
+        packingLines: [],
+        bolRows: [],
+      },
+    );
+    assert.deepEqual(patch, { total_quoted: 117.5 });
+  });
+
   it("maps invoice to invoiced_amount", () => {
     const patch = projectPatchFromSavedQuoteOrInvoice(
       "invoice",

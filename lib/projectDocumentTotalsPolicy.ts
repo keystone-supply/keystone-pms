@@ -5,9 +5,10 @@
  * - `projects.total_quoted` and `projects.invoiced_amount` are the **reporting source of truth**
  *   (see `lib/dashboardMetrics.ts`).
  * - **Quote and invoice document drafts** carry line items in `metadata.lines`. When such a draft
- *   is saved, we **push** the rounded sum of line `extended` amounts onto the matching project
- *   column so the job row stays aligned with PDF-facing totals and cannot silently drift from
- *   stored lines.
+ *   is saved, we **push** the rounded customer total onto the matching project column:
+ *   - quotes use line subtotal + optional quote footer adjustments (tax/logistics/other)
+ *   - invoices use line subtotal
+ *   This keeps project totals aligned with customer-facing document totals.
  * - Detailed cost breakdown (markups, vendor cost, actuals) still lives on `projects` and in
  *   `metadata.quoteFinancialsSnapshot` as point-in-time audit — only the customer-facing total
  *   fields listed below are overwritten from document lines on save.
@@ -32,6 +33,20 @@ export function sumDocumentLineExtendeds(lines: DocumentLineItem[]): number {
   return Math.round(sum * 100) / 100;
 }
 
+function finiteOrZero(value: number | null | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+export function sumQuoteGrandTotal(meta: ProjectDocumentDraftMeta): number {
+  const subtotal = sumDocumentLineExtendeds(meta.lines ?? []);
+  const total =
+    subtotal +
+    finiteOrZero(meta.quotePdfTaxAmount) +
+    finiteOrZero(meta.quotePdfLogisticsAmount) +
+    finiteOrZero(meta.quotePdfOtherAmount);
+  return Math.round(total * 100) / 100;
+}
+
 /** Kinds whose line totals should sync to `projects` on save. */
 export function documentKindSyncsFinancialTotalsToProject(
   kind: ProjectDocumentKind,
@@ -48,7 +63,7 @@ export function projectPatchFromSavedQuoteOrInvoice(
   meta: ProjectDocumentDraftMeta,
 ): Partial<Pick<ProjectRow, "total_quoted" | "invoiced_amount">> | null {
   if (!documentKindSyncsFinancialTotalsToProject(kind)) return null;
-  const total = sumDocumentLineExtendeds(meta.lines ?? []);
+  const total = kind === "quote" ? sumQuoteGrandTotal(meta) : sumDocumentLineExtendeds(meta.lines ?? []);
   if (!Number.isFinite(total)) return null;
   if (kind === "quote") return { total_quoted: total };
   return { invoiced_amount: total };

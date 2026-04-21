@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { HelpCircle } from "lucide-react";
 import {
   computeLaborCostFromActualBreakdown,
   customerLineFromBasis,
@@ -17,6 +18,46 @@ import type { ProjectRow } from "@/lib/projectTypes";
 
 const detailFieldMono =
   "w-full rounded-xl border border-zinc-700 bg-zinc-900/80 px-4 py-3 font-mono tabular-nums text-white placeholder:text-zinc-500 focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
+const topMetricCardClass =
+  "flex min-h-[132px] h-full flex-col rounded-2xl border border-zinc-700/80 bg-zinc-950 px-4 py-4";
+
+const moneyFormatter = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+function roundToCents(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function formatMoney(value: number): string {
+  return `$${moneyFormatter.format(roundToCents(value))}`;
+}
+
+function formatPercent(value: number): string {
+  return `${roundToCents(value).toFixed(2)}%`;
+}
+
+function parseMoneyInput(raw: string): number | null {
+  const normalized = raw.replace(/[$,\s]/g, "");
+  if (normalized === "") return null;
+  const parsed = parseFloat(normalized);
+  if (Number.isNaN(parsed)) return 0;
+  return roundToCents(parsed);
+}
+
+function InfoHintButton({ detail }: { detail: string }) {
+  return (
+    <button
+      type="button"
+      className="inline-flex size-5 items-center justify-center rounded-full border border-zinc-700 text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
+      aria-label={detail}
+      title={detail}
+    >
+      <HelpCircle className="size-3.5" />
+    </button>
+  );
+}
 
 type QuoteBasisBucketConfig = {
   basisKey: keyof ProjectRow;
@@ -55,19 +96,19 @@ function QuoteLineCostMarkupReadouts({
       <div className="rounded-xl border border-zinc-700/80 bg-zinc-950 px-4 py-3">
         <div className="text-xs text-zinc-500">Internal cost (basis)</div>
         <div className="font-mono text-lg text-zinc-200">
-          ${internalBasis.toLocaleString()}
+          {formatMoney(internalBasis)}
         </div>
       </div>
       <div className="rounded-xl border border-zinc-700/80 bg-zinc-950 px-4 py-3">
         <div className="text-xs text-zinc-500">Markup $</div>
         <div className="font-mono text-lg text-zinc-200">
-          ${markup$.toLocaleString()}
+          {formatMoney(markup$)}
         </div>
       </div>
       <div className="rounded-xl border border-zinc-700/80 bg-zinc-950 px-4 py-3">
         <div className="text-xs text-zinc-500">Customer line</div>
         <div className="font-mono text-lg text-zinc-200">
-          ${customerLine.toLocaleString()}
+          {formatMoney(customerLine)}
         </div>
       </div>
     </div>
@@ -108,8 +149,7 @@ export function ProjectQuoteFinancialsPanel({
   const totalQuotedCosts = computeQuotedInternalCostTotal(project);
 
   const estimatedPl = totalQuoted - totalQuotedCosts;
-  const estimatedMarginPct =
-    totalQuoted > 0 ? Math.round((estimatedPl / totalQuoted) * 100) : 0;
+  const estimatedMarginPct = totalQuoted > 0 ? (estimatedPl / totalQuoted) * 100 : 0;
 
   const costsExceedQuote =
     totalQuoted > 0 && totalQuotedCosts > totalQuoted + 0.005;
@@ -129,55 +169,40 @@ export function ProjectQuoteFinancialsPanel({
     <div className="space-y-6 rounded-3xl border border-zinc-800 bg-zinc-900 p-6 sm:p-8">
       <div>
         <h2 className="text-xl font-semibold">Project financials</h2>
-        <p className="mt-1 text-sm text-zinc-500">
-          Each markable line has its own markup %. Labor uses sell $/hr; taxes
-          pass through with no markup.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 text-sm">
-        <div className="rounded-2xl border border-sky-800/60 bg-sky-950/40 p-5">
-          <div className="text-zinc-500 text-sm">Customer quote total</div>
-          <div className="mt-2 text-3xl font-mono font-bold text-sky-100">
-            ${totalQuoted.toLocaleString()}
-          </div>
-          <p className="mt-2 text-xs text-zinc-500">
-            Auto from line math — save to store on the project row.
-          </p>
-        </div>
-        <div className="rounded-2xl border border-zinc-700 bg-zinc-950 p-5">
-          <div className="text-zinc-500 text-sm">
-            Sum of estimated internal job costs
-          </div>
-          <div className="mt-2 text-3xl font-mono font-bold text-zinc-200">
-            ${totalQuotedCosts.toLocaleString()}
-          </div>
-          <p className="mt-2 text-xs text-zinc-500">
-            Basis costs (vendor materials, labor at cost/hr, other bases,
-            taxes).
-          </p>
+        <div className="mt-1 flex items-center gap-2 text-sm text-zinc-500">
+          <p>Estimate math and markup controls.</p>
+          <InfoHintButton detail="Each markable line has its own markup %. Labor uses sell $/hr, and taxes pass through without markup." />
         </div>
       </div>
 
-      {costsExceedQuote ? (
-        <div
-          className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
-          role="status"
-        >
-          Estimated internal costs exceed the customer quote total — margin on
-          this estimate is negative unless the quote is raised.
+      <div className="grid grid-cols-1 gap-3 text-sm">
+        <div className={`${topMetricCardClass} border-sky-800/60 bg-sky-950/40`}>
+          <div className="flex items-center justify-between gap-2 text-sm text-zinc-500">
+            <span>Customer quote total</span>
+            <InfoHintButton detail="Auto-calculated from all quote lines and stored on save." />
+          </div>
+          <div className="mt-2 text-2xl font-mono font-bold text-sky-100 sm:text-3xl">
+            {formatMoney(totalQuoted)}
+          </div>
         </div>
-      ) : null}
-
-      <div className="rounded-3xl border border-sky-800 bg-sky-950 p-6">
-        <div className="text-sm font-medium text-sky-400">
-          Estimated P&amp;L (quote total − internal costs)
+        <div className={topMetricCardClass}>
+          <div className="flex items-center justify-between gap-2 text-sm text-zinc-500">
+            <span>Estimated internal costs</span>
+            <InfoHintButton detail="Sum of vendor materials, labor at cost/hr, taxes, and other basis costs." />
+          </div>
+          <div className="mt-2 text-2xl font-mono font-bold text-zinc-200 sm:text-3xl">
+            {formatMoney(totalQuotedCosts)}
+          </div>
         </div>
-        <div className="mt-2 text-4xl font-mono font-bold text-sky-200 sm:text-5xl">
-          ${estimatedPl.toLocaleString()}
-        </div>
-        <div className="mt-1 text-lg text-sky-400 sm:text-xl">
-          {estimatedMarginPct}% margin on quote
+        <div className={`${topMetricCardClass} border-sky-800/60 bg-sky-950/30`}>
+          <div className="flex items-center justify-between gap-2 text-sm text-sky-400">
+            <span>Estimated P&amp;L</span>
+            <InfoHintButton detail="Quote total minus estimated internal costs." />
+          </div>
+          <div className="mt-2 text-2xl font-mono font-bold text-sky-200 sm:text-3xl">
+            {formatMoney(estimatedPl)}
+          </div>
+          <div className="mt-1 text-sm text-sky-400">{formatPercent(estimatedMarginPct)} margin</div>
         </div>
       </div>
 
@@ -185,10 +210,10 @@ export function ProjectQuoteFinancialsPanel({
         <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
           Materials (vendor / purchase)
         </h4>
-        <p className="mt-1 text-xs text-zinc-500">
-          Internal cost is vendor spend; customer line = basis × (1 + markup
-          %).
-        </p>
+        <div className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
+          <p>Vendor spend plus markup for customer pricing.</p>
+          <InfoHintButton detail="Internal cost is vendor spend. Customer line = basis × (1 + markup%)." />
+        </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs text-zinc-500">
@@ -200,8 +225,7 @@ export function ProjectQuoteFinancialsPanel({
               onChange={(e) => {
                 const raw = e.target.value;
                 applyFinancialPatch({
-                  materials_vendor_cost:
-                    raw === "" ? null : parseFloat(raw) || 0,
+                  materials_vendor_cost: parseMoneyInput(raw),
                 });
               }}
               className={detailFieldMono}
@@ -222,7 +246,7 @@ export function ProjectQuoteFinancialsPanel({
               onChange={(e) => {
                 const v = parseFloat(e.target.value);
                 applyFinancialPatch({
-                  material_markup_pct: Number.isNaN(v) ? null : v,
+                  material_markup_pct: Number.isNaN(v) ? null : roundToCents(v),
                 });
               }}
               className={detailFieldMono}
@@ -235,14 +259,24 @@ export function ProjectQuoteFinancialsPanel({
         />
       </div>
 
+      {costsExceedQuote ? (
+        <div
+          className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+          role="status"
+        >
+          Estimated internal costs exceed the customer quote total — margin on
+          this estimate is negative unless the quote is raised.
+        </div>
+      ) : null}
+
       <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
           Labor (hours)
         </h4>
-        <p className="mt-1 text-xs text-zinc-500">
-          Internal cost = hours × cost/hr. Customer labor = hours × sell/hr
-          (no markup %).
-        </p>
+        <div className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
+          <p>Hours drive internal and customer labor lines.</p>
+          <InfoHintButton detail="Internal labor = hours × internal cost/hr. Customer labor = hours × sell/hr, with no markup %." />
+        </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
             <label className="mb-1 block text-xs text-zinc-500">Hours</label>
@@ -252,8 +286,7 @@ export function ProjectQuoteFinancialsPanel({
               onChange={(e) => {
                 const raw = e.target.value;
                 applyFinancialPatch({
-                  labor_hours_quoted:
-                    raw === "" ? null : parseFloat(raw) || 0,
+                  labor_hours_quoted: parseMoneyInput(raw),
                 });
               }}
               className={detailFieldMono}
@@ -270,8 +303,7 @@ export function ProjectQuoteFinancialsPanel({
               onChange={(e) => {
                 const raw = e.target.value;
                 applyFinancialPatch({
-                  labor_cost_per_hr:
-                    raw === "" ? null : parseFloat(raw) || 0,
+                  labor_cost_per_hr: parseMoneyInput(raw),
                 });
               }}
               className={detailFieldMono}
@@ -288,8 +320,7 @@ export function ProjectQuoteFinancialsPanel({
               onChange={(e) => {
                 const raw = e.target.value;
                 applyFinancialPatch({
-                  labor_sell_per_hr:
-                    raw === "" ? null : parseFloat(raw) || 0,
+                  labor_sell_per_hr: parseMoneyInput(raw),
                 });
               }}
               className={detailFieldMono}
@@ -301,7 +332,7 @@ export function ProjectQuoteFinancialsPanel({
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-950 px-4 py-3">
             <div className="text-xs text-zinc-500">Internal labor (est.)</div>
             <div className="font-mono text-lg text-zinc-200">
-              ${laborInternalPreview.toLocaleString()}
+              {formatMoney(laborInternalPreview)}
             </div>
             {!quoteLaborBreakdown ? (
               <p className="mt-1 text-xs text-amber-200/80">
@@ -312,7 +343,7 @@ export function ProjectQuoteFinancialsPanel({
           <div className="rounded-xl border border-zinc-700/80 bg-zinc-950 px-4 py-3">
             <div className="text-xs text-zinc-500">Customer labor line</div>
             <div className="font-mono text-lg text-zinc-200">
-              ${laborSellPreview.toLocaleString()}
+              {formatMoney(laborSellPreview)}
             </div>
           </div>
         </div>
@@ -327,7 +358,7 @@ export function ProjectQuoteFinancialsPanel({
               onChange={(e) => {
                 const raw = e.target.value;
                 applyFinancialPatch({
-                  labor_quoted: raw === "" ? null : parseFloat(raw) || 0,
+                  labor_quoted: parseMoneyInput(raw),
                 });
               }}
               className={detailFieldMono}
@@ -367,8 +398,7 @@ export function ProjectQuoteFinancialsPanel({
                     onChange={(e) => {
                       const raw = e.target.value;
                       applyFinancialPatch({
-                        [basisKey]:
-                          raw === "" ? null : parseFloat(raw) || 0,
+                        [basisKey]: parseMoneyInput(raw),
                       } as Partial<ProjectRow>);
                     }}
                     className={detailFieldMono}
@@ -389,7 +419,7 @@ export function ProjectQuoteFinancialsPanel({
                     onChange={(e) => {
                       const v = parseFloat(e.target.value);
                       applyFinancialPatch({
-                        [markupKey]: Number.isNaN(v) ? null : v,
+                        [markupKey]: Number.isNaN(v) ? null : roundToCents(v),
                       } as Partial<ProjectRow>);
                     }}
                     className={detailFieldMono}
@@ -416,7 +446,7 @@ export function ProjectQuoteFinancialsPanel({
             onChange={(e) => {
               const raw = e.target.value;
               applyFinancialPatch({
-                taxes_quoted: raw === "" ? null : parseFloat(raw) || 0,
+                taxes_quoted: parseMoneyInput(raw),
               });
             }}
             className={detailFieldMono}
@@ -460,14 +490,11 @@ export function ProjectActualsFinancialsPanel({
       (project.logistics_cost || 0) +
       (project.additional_costs || 0));
 
-  const plMargin =
-    (project.invoiced_amount || 0) > 0
-      ? Math.round((pl / (project.invoiced_amount || 0)) * 100)
-      : 0;
+  const plMargin = (project.invoiced_amount || 0) > 0 ? (pl / (project.invoiced_amount || 0)) * 100 : 0;
 
   const copyQuoteToInvoiced = () => {
     applyFinancialPatch({
-      invoiced_amount: computeQuoteCustomerTotal(project),
+      invoiced_amount: roundToCents(computeQuoteCustomerTotal(project)),
     });
   };
 
@@ -475,52 +502,56 @@ export function ProjectActualsFinancialsPanel({
     <div className="space-y-6 rounded-3xl border border-zinc-800 bg-zinc-900 p-6 sm:p-8">
       <div>
         <h2 className="text-xl font-semibold">Actuals (P&amp;L)</h2>
-        <p className="mt-1 text-sm text-zinc-500">
-          Invoiced revenue and job costs as work completes. Labor cost follows
-          hours × cost/hr when both are set.
-        </p>
+        <div className="mt-1 flex items-center gap-2 text-sm text-zinc-500">
+          <p>Realized revenue and cost tracking.</p>
+          <InfoHintButton detail="Invoiced revenue and job costs as work completes. Labor cost follows hours × cost/hr when both are set." />
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 text-sm">
-        <div className="rounded-2xl border border-zinc-700 bg-zinc-950 p-6">
-          <div className="text-sm text-zinc-500">Invoiced amount</div>
+      <div className="grid grid-cols-1 gap-3 text-sm">
+        <div className={topMetricCardClass}>
+          <div className="flex items-center justify-between gap-2 text-sm text-zinc-500">
+            <span>Invoiced amount</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              onClick={copyQuoteToInvoiced}
+            >
+              Copy quote
+            </Button>
+          </div>
           <input
-            type="number"
-            value={project.invoiced_amount ?? ""}
+            type="text"
+            inputMode="decimal"
+            value={
+              project.invoiced_amount == null
+                ? ""
+                : formatMoney(project.invoiced_amount)
+            }
             onChange={(e) => {
               const raw = e.target.value;
               applyFinancialPatch({
-                invoiced_amount: raw === "" ? null : parseFloat(raw) || 0,
+                invoiced_amount: parseMoneyInput(raw),
               });
             }}
-            className="mt-2 w-full bg-transparent text-3xl font-mono font-bold placeholder:text-zinc-500 focus:outline-none sm:text-4xl"
-            placeholder="0"
+            className="mt-2 w-full bg-transparent text-2xl font-mono font-bold placeholder:text-zinc-500 focus:outline-none sm:text-3xl"
+            placeholder="$0.00"
           />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-3"
-            onClick={copyQuoteToInvoiced}
-          >
-            Copy quote total here
-          </Button>
         </div>
-        <div className="rounded-2xl border border-zinc-700 bg-zinc-950 p-6">
+        <div className={topMetricCardClass}>
           <div className="text-sm text-zinc-500">Total actual costs</div>
-          <div className="mt-2 text-3xl font-mono font-bold text-red-400 sm:text-4xl">
-            ${totalActualCosts.toLocaleString()}
+          <div className="mt-2 text-2xl font-mono font-bold text-red-400 sm:text-3xl">
+            {formatMoney(totalActualCosts)}
           </div>
         </div>
-      </div>
-
-      <div className="rounded-3xl border border-emerald-800 bg-emerald-950 p-6 sm:p-8">
-        <div className="text-sm font-medium text-emerald-400">Realized P&amp;L</div>
-        <div className="mt-2 text-4xl font-mono font-bold text-emerald-300 sm:text-6xl">
-          ${pl.toLocaleString()}
-        </div>
-        <div className="mt-1 text-xl text-emerald-400 sm:text-2xl">
-          {plMargin}% margin
+        <div className={`${topMetricCardClass} border-emerald-800/70 bg-emerald-950/30`}>
+          <div className="text-sm text-emerald-400">Realized P&amp;L</div>
+          <div className="mt-2 text-2xl font-mono font-bold text-emerald-300 sm:text-3xl">
+            {formatMoney(pl)}
+          </div>
+          <div className="mt-1 text-sm text-emerald-400">{formatPercent(plMargin)} margin</div>
         </div>
       </div>
 
@@ -537,8 +568,7 @@ export function ProjectActualsFinancialsPanel({
               onChange={(e) => {
                 const raw = e.target.value;
                 applyFinancialPatch({
-                  labor_hours_actual:
-                    raw === "" ? null : parseFloat(raw) || 0,
+                  labor_hours_actual: parseMoneyInput(raw),
                 });
               }}
               className={detailFieldMono}
@@ -555,8 +585,7 @@ export function ProjectActualsFinancialsPanel({
               onChange={(e) => {
                 const raw = e.target.value;
                 applyFinancialPatch({
-                  labor_cost_per_hr_actual:
-                    raw === "" ? null : parseFloat(raw) || 0,
+                  labor_cost_per_hr_actual: parseMoneyInput(raw),
                 });
               }}
               className={detailFieldMono}
@@ -578,7 +607,7 @@ export function ProjectActualsFinancialsPanel({
               onChange={(e) => {
                 const raw = e.target.value;
                 applyFinancialPatch({
-                  [field]: raw === "" ? null : parseFloat(raw) || 0,
+                  [field]: parseMoneyInput(raw),
                 } as Partial<ProjectRow>);
               }}
               className={detailFieldMono}
@@ -597,14 +626,14 @@ export function ProjectActualsFinancialsPanel({
             type="number"
             value={
               laborCostComputed
-                ? computeLaborCostFromActualBreakdown(project)
+                ? roundToCents(computeLaborCostFromActualBreakdown(project))
                 : (project.labor_cost as number | null | undefined) ?? ""
             }
             onChange={(e) => {
               if (laborCostComputed) return;
               const raw = e.target.value;
               applyFinancialPatch({
-                labor_cost: raw === "" ? null : parseFloat(raw) || 0,
+                labor_cost: parseMoneyInput(raw),
               });
             }}
             className={detailFieldMono}

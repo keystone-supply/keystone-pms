@@ -6,15 +6,25 @@ import { PROJECT_FILE_SELECT, type ProjectFileRow } from "@/lib/projectFiles";
 import { deltaSyncProject } from "@/lib/files/oneDriveSync";
 import { getGraphAccessToken } from "@/lib/auth/apiAccessToken";
 
-async function readProjectFlag(projectId: string): Promise<boolean> {
-  if (!adminSupabase) return false;
+type ProjectFlagResult = {
+  enabled: boolean;
+  error?: string;
+};
+
+async function readProjectFlag(projectId: string): Promise<ProjectFlagResult> {
+  if (!adminSupabase) return { enabled: false };
   const { data, error } = await adminSupabase
     .from("projects")
     .select("files_phase1_enabled")
     .eq("id", projectId)
     .maybeSingle();
-  if (error || !data) return false;
-  return Boolean((data as { files_phase1_enabled?: boolean }).files_phase1_enabled);
+  if (error) {
+    return { enabled: false, error: error.message };
+  }
+  if (!data) return { enabled: false };
+  return {
+    enabled: Boolean((data as { files_phase1_enabled?: boolean }).files_phase1_enabled),
+  };
 }
 
 export async function GET(
@@ -36,8 +46,14 @@ export async function GET(
 
   const params = await context.params;
   const projectId = params.id;
-  const enabled = await readProjectFlag(projectId);
-  if (!enabled) {
+  const flag = await readProjectFlag(projectId);
+  if (flag.error) {
+    return NextResponse.json(
+      { error: flag.error || "Could not read project file settings." },
+      { status: 500 },
+    );
+  }
+  if (!flag.enabled) {
     return NextResponse.json({ enabled: false, files: [] });
   }
 

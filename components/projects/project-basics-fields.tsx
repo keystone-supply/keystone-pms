@@ -29,8 +29,8 @@ export function ProjectBasicsFields({
 }: Props) {
   const cozy = mode === "create";
   const labelMb = cozy ? "mb-2" : "mb-1";
-  const inputPad = cozy ? "px-5 py-4 text-lg" : "px-4 py-3 text-lg";
-  const gridGap = cozy ? "gap-6" : "gap-4";
+  const inputPad = cozy ? "px-5 py-4 text-lg" : "px-3 py-2.5 text-base";
+  const gridGap = cozy ? "gap-6" : "gap-3";
 
   const v = {
     customer: value.customer ?? "",
@@ -41,7 +41,7 @@ export function ProjectBasicsFields({
 
   return (
     <>
-      <div className={`grid grid-cols-2 ${gridGap}`}>
+      <div className={`grid grid-cols-1 md:grid-cols-2 ${gridGap}`}>
         <div>
           <label className={`text-xs text-zinc-500 block ${labelMb}`}>
             CUSTOMER
@@ -80,7 +80,7 @@ export function ProjectBasicsFields({
           />
         </div>
       </div>
-      <div className={`grid grid-cols-2 ${gridGap}`}>
+      <div className={`grid grid-cols-1 md:grid-cols-2 ${gridGap}`}>
         <div>
           <label className={`text-xs text-zinc-500 block ${labelMb}`}>
             CUSTOMER PO #
@@ -88,7 +88,7 @@ export function ProjectBasicsFields({
           <input
             value={v.customer_po}
             onChange={(e) => onChange("customer_po", e.target.value)}
-            className={`${inputBase} ${cozy ? "px-5 py-4" : "px-4 py-3"}`}
+            className={`${inputBase} ${cozy ? "px-5 py-4 text-lg" : "px-3 py-2.5 text-base"}`}
           />
         </div>
         <div>
@@ -98,7 +98,7 @@ export function ProjectBasicsFields({
           <select
             value={v.supply_industrial}
             onChange={(e) => onChange("supply_industrial", e.target.value)}
-            className={`w-full rounded-xl border border-zinc-700 bg-zinc-900/80 ${cozy ? "px-5 py-4" : "px-4 py-3"} ${controlFocus}`}
+            className={`w-full rounded-xl border border-zinc-700 bg-zinc-900/80 ${cozy ? "px-5 py-4 text-lg" : "px-3 py-2.5 text-base"} ${controlFocus}`}
           >
             <option value="SUPPLY">SUPPLY</option>
             <option value="INDUSTRIAL">INDUSTRIAL</option>

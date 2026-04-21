@@ -17,7 +17,7 @@ import {
 import type { ProjectBasicsField, ProjectRow } from "@/lib/projectTypes";
 
 const detailFieldClass =
-  "w-full rounded-xl border border-zinc-700 bg-zinc-900/80 px-4 py-3 text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
+  "w-full rounded-xl border border-zinc-700 bg-zinc-900/80 px-3 py-2.5 text-sm text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
 
 const OPS_MILESTONE_FIELDS: Array<{
   key:
@@ -95,118 +95,126 @@ export function ProjectOverviewPanel({
           interactive={canEditProject}
           onAdvanceStage={onAdvanceStage}
         />
-        <div className="space-y-4">
-          <div>
-            <label className="mb-1 block text-xs text-zinc-500">PROJECT #</label>
-            <div className="font-mono text-2xl font-semibold tracking-tight text-emerald-400/90">
-              {project.project_number}
-            </div>
-          </div>
-          <ProjectBasicsFields
-            mode="edit"
-            value={{
-              customer: project.customer,
-              project_name: project.project_name,
-              customer_po: project.customer_po,
-              supply_industrial: project.supply_industrial,
-            }}
-            onChange={onBasicsChange}
-          />
-          <div>
-            <label className="mb-1 block text-xs text-zinc-500">
-              CRM account (optional)
-            </label>
-            <select
-              value={project.customer_id ?? ""}
-              onChange={(e) => {
-                const v = e.target.value;
-                updateField("customer_id", v === "" ? null : v);
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.85fr)]">
+          <div className="max-w-4xl space-y-3">
+            <ProjectBasicsFields
+              mode="edit"
+              value={{
+                customer: project.customer,
+                project_name: project.project_name,
+                customer_po: project.customer_po,
+                supply_industrial: project.supply_industrial,
               }}
-              className={detailFieldClass}
-            >
-              <option value="">None — free-text customer only</option>
-              {customersList.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.legal_name}
-                  {customer.account_code ? ` (${customer.account_code})` : ""}
-                </option>
-              ))}
-            </select>
-            {project.customer_id && canAccessSalesRole ? (
-              <p className="mt-1 text-[11px] text-zinc-500">
-                <a
-                  href={`/sales/customers/${project.customer_id}`}
-                  className="text-blue-400 hover:underline"
-                >
-                  Open account in Sales
-                </a>
-              </p>
-            ) : null}
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-zinc-500">STAGE</label>
-            <select
-              value={project.sales_command_stage || "rfq_customer"}
-              onChange={(e) => updateField("sales_command_stage", e.target.value)}
-              className={detailFieldClass}
-            >
-              {SALES_PROJECT_COLUMNS.map((stage) => (
-                <option key={stage} value={stage}>
-                  {PIPELINE_STAGE_LABELS[stage]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <label className="flex cursor-pointer select-none items-center gap-3">
-            <input
-              type="checkbox"
-              checked={!!project.payment_received}
-              onChange={(e) => updateField("payment_received", e.target.checked)}
-              className="size-4 rounded border-zinc-600 bg-zinc-900 text-blue-500 focus:ring-2 focus:ring-blue-500/40"
+              onChange={onBasicsChange}
             />
-            <span className="text-sm text-zinc-300">Payment received</span>
-          </label>
-          <div className="mt-6 rounded-2xl border border-zinc-800/50 bg-zinc-950/30 p-4">
-            <button
-              type="button"
-              onClick={() => setMilestonesOpen((open) => !open)}
-              className="flex w-full items-center gap-1.5 text-left text-xs font-medium text-zinc-400 hover:text-zinc-200"
-              aria-expanded={milestonesOpen}
-              id="project-milestones-toggle"
-            >
-              {milestonesOpen ? (
-                <ChevronDown className="size-4 shrink-0 text-zinc-500" />
-              ) : (
-                <ChevronRight className="size-4 shrink-0 text-zinc-500" />
-              )}
-              Milestones (date/time, optional)
-            </button>
-            {milestonesOpen ? (
-              <div
-                className="mt-4 space-y-4 text-sm"
-                role="region"
-                aria-labelledby="project-milestones-toggle"
-              >
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {OPS_MILESTONE_FIELDS.map(({ key, label }) => (
-                    <div key={key}>
-                      <label className="mb-1 block text-xs text-zinc-500">
-                        {label}
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={isoToDatetimeLocal(project[key])}
-                        onChange={(e) =>
-                          updateField(key, datetimeLocalToIso(e.target.value))
-                        }
-                        className={detailFieldClass}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
           </div>
+
+          <div className="space-y-3 rounded-2xl border border-zinc-800/60 bg-zinc-950/30 p-4">
+            <div>
+              <label className="mb-1 block text-xs text-zinc-500">PROJECT #</label>
+              <div className="font-mono text-xl font-semibold tracking-tight text-emerald-400/90">
+                {project.project_number}
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs text-zinc-500">STAGE</label>
+                <select
+                  value={project.sales_command_stage || "rfq_customer"}
+                  onChange={(e) => updateField("sales_command_stage", e.target.value)}
+                  className={detailFieldClass}
+                >
+                  {SALES_PROJECT_COLUMNS.map((stage) => (
+                    <option key={stage} value={stage}>
+                      {PIPELINE_STAGE_LABELS[stage]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-zinc-500">
+                  CRM account (optional)
+                </label>
+                <select
+                  value={project.customer_id ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    updateField("customer_id", v === "" ? null : v);
+                  }}
+                  className={detailFieldClass}
+                >
+                  <option value="">None — free-text customer only</option>
+                  {customersList.map((customer) => (
+                    <option key={customer.id} value={customer.id}>
+                      {customer.legal_name}
+                      {customer.account_code ? ` (${customer.account_code})` : ""}
+                    </option>
+                  ))}
+                </select>
+                {project.customer_id && canAccessSalesRole ? (
+                  <p className="mt-1 text-[11px] text-zinc-500">
+                    <a
+                      href={`/sales/customers/${project.customer_id}`}
+                      className="text-blue-400 hover:underline"
+                    >
+                      Open account in Sales
+                    </a>
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            <label className="flex cursor-pointer select-none items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2.5">
+              <input
+                type="checkbox"
+                checked={!!project.payment_received}
+                onChange={(e) => updateField("payment_received", e.target.checked)}
+                className="size-4 rounded border-zinc-600 bg-zinc-900 text-blue-500 focus:ring-2 focus:ring-blue-500/40"
+              />
+              <span className="text-sm text-zinc-300">Payment received</span>
+            </label>
+          </div>
+        </div>
+
+        <div className="mt-5 rounded-2xl border border-zinc-800/50 bg-zinc-950/30 p-4">
+          <button
+            type="button"
+            onClick={() => setMilestonesOpen((open) => !open)}
+            className="flex w-full items-center gap-1.5 text-left text-xs font-medium text-zinc-400 hover:text-zinc-200"
+            aria-expanded={milestonesOpen}
+            id="project-milestones-toggle"
+          >
+            {milestonesOpen ? (
+              <ChevronDown className="size-4 shrink-0 text-zinc-500" />
+            ) : (
+              <ChevronRight className="size-4 shrink-0 text-zinc-500" />
+            )}
+            Milestones (date/time, optional)
+          </button>
+          {milestonesOpen ? (
+            <div
+              className="mt-4 space-y-4 text-sm"
+              role="region"
+              aria-labelledby="project-milestones-toggle"
+            >
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {OPS_MILESTONE_FIELDS.map(({ key, label }) => (
+                  <div key={key}>
+                    <label className="mb-1 block text-xs text-zinc-500">{label}</label>
+                    <input
+                      type="datetime-local"
+                      value={isoToDatetimeLocal(project[key])}
+                      onChange={(e) =>
+                        updateField(key, datetimeLocalToIso(e.target.value))
+                      }
+                      className={detailFieldClass}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </fieldset>

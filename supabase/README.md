@@ -9,8 +9,8 @@ The app now supports two login paths:
 - **Azure AD** via NextAuth `azure-ad` provider.
 - **Non-Microsoft users** via NextAuth `credentials` provider (email/password).
 
-Role data is stored in Supabase (`public.app_users`) and copied into NextAuth
-session/JWT at login.
+Capability assignments are stored in Supabase (`public.app_user_capabilities`) and
+copied into NextAuth session/JWT at login.
 
 Browser database access now uses a short-lived JWT bridge:
 
@@ -23,23 +23,22 @@ Browser database access now uses a short-lived JWT bridge:
   - DB-signed fallback via `public.issue_supabase_bridge_token(...)` using
     service role + DB `app.settings.jwt_secret`.
 
-## Role Matrix
+## Capability Model
 
-Roles are defined in app code (`lib/auth/roles.ts`) and DB
-(`public.app_role` enum):
+Capabilities are defined in app code (`lib/auth/roles.ts`) and persisted in:
 
-- `admin`: full access
-- `manager`: broad operational access
-- `sales`: commercial + financial visibility
-- `engineering`: project-limited access
-- `fabrication`: shop-focused access
-- `viewer`: read-only subset in app
+- `public.app_user_capabilities`
+- `public.current_app_user_has(...)`
+
+Legacy persona labels (`admin`, `manager`, `sales`, `engineering`, `fabrication`,
+`viewer`) are compatibility bundles that map to capability sets in app code.
 
 App-level restrictions are enforced in UI:
 
-- Dashboard role zones use role-aware rendering
+- Dashboard zones use capability-aware rendering
   (`components/dashboard/role-zones.tsx`).
-- Project document create/edit/export actions are blocked for `viewer`.
+- Project document create/edit/export actions are blocked for users without
+  edit/export capabilities.
 
 ## New Migration
 
@@ -49,10 +48,11 @@ Adds:
 
 - `public.app_users`
 - `public.app_user_project_access`
+- `public.app_user_capabilities`
 - `public.authenticate_app_user(p_email, p_password)` for credentials auth
 - `public.upsert_credentials_app_user(...)` admin helper for user bootstrap
-- `public.current_app_role()` and `public.current_app_user_id()` helpers
-- Role-aware policies for authenticated Supabase JWT access
+- `public.current_app_user_id()` and `public.current_app_user_has(...)` helpers
+- Capability-aware policies for authenticated Supabase JWT access
 - Transitional anon compatibility policies so existing browser anon-key flows
   keep working while migration to authenticated Supabase sessions is completed
 - `public.projects_role_filtered` view for role-based column masking
@@ -138,7 +138,7 @@ Final target is now the default deployment path:
 
 1. Browser data access uses authenticated Supabase bridge sessions.
 2. Transitional anon policies are removed for core operational tables.
-3. Only role-aware authenticated policies gate core table access.
+3. Only capability-aware authenticated policies gate core table access.
 
 ## Bootstrap a Credentials User
 
@@ -148,8 +148,7 @@ Use SQL editor (service role context):
 select public.upsert_credentials_app_user(
   'shop.user@example.com',
   'ChangeMeNow!',
-  'Shop User',
-  'fabrication'
+  'Shop User'
 );
 ```
 
@@ -160,17 +159,17 @@ Then sign in from app with email/password (NextAuth credentials provider).
 1. **Auth**
    - Azure login still works.
    - Credentials login works for seeded credentials user.
-   - Session includes role and provider.
+   - Session includes capability grants and auth provider.
    - `/api/auth/supabase-token` returns `401` when not logged in.
    - `/api/auth/supabase-token` returns `200` with `accessToken` + `expiresAt` when logged in.
-   - `accessToken` includes `email` claim used by `current_app_role()` / `current_app_user_id()`.
+   - `accessToken` includes `email`, `app_capabilities`, and `app_user_id` claims.
 2. **Project documents usability**
    - View existing docs.
    - Create draft.
    - Edit and export.
-3. **Role restrictions**
-   - `viewer` cannot create/edit/export docs.
-   - Finance sections hidden for non-finance roles.
+3. **Capability restrictions**
+   - Users without `edit_projects`/export capabilities cannot create/edit/export docs.
+   - Finance sections are hidden unless finance capabilities are granted.
 4. **Core app flows**
    - Dashboard/projects load.
    - Nest remnants still works.
@@ -193,9 +192,9 @@ Then sign in from app with email/password (NextAuth credentials provider).
 
 From repo root, run:
 
-- `npm run test:rbac-roles` - validates role capability helpers.
+- `npm run test:rbac-roles` - validates capability normalization and legacy persona mapping.
 - `npm run test:rbac-sql` - executes `public.rbac_policy_audit()` via service role.
-- `npm run test:rbac-api-guards` - asserts unauthenticated API access is denied.
+- `npm run test:rbac-api-guards` - asserts unauthenticated API access is denied and admin routes include API guard checks.
 - Note: run RBAC scripts through npm scripts so `.env.local` is loaded (`node --env-file=.env.local ...`).
 
 Detailed staging execution checklist:
@@ -209,12 +208,11 @@ Rollout sequence and rollback plan:
 ## Rollout Runbook (Staging -> Production)
 
 1. Deploy app code with bridge session route/provider/client changes.
-2. Sign in as each role (`admin`, `manager`, `sales`, `engineering`,
-   `fabrication`, `viewer`) and run the verification checklist above.
+2. Sign in as each target capability bundle/persona and run the verification checklist above.
 3. Apply core hardening migrations:
    - `20260410020000_remove_transitional_anon_core_policies.sql`
    - `20260410021000_revoke_anon_view_privileges.sql`
-4. Re-run role and flow validation after migration.
+4. Re-run capability and flow validation after migration.
 5. Promote same build + migration sequence to production during low-risk window.
 
 ## Rollback Runbook

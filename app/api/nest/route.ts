@@ -77,53 +77,40 @@ export async function POST(request: NextRequest) {
       );
       const clientError = res.status >= 400 && res.status < 500;
       const userError = clientError ? nestMessage : USER_NEST_RUN_FAILED;
-      const adminHint = `NestNow HTTP ${res.status}: ${nestMessage}`;
-      const failureKind =
-        typeof data.failureKind === "string" ? data.failureKind : undefined;
-      const nestNowDurationRaw = data.nestNowDurationMs;
-      const nestNowDurationMs =
-        typeof nestNowDurationRaw === "number" &&
-        Number.isFinite(nestNowDurationRaw)
-          ? Math.round(nestNowDurationRaw)
-          : undefined;
-
-      const evalRaw = data.evalCount;
-      const evalCount =
-        typeof evalRaw === "number" && Number.isFinite(evalRaw)
-          ? Math.round(evalRaw)
-          : undefined;
-      const popRaw = data.populationSize;
-      const populationSize =
-        typeof popRaw === "number" && Number.isFinite(popRaw)
-          ? Math.round(popRaw)
-          : undefined;
-      const genRaw = data.gaGenerations;
-      const gaGenerations =
-        typeof genRaw === "number" && Number.isFinite(genRaw)
-          ? Math.round(genRaw)
-          : undefined;
-      const lastEvalError =
-        typeof data.lastEvalError === "string" && data.lastEvalError.trim()
-          ? data.lastEvalError.trim()
-          : undefined;
-      const bestEffort =
-        data.bestEffort != null && typeof data.bestEffort === "object"
-          ? data.bestEffort
-          : undefined;
+      const diagnostic = {
+        nestNowHttpStatus: res.status,
+        failureKind:
+          typeof data.failureKind === "string" ? data.failureKind : undefined,
+        nestNowDurationMs:
+          typeof data.nestNowDurationMs === "number" &&
+          Number.isFinite(data.nestNowDurationMs)
+            ? Math.round(data.nestNowDurationMs)
+            : undefined,
+        evalCount:
+          typeof data.evalCount === "number" && Number.isFinite(data.evalCount)
+            ? Math.round(data.evalCount)
+            : undefined,
+        populationSize:
+          typeof data.populationSize === "number" &&
+          Number.isFinite(data.populationSize)
+            ? Math.round(data.populationSize)
+            : undefined,
+        gaGenerations:
+          typeof data.gaGenerations === "number" &&
+          Number.isFinite(data.gaGenerations)
+            ? Math.round(data.gaGenerations)
+            : undefined,
+        lastEvalError:
+          typeof data.lastEvalError === "string" && data.lastEvalError.trim()
+            ? data.lastEvalError.trim()
+            : undefined,
+      };
+      console.warn("[api/nest] Nested service failure details:", diagnostic);
 
       return NextResponse.json(
         {
           error: userError,
-          adminHint,
           proxyDurationMs,
-          nestNowHttpStatus: res.status,
-          ...(failureKind ? { failureKind } : {}),
-          ...(nestNowDurationMs != null ? { nestNowDurationMs } : {}),
-          ...(evalCount != null ? { evalCount } : {}),
-          ...(populationSize != null ? { populationSize } : {}),
-          ...(gaGenerations != null ? { gaGenerations } : {}),
-          ...(lastEvalError ? { lastEvalError } : {}),
-          ...(bestEffort ? { bestEffort } : {}),
         },
         { status: res.status >= 400 && res.status < 600 ? res.status : 502 },
       );
@@ -136,11 +123,12 @@ export async function POST(request: NextRequest) {
     console.warn(
       `[api/nest] NestNow fetch failed after ${proxyDurationMs}ms: ${message}`,
     );
-    const adminHint = `${message} — NESTNOW_URL=${NESTNOW_URL}. Ensure NestNow is running on that host (e.g. npm run start:server in the NestNow project).`;
+    console.warn(
+      `[api/nest] Verify NestNow host: NESTNOW_URL=${NESTNOW_URL.replace(/\/$/, "")}`,
+    );
     return NextResponse.json(
       {
         error: USER_NEST_SERVICE_DOWN,
-        adminHint,
         proxyDurationMs,
         stage: "nestnow_connect",
       },

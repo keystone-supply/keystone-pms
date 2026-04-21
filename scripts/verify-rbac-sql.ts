@@ -39,6 +39,15 @@ async function main() {
   if (rows.length === 0) {
     fail("rbac_policy_audit() returned no checks.");
   }
+  const requiredChecks = [
+    "projects_rls_enabled",
+    "core_tables_no_anon_grants",
+  ] as const;
+  for (const checkName of requiredChecks) {
+    if (!rows.some((row) => row.check_name === checkName)) {
+      fail(`rbac_policy_audit() missing required check: ${checkName}`);
+    }
+  }
 
   let hasFailure = false;
   for (const row of rows) {

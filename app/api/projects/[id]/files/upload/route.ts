@@ -117,8 +117,11 @@ export async function POST(
   );
   const uploadText = await uploadRes.text().catch(() => "");
   if (!uploadRes.ok) {
+    console.warn(
+      `[api/projects/files/upload] OneDrive upload failed: status=${uploadRes.status} body=${uploadText.slice(0, 500)}`,
+    );
     return NextResponse.json(
-      { error: `OneDrive upload failed (${uploadRes.status}): ${uploadText}` },
+      { error: `OneDrive upload failed (${uploadRes.status}).` },
       { status: 502 },
     );
   }
@@ -127,8 +130,11 @@ export async function POST(
     try {
       uploaded = JSON.parse(uploadText) as { id?: string };
     } catch {
+      console.warn(
+        "[api/projects/files/upload] OneDrive upload returned invalid JSON payload.",
+      );
       return NextResponse.json(
-        { error: `OneDrive upload returned invalid JSON: ${uploadText}` },
+        { error: "OneDrive upload returned an invalid response payload." },
         { status: 502 },
       );
     }

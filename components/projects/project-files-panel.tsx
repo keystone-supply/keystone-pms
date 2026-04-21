@@ -108,16 +108,20 @@ export function ProjectFilesPanel({
   const [uploadBusy, setUploadBusy] = useState(false);
 
   const selected = useMemo(
-    () => files.find((file) => file.id === selectedFileId) ?? null,
+    () => files.find((file) => file.id === selectedFileId && !file.is_folder) ?? null,
     [files, selectedFileId],
   );
 
   const grouped = useMemo(() => {
     const map = new Map<ProjectFolderSlot, ProjectFileRow[]>();
-    for (const slot of SLOT_ORDER) map.set(slot, []);
+    for (const slot of SLOT_ORDER) {
+      map.set(slot, []);
+    }
     for (const file of files) {
       const bucket = map.get(file.folder_slot) ?? [];
-      bucket.push(file);
+      if (!file.is_folder) {
+        bucket.push(file);
+      }
       map.set(file.folder_slot, bucket);
     }
     return map;
@@ -161,6 +165,14 @@ export function ProjectFilesPanel({
     void refreshFromOneDrive();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace?.filesSyncVersion]);
+
+  useEffect(() => {
+    if (!selectedFileId) return;
+    const existsAndSelectable = files.some((file) => file.id === selectedFileId && !file.is_folder);
+    if (!existsAndSelectable) {
+      setSelectedFileId(null);
+    }
+  }, [files, selectedFileId, setSelectedFileId]);
 
   async function refreshFromOneDrive() {
     setRefreshing(true);
@@ -287,7 +299,7 @@ export function ProjectFilesPanel({
         </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
+      <div className="grid gap-6 xl:grid-cols-[360px,minmax(0,1fr)]">
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/40 p-3">
           {loading ? (
             <p className="px-2 py-3 text-sm text-zinc-500">Loading files...</p>
@@ -295,34 +307,37 @@ export function ProjectFilesPanel({
             <div className="space-y-4">
               {SLOT_ORDER.map((slot) => {
                 const rows = grouped.get(slot) ?? [];
-                if (rows.length === 0) return null;
                 return (
-                  <details key={slot} className="rounded-lg border border-zinc-800">
+                  <details key={slot} className="rounded-lg border border-zinc-800" open={rows.length > 0}>
                     <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-zinc-200">
                       {SLOT_LABEL[slot]} ({rows.length})
                     </summary>
-                    <div className="space-y-1 px-2 pb-2">
-                      {rows.map((file) => (
-                        <button
-                          key={file.id}
-                          type="button"
-                          onClick={() => void openPreview(file)}
-                          className={`w-full rounded-md px-2 py-2 text-left text-sm transition ${
-                            selected?.id === file.id
-                              ? "bg-blue-600/20 text-blue-200"
-                              : workspace?.highlightedFileName === file.name
-                                ? "bg-emerald-600/20 text-emerald-200"
-                              : "text-zinc-300 hover:bg-zinc-800/80"
-                          }`}
-                        >
-                          <div className="truncate">{file.name}</div>
-                          <div className="mt-1 flex items-center justify-between text-xs text-zinc-500">
-                            <span>{readableBytes(file.size_bytes)}</span>
-                            <Badge variant="outline">{file.mirror_status}</Badge>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
+                    {rows.length > 0 ? (
+                      <div className="space-y-1 px-2 pb-2">
+                        {rows.map((file) => (
+                          <button
+                            key={file.id}
+                            type="button"
+                            onClick={() => void openPreview(file)}
+                            className={`w-full rounded-md px-2 py-2 text-left text-sm transition ${
+                              selected?.id === file.id
+                                ? "bg-blue-600/20 text-blue-200"
+                                : workspace?.highlightedFileName === file.name
+                                  ? "bg-emerald-600/20 text-emerald-200"
+                                  : "text-zinc-300 hover:bg-zinc-800/80"
+                            }`}
+                          >
+                            <div className="truncate">{file.name}</div>
+                            <div className="mt-1 flex items-center justify-between text-xs text-zinc-500">
+                              <span>{readableBytes(file.size_bytes)}</span>
+                              <Badge variant="outline">{file.mirror_status}</Badge>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="px-3 pb-3 text-xs text-zinc-500">No files in this directory yet.</p>
+                    )}
                   </details>
                 );
               })}

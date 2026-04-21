@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 type GuardCheck = {
   name: string;
   path: string;
@@ -6,8 +9,51 @@ type GuardCheck = {
   body?: string;
 };
 
+type StaticGuardCheck = {
+  name: string;
+  path: string;
+  requiredPattern: RegExp;
+};
+
 function normalizeBaseUrl(input: string): string {
   return input.endsWith("/") ? input.slice(0, -1) : input;
+}
+
+async function runStaticGuardChecks(): Promise<boolean> {
+  const checks: StaticGuardCheck[] = [
+    {
+      name: "admin users route has guard",
+      path: "app/api/admin/users/route.ts",
+      requiredPattern: /requireApiCapability|requireApiRole/,
+    },
+    {
+      name: "admin user detail route has guard",
+      path: "app/api/admin/users/[id]/route.ts",
+      requiredPattern: /requireApiCapability|requireApiRole/,
+    },
+    {
+      name: "admin user capabilities route has guard",
+      path: "app/api/admin/users/[id]/capabilities/route.ts",
+      requiredPattern: /requireApiCapability|requireApiRole/,
+    },
+    {
+      name: "admin project access route has guard",
+      path: "app/api/admin/users/[id]/project-access/route.ts",
+      requiredPattern: /requireApiCapability|requireApiRole/,
+    },
+  ];
+
+  let hasFailure = false;
+  for (const check of checks) {
+    const absolutePath = join(process.cwd(), check.path);
+    const content = await readFile(absolutePath, "utf8").catch(() => "");
+    const ok = check.requiredPattern.test(content);
+    console.log(
+      `[${ok ? "PASS" : "FAIL"}] ${check.name} :: ${check.path}`,
+    );
+    if (!ok) hasFailure = true;
+  }
+  return !hasFailure;
 }
 
 async function main() {
@@ -78,6 +124,11 @@ async function main() {
   }
 
   if (hasFailure) {
+    process.exit(1);
+  }
+
+  const staticChecksOk = await runStaticGuardChecks();
+  if (!staticChecksOk) {
     process.exit(1);
   }
 
