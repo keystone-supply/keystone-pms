@@ -17,6 +17,10 @@ function pdfBytesInclude(buf: ArrayBuffer, needle: string): boolean {
   return new TextDecoder("latin1").decode(new Uint8Array(buf)).includes(needle);
 }
 
+function pdfBytesIndex(buf: ArrayBuffer, needle: string): number {
+  return new TextDecoder("latin1").decode(new Uint8Array(buf)).indexOf(needle);
+}
+
 const baseMeta: ProjectDocumentDraftMeta = {
   lines: [
     {
@@ -93,6 +97,7 @@ test("quote PDF builds without throw and produces non-empty output", () => {
   assert.ok(pdfBytesInclude(buf, "QUOTATION"));
   assert.ok(pdfBytesInclude(buf, "Doc No. Q-TEST-1"));
   assert.ok(pdfBytesInclude(buf, "Date: Mar 29, 2026"));
+  assert.ok(!pdfBytesInclude(buf, "Customer PO:"));
 });
 
 test("non-quote documents use physical address for SELLER block and consistent VENDOR label (PO, RFQ, invoice, etc.)", () => {
@@ -152,6 +157,69 @@ test("non-quote documents use physical address for SELLER block and consistent V
   assert.ok(pdfBytesInclude(buf, "12090 North Hwy 38"));
   assert.ok(pdfBytesInclude(buf, "Deweyville"));
   assert.ok(pdfBytesInclude(buf, "84309"));
+  assert.ok(!pdfBytesInclude(buf, "Customer PO:"));
+  assert.ok(!pdfBytesInclude(buf, "Project: "));
+});
+
+test("rfq PDF omits Customer PO line and prints heading above job number", () => {
+  const input: BuildProjectDocumentPdfInput = {
+    kind: "rfq",
+    documentNumber: "RFQ-1",
+    issuedDate: new Date("2026-03-29"),
+    company: {
+      legalName: "Keystone Supply",
+      line1: "P.O. Box 129",
+      line2: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "(435) 720-3714",
+      email: "sales@keystone-supply.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
+    },
+    logoDataUrl: null,
+    project: {
+      project_number: "101365",
+      project_name: "Bucket liners",
+      customer: "Geneva Rock",
+      customer_po: "PO-XYZ-123",
+    },
+    fromParty: { label: "Requesting", name: "Keystone Supply", lines: [] },
+    toParty: { label: "Vendor", name: "Acme", lines: ["Ogden, UT"] },
+    meta: {
+      lines: [
+        {
+          lineNo: 1,
+          description: "Wear plate",
+          qty: 5,
+          uom: "EA",
+          unitPrice: 10,
+          extended: 50,
+        },
+      ],
+      packingLines: [],
+      bolRows: [],
+    },
+    documentVersion: 1,
+  };
+
+  const buf = buildProjectDocumentPdf(input);
+  assert.ok(buf.byteLength > 2000);
+  assert.ok(!pdfBytesInclude(buf, "Customer PO:"));
+  const headerIdx = pdfBytesIndex(buf, "REQUEST FOR QUOTATION");
+  const jobIdx = pdfBytesIndex(buf, "101365 REV. 0");
+  const docNoIdx = pdfBytesIndex(buf, "Doc No. RFQ-1");
+  assert.ok(headerIdx >= 0);
+  assert.ok(jobIdx >= 0);
+  assert.ok(docNoIdx >= 0);
+  assert.ok(headerIdx < jobIdx);
+  assert.ok(jobIdx < docNoIdx);
 });
 
 test("buildDocumentDownloadFilename quote matches plan shape", () => {

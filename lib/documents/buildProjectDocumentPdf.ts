@@ -108,17 +108,21 @@ function fmtDateLong(d: Date): string {
   }).format(d);
 }
 
-export async function fetchLogoDataUrl(): Promise<string | null> {
+export async function fetchLogoDataUrl(kind?: ProjectDocumentKind): Promise<string | null> {
   try {
-    const res = await fetch("/logo.png");
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result as string);
-      r.onerror = reject;
-      r.readAsDataURL(blob);
-    });
+    const logoPaths = ["/rfq-logo.png", "/logo.png"];
+    for (const path of logoPaths) {
+      const res = await fetch(path);
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      return await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result as string);
+        r.onerror = reject;
+        r.readAsDataURL(blob);
+      });
+    }
+    return null;
   } catch {
     return null;
   }
@@ -148,7 +152,7 @@ function partyBlockText(p: PdfParty): string {
 type FooterKind = "default" | "quote_cover" | "quote_terms";
 
 function drawFooter(doc: jsPDF, page: number, total: number, footerKind: FooterKind): void {
-  doc.setFontSize(8);
+  doc.setFontSize(6);
   doc.setTextColor(100, 100, 100);
   let disclaimer: string;
   if (footerKind === "quote_cover") {
@@ -158,7 +162,7 @@ function drawFooter(doc: jsPDF, page: number, total: number, footerKind: FooterK
     disclaimer = "";
   } else {
     disclaimer =
-      "Commercial document — subject to Keystone Supply standard terms. Quantities and pricing exclude tax unless noted.";
+      "Commercial document — subject to Keystone Supply | Keystone Industrial standard terms. Quantities and pricing exclude tax unless noted.";
   }
   if (disclaimer) {
     doc.text(disclaimer, MARGIN, PAGE_H - 14, { maxWidth: PAGE_W - 2 * MARGIN });
@@ -231,6 +235,7 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
   const doc = new jsPDF({ unit: "mm", format: "letter" });
   const accent = DOCUMENT_KIND_ACCENT.quote;
   const qr = input.quoteResolved ?? defaultQuoteResolved(input);
+  const compact = true;
 
   doc.setFillColor(accent[0], accent[1], accent[2]);
   doc.rect(0, 0, PAGE_W, 5, "F");
@@ -246,19 +251,24 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     }
   }
 
-  doc.setFontSize(9);
+  doc.setFontSize(8);
   doc.setTextColor(55, 55, 55);
   const companyText = formatCompanyMultiline(input.company);
-  doc.text(companyText.split("\n"), input.logoDataUrl ? MARGIN + 48 : MARGIN, y + 4, {
-    lineHeightFactor: 1.25,
+  const companyY = input.logoDataUrl ? y + 27 : y + 4;
+  doc.text(companyText.split("\n"), MARGIN, companyY, {
+    lineHeightFactor: 1.15,
   });
+  const titleY = y + 7;
+  const jobRevY = titleY + 8;
+  const docNoY = jobRevY + 5.5;
+  const dateY = docNoY + 5.5;
 
-  y = Math.max(y + 22, MARGIN + 28);
-
-  // Job number + REV in upper-right, ~3x larger than before (was 13pt), above Doc No.
-  const jobRevY = y + 2;
-  doc.setFontSize(28);
+  doc.setFontSize(19);
   doc.setFont("helvetica", "bold");
+  doc.setTextColor(accent[0], accent[1], accent[2]);
+  doc.text("QUOTATION", PAGE_W - MARGIN, titleY, { align: "right" });
+
+  doc.setFontSize(17);
   doc.setTextColor(30, 30, 30);
   doc.text(
     formatPdfJobRevLine(
@@ -270,54 +280,50 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     { align: "right" },
   );
   doc.setFont("helvetica", "normal");
-  y += 7;
-  doc.setFontSize(16);
-  doc.setTextColor(accent[0], accent[1], accent[2]);
-  doc.text("QUOTATION", MARGIN, y);
+
   doc.setFontSize(9);
   doc.setTextColor(45, 45, 45);
-  doc.text(`Doc No. ${input.documentNumber}`, PAGE_W - MARGIN, y, { align: "right" });
-  y += 7;
-  doc.setFontSize(9);
+  doc.text(`Doc No. ${input.documentNumber}`, PAGE_W - MARGIN, docNoY, { align: "right" });
+  doc.setFontSize(8);
   doc.setTextColor(40, 40, 40);
-  doc.text(`Date: ${fmtDateLong(input.issuedDate)}`, PAGE_W - MARGIN, y, {
+  doc.text(`Date: ${fmtDateLong(input.issuedDate)}`, PAGE_W - MARGIN, dateY, {
     align: "right",
   });
-  y += 5;
+  y = Math.max(companyY + 20, dateY + 1.5, MARGIN + 32);
 
   if (input.meta.validUntil) {
-    doc.setFontSize(8);
+    doc.setFontSize(compact ? 7 : 8);
     doc.setTextColor(90, 90, 90);
     doc.text(`Valid through: ${input.meta.validUntil}`, PAGE_W - MARGIN, y, {
       align: "right",
     });
-    y += 4;
+    y += compact ? 3 : 4;
   }
 
-  y += 4;
+  y += compact ? 2 : 4;
   doc.setDrawColor(220, 220, 220);
   doc.line(MARGIN, y, PAGE_W - MARGIN, y);
-  y += 5;
+  y += compact ? 4 : 5;
 
   const colW = (PAGE_W - 2 * MARGIN - 8) / 2;
-  doc.setFontSize(8);
+  doc.setFontSize(compact ? 6 : 8);
   doc.setTextColor(120, 120, 120);
   doc.text(input.toParty.label.toUpperCase(), MARGIN, y);
   if (input.toPartySecondary) {
     doc.text(input.toPartySecondary.label.toUpperCase(), MARGIN + colW + 8, y);
   }
-  y += 4;
-  doc.setFontSize(9);
+  y += compact ? 3 : 4;
+  doc.setFontSize(compact ? 7 : 9);
   doc.setTextColor(30, 30, 30);
   doc.text(partyBlockText(input.toParty).split("\n"), MARGIN, y, {
-    lineHeightFactor: 1.2,
+    lineHeightFactor: compact ? 1.05 : 1.2,
   });
   if (input.toPartySecondary) {
     doc.text(
       partyBlockText(input.toPartySecondary).split("\n"),
       MARGIN + colW + 8,
       y,
-      { lineHeightFactor: 1.2 },
+      { lineHeightFactor: compact ? 1.05 : 1.2 },
     );
   }
 
@@ -325,15 +331,15 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     input.toParty.lines.length + 2,
     input.toPartySecondary ? input.toPartySecondary.lines.length + 2 : 2,
   );
-  y += Math.max(partyRows * 4.2, 16);
+  y += Math.max(partyRows * (compact ? 3.15 : 4.2), compact ? 14 : 16);
 
-  y += 3;
-  doc.setFontSize(8);
+  y += compact ? 2 : 3;
+  doc.setFontSize(compact ? 6 : 8);
   doc.setTextColor(120, 120, 120);
   doc.text("QUOTE DESCRIPTION", MARGIN, y);
   doc.text("SHIPPING METHOD", MARGIN + colW + 8, y);
-  y += 4;
-  doc.setFontSize(9);
+  y += compact ? 3 : 4;
+  doc.setFontSize(compact ? 7 : 9);
   doc.setTextColor(35, 35, 35);
   const qDesc = doc.splitTextToSize(qr.quoteDescription, colW - 2);
   doc.text(qDesc, MARGIN, y);
@@ -342,16 +348,9 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     colW - 2,
   );
   doc.text(shipM, MARGIN + colW + 8, y);
-  y += Math.max(qDesc.length, shipM.length) * 3.6 + 4;
+  y += Math.max(qDesc.length, shipM.length) * (compact ? 2.8 : 3.6) + (compact ? 3 : 4);
 
-  if (input.project.customer_po) {
-    doc.setFontSize(8);
-    doc.setTextColor(90, 90, 90);
-    doc.text(`Customer PO: ${input.project.customer_po}`, MARGIN, y);
-    y += 4;
-  }
-
-  y += 2;
+  y += compact ? 1 : 2;
 
   const body = input.meta.lines.map((l) => [
     l.partRef?.trim() ? l.partRef.trim() : String(l.lineNo),
@@ -364,18 +363,20 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     head: [["ITEM #", "DESCRIPTION", "TOTAL"]],
     body,
     margin: { left: MARGIN, right: MARGIN },
-    styles: { fontSize: 8, cellPadding: 2 },
+    styles: { fontSize: compact ? 6 : 8, cellPadding: compact ? 1.2 : 2 },
     columnStyles: {
       2: { halign: "right" },
     },
     headStyles: {
       fillColor: [accent[0], accent[1], accent[2]],
       textColor: [255, 255, 255],
+      fontSize: compact ? 6 : 8,
+      cellPadding: compact ? 1 : 2,
     },
   });
 
   const tSlot = doc as jsPDF & { lastAutoTable?: { finalY: number } };
-  y = (tSlot.lastAutoTable?.finalY ?? y) + 6;
+  y = (tSlot.lastAutoTable?.finalY ?? y) + (compact ? 4 : 6);
 
   const subtotal = input.meta.lines.reduce((s, l) => s + (l.extended || 0), 0);
   const labelX = PAGE_W - MARGIN - 44;
@@ -481,7 +482,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
   }
 
   const doc = new jsPDF({ unit: "mm", format: "letter" });
-  const accent = DOCUMENT_KIND_ACCENT[input.kind];
+  const accent = DOCUMENT_KIND_ACCENT.quote;
   const title = DOCUMENT_KIND_LABEL[input.kind];
 
   doc.setFillColor(accent[0], accent[1], accent[2]);
@@ -498,19 +499,25 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
     }
   }
 
-  doc.setFontSize(9);
   doc.setTextColor(55, 55, 55);
   const companyText = formatCompanyMultiline(input.company);
-  doc.text(companyText.split("\n"), input.logoDataUrl ? MARGIN + 48 : MARGIN, y + 4, {
-    lineHeightFactor: 1.25,
+  let rfqDateBaselineY: number | null = null;
+  doc.setFontSize(8);
+  const companyY = input.logoDataUrl ? y + 27 : y + 4;
+  doc.text(companyText.split("\n"), MARGIN, companyY, {
+    lineHeightFactor: 1.15,
   });
+  const titleY = y + 7;
+  const jobRevY = titleY + 8;
+  const docNoY = jobRevY + 5.5;
+  const dateY = docNoY + 5.5;
 
-  y = Math.max(y + 22, MARGIN + 28);
-
-  // Job number + REV in upper-right, ~3x larger than before (was 13pt), above Doc No.
-  const jobRevY = y + 2;
-  doc.setFontSize(28);
+  doc.setFontSize(19);
   doc.setFont("helvetica", "bold");
+  doc.setTextColor(accent[0], accent[1], accent[2]);
+  doc.text(title.toUpperCase(), PAGE_W - MARGIN, titleY, { align: "right" });
+
+  doc.setFontSize(17);
   doc.setTextColor(30, 30, 30);
   doc.text(
     formatPdfJobRevLine(
@@ -522,41 +529,54 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
     { align: "right" },
   );
   doc.setFont("helvetica", "normal");
-  y += 7;
 
-  doc.setFontSize(16);
-  doc.setTextColor(accent[0], accent[1], accent[2]);
-  doc.text(title.toUpperCase(), MARGIN, y);
-  doc.setFontSize(10);
-  doc.setTextColor(40, 40, 40);
-  doc.text(`Doc No. ${input.documentNumber}`, PAGE_W - MARGIN, y, { align: "right" });
-  y += 7;
   doc.setFontSize(9);
-  doc.text(`Date: ${fmtDateLong(input.issuedDate)}`, PAGE_W - MARGIN, y, {
+  doc.setTextColor(40, 40, 40);
+  doc.text(`Doc No. ${input.documentNumber}`, PAGE_W - MARGIN, docNoY, {
     align: "right",
   });
-  y += 2;
+
+  doc.setFontSize(8);
+  doc.text(`Date: ${fmtDateLong(input.issuedDate)}`, PAGE_W - MARGIN, dateY, {
+    align: "right",
+  });
+  rfqDateBaselineY = dateY;
+  y = Math.max(companyY + 20, dateY + 1.5, MARGIN + 32);
 
   if (input.meta.responseDue && input.kind === "rfq") {
-    y += 4;
-    doc.text(`Response requested by: ${input.meta.responseDue}`, PAGE_W - MARGIN, y, {
+    const responseY = (rfqDateBaselineY ?? y) + 2.5;
+    doc.setFontSize(8);
+    doc.setTextColor(40, 40, 40);
+    doc.text(`Response requested by: ${input.meta.responseDue}`, PAGE_W - MARGIN, responseY, {
       align: "right",
     });
-    y -= 4;
+    y = Math.max(y, responseY + 2);
   }
 
-  y += 10;
+  const rfqCompact = true;
+
+  y += rfqCompact ? 0 : 1;
   doc.setDrawColor(220, 220, 220);
   doc.line(MARGIN, y, PAGE_W - MARGIN, y);
-  y += 6;
+  y += rfqCompact ? 4 : 6;
 
   const colW = (PAGE_W - 2 * MARGIN - 8) / 2;
-  doc.setFontSize(8);
+  const invoiceDualParty = input.kind === "invoice" && !!input.toPartySecondary;
+  doc.setFontSize(rfqCompact ? 6 : 8);
   doc.setTextColor(120, 120, 120);
-  doc.text(input.fromParty.label.toUpperCase(), MARGIN, y);
-  doc.text(input.toParty.label.toUpperCase(), MARGIN + colW + 8, y);
-  y += 4;
-  doc.setFontSize(9);
+  doc.text(
+    (invoiceDualParty ? input.toParty.label : input.fromParty.label).toUpperCase(),
+    MARGIN,
+    y,
+  );
+  doc.text(
+    (invoiceDualParty ? input.toPartySecondary?.label : input.toParty.label)?.toUpperCase() ??
+      "",
+    MARGIN + colW + 8,
+    y,
+  );
+  y += rfqCompact ? 3 : 4;
+  doc.setFontSize(rfqCompact ? 7 : 9);
   doc.setTextColor(30, 30, 30);
 
   // Use physical address + "REQUESTING" label for RFQ and Purchase Order;
@@ -571,57 +591,79 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
       ? formatPhysicalAddress(input.company)
       : partyBlockText(input.fromParty);
 
-  doc.text(fromText.split("\n"), MARGIN, y, {
-    lineHeightFactor: 1.2,
+  const leftBlockText = invoiceDualParty ? partyBlockText(input.toParty) : fromText;
+  const rightBlockText = invoiceDualParty
+    ? partyBlockText(input.toPartySecondary as PdfParty)
+    : partyBlockText(input.toParty);
+
+  doc.text(leftBlockText.split("\n"), MARGIN, y, {
+    lineHeightFactor: rfqCompact ? 1.05 : 1.2,
   });
-  doc.text(partyBlockText(input.toParty).split("\n"), MARGIN + colW + 8, y, {
-    lineHeightFactor: 1.2,
+  doc.text(rightBlockText.split("\n"), MARGIN + colW + 8, y, {
+    lineHeightFactor: rfqCompact ? 1.05 : 1.2,
   });
 
-  const leftH = input.fromParty.lines.length + 2;
-  const rightH = input.toParty.lines.length + 2;
-  y += Math.max(leftH * 4.2, rightH * 4.2, 18);
+  const leftPartyRows = invoiceDualParty
+    ? input.toParty.lines.length + 2
+    : input.fromParty.lines.length + 2;
+  const rightPartyRows = invoiceDualParty
+    ? (input.toPartySecondary?.lines.length ?? 0) + 2
+    : input.toParty.lines.length + 2;
+  y += Math.max(
+    leftPartyRows * (rfqCompact ? 3.15 : 4.2),
+    rightPartyRows * (rfqCompact ? 3.15 : 4.2),
+    rfqCompact ? 14 : 18,
+  );
 
-  if (input.toPartySecondary) {
-    doc.setFontSize(8);
+  if (input.toPartySecondary && !invoiceDualParty) {
+    doc.setFontSize(rfqCompact ? 6 : 8);
     doc.setTextColor(120, 120, 120);
     doc.text(input.toPartySecondary.label.toUpperCase(), MARGIN + colW + 8, y);
-    y += 4;
-    doc.setFontSize(9);
+    y += rfqCompact ? 3 : 4;
+    doc.setFontSize(rfqCompact ? 7 : 9);
     doc.setTextColor(30, 30, 30);
     doc.text(
       partyBlockText(input.toPartySecondary).split("\n"),
       MARGIN + colW + 8,
       y,
-      { lineHeightFactor: 1.2 },
+      { lineHeightFactor: rfqCompact ? 1.05 : 1.2 },
     );
-    y += Math.max(4.2 * (input.toPartySecondary.lines.length + 2), 14);
+    y += Math.max(
+      (rfqCompact ? 3.15 : 4.2) * (input.toPartySecondary.lines.length + 2),
+      rfqCompact ? 11 : 14,
+    );
   }
 
-  y += 4;
-  doc.setFontSize(8);
+  y += rfqCompact ? 2 : 4;
+  doc.setFontSize(rfqCompact ? 6 : 8);
   doc.setTextColor(90, 90, 90);
-  doc.text(
-    `Project: ${input.project.project_number} — ${(input.project.project_name ?? "").toUpperCase()}`,
-    MARGIN,
-    y,
-  );
-  y += 4;
+  if (input.kind !== "rfq" && input.kind !== "purchase_order") {
+    doc.text(
+      `Project: ${input.project.project_number} — ${(input.project.project_name ?? "").toUpperCase()}`,
+      MARGIN,
+      y,
+    );
+    y += rfqCompact ? 3 : 4;
+  }
   if (input.project.customer && input.kind !== "rfq" && input.kind !== "purchase_order") {
     doc.text(`Customer ref: ${input.project.customer}`, MARGIN, y);
-    y += 4;
+    y += rfqCompact ? 3 : 4;
   }
-  if (input.project.customer_po) {
+  if (
+    input.project.customer_po &&
+    input.kind !== "rfq" &&
+    input.kind !== "purchase_order"
+  ) {
     doc.text(`Customer PO: ${input.project.customer_po}`, MARGIN, y);
-    y += 4;
+    y += rfqCompact ? 3 : 4;
   }
   if (input.meta.freightTerms) {
     doc.text(`Freight: ${input.meta.freightTerms}`, MARGIN, y);
-    y += 4;
+    y += rfqCompact ? 3 : 4;
   }
   if (input.meta.incoterms && input.kind === "rfq") {
     doc.text(`Incoterms: ${input.meta.incoterms}`, MARGIN, y);
-    y += 4;
+    y += rfqCompact ? 3 : 4;
   }
   if (input.kind === "bol") {
     if (input.meta.carrier) {
@@ -638,7 +680,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
     }
   }
 
-  y += 4;
+  y += rfqCompact ? 2 : 4;
 
   const addTotals = (subtotal: number) => {
     doc.setFontSize(10);
@@ -673,14 +715,19 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
       head: [["#", "Part / dwg", "Description", "Qty", "UOM", "Unit", "Ext."]],
       body,
       margin: { left: MARGIN, right: MARGIN },
-      styles: { fontSize: 8, cellPadding: 2 },
+      styles: {
+        fontSize: rfqCompact ? 6 : 8,
+        cellPadding: rfqCompact ? 1.2 : 2,
+      },
       headStyles: {
         fillColor: [accent[0], accent[1], accent[2]],
         textColor: [255, 255, 255],
+        fontSize: rfqCompact ? 6 : 8,
+        cellPadding: rfqCompact ? 1 : 2,
       },
     });
     const t = doc as jsPDF & { lastAutoTable?: { finalY: number } };
-    y = (t.lastAutoTable?.finalY ?? y) + 8;
+    y = (t.lastAutoTable?.finalY ?? y) + (rfqCompact ? 5 : 8);
     const subtotal = input.meta.lines.reduce((s, l) => s + (l.extended || 0), 0);
     addTotals(subtotal);
   } else if (input.kind === "packing_list") {
@@ -707,14 +754,19 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
       head: [["#", "Description", "Qty", "UOM", "Wt (lb)", "Dims"]],
       body,
       margin: { left: MARGIN, right: MARGIN },
-      styles: { fontSize: 8, cellPadding: 2 },
+      styles: {
+        fontSize: rfqCompact ? 6 : 8,
+        cellPadding: rfqCompact ? 1.2 : 2,
+      },
       headStyles: {
         fillColor: [accent[0], accent[1], accent[2]],
         textColor: [255, 255, 255],
+        fontSize: rfqCompact ? 6 : 8,
+        cellPadding: rfqCompact ? 1 : 2,
       },
     });
     const t = doc as jsPDF & { lastAutoTable?: { finalY: number } };
-    y = (t.lastAutoTable?.finalY ?? y) + 8;
+    y = (t.lastAutoTable?.finalY ?? y) + (rfqCompact ? 5 : 8);
   } else if (input.kind === "bol") {
     const bolRows = input.meta.bolRows?.length
       ? input.meta.bolRows
@@ -735,17 +787,22 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
       head: [["Commodity / description", "Qty", "Weight (lb)", "NMFC"]],
       body,
       margin: { left: MARGIN, right: MARGIN },
-      styles: { fontSize: 8, cellPadding: 2 },
+      styles: {
+        fontSize: rfqCompact ? 6 : 8,
+        cellPadding: rfqCompact ? 1.2 : 2,
+      },
       headStyles: {
         fillColor: [accent[0], accent[1], accent[2]],
         textColor: [255, 255, 255],
+        fontSize: rfqCompact ? 6 : 8,
+        cellPadding: rfqCompact ? 1 : 2,
       },
     });
     const t = doc as jsPDF & { lastAutoTable?: { finalY: number } };
-    y = (t.lastAutoTable?.finalY ?? y) + 12;
+    y = (t.lastAutoTable?.finalY ?? y) + (rfqCompact ? 6 : 12);
     doc.setDrawColor(80, 80, 80);
     doc.rect(MARGIN, y, PAGE_W - 2 * MARGIN, 28);
-    doc.setFontSize(9);
+    doc.setFontSize(rfqCompact ? 7 : 9);
     doc.text(
       "Receiver signature — goods received in apparent good order unless noted:",
       MARGIN + 3,

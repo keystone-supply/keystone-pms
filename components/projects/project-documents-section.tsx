@@ -442,7 +442,7 @@ export function ProjectDocumentsSection({
     setExportBusy(true);
     setExportError("");
     try {
-      const logo = await fetchLogoDataUrl();
+      const logo = await fetchLogoDataUrl(exportingRow.kind);
       const vendorForRow =
         (exportingRow.kind === "rfq" ||
           exportingRow.kind === "purchase_order") &&
@@ -541,7 +541,7 @@ export function ProjectDocumentsSection({
 
   const quickPreview = async (r: ProjectDocumentRow) => {
     try {
-      const logo = await fetchLogoDataUrl();
+      const logo = await fetchLogoDataUrl(r.kind);
       const buffer = generateProjectDocumentPdfBuffer({
         kind: r.kind,
         documentNumber: r.number ?? suggestDocNumber(project, r.kind),

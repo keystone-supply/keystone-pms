@@ -23,7 +23,8 @@ export type CompanyBlock = {
 export function getCompanyBlock(): CompanyBlock {
   return {
     legalName:
-      process.env.NEXT_PUBLIC_COMPANY_LEGAL_NAME ?? "Keystone Supply",
+      process.env.NEXT_PUBLIC_COMPANY_LEGAL_NAME ??
+      "Keystone Supply | Keystone Industrial",
     line1: process.env.NEXT_PUBLIC_COMPANY_LINE1 ?? "P.O. Box 129",
     line2: process.env.NEXT_PUBLIC_COMPANY_LINE2 ?? "",
     city: process.env.NEXT_PUBLIC_COMPANY_CITY ?? "Riverside",

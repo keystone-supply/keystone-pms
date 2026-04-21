@@ -54,6 +54,24 @@ describe("deriveProjectStatusTicker", () => {
     assert.equal(ticker.current, "materials_in");
   });
 
+  it("calculates idle from latest ticker-stage timestamp, not non-ticker stage timestamps", () => {
+    const ticker = deriveProjectStatusTicker(
+      r({
+        created_at: "2026-04-01T00:00:00.000Z",
+        sales_command_stage: "in_process",
+        rfq_received_at: "2026-04-01T10:00:00.000Z",
+        rfq_vendors_sent_at: "2026-04-02T10:00:00.000Z",
+        quote_sent_at: "2026-04-03T10:00:00.000Z",
+        po_issued_at: "2026-04-04T10:00:00.000Z",
+        materials_ordered_at: "2026-04-05T10:00:00.000Z",
+        in_process_at: "2026-04-09T10:00:00.000Z",
+      }),
+      new Date("2026-04-10T10:00:00.000Z"),
+    );
+
+    assert.equal(ticker.staleDays, 5);
+  });
+
   it("uses completed_at as ready_to_ship fallback", () => {
     const ticker = deriveProjectStatusTicker(
       r({

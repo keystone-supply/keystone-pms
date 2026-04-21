@@ -165,43 +165,11 @@ function isStageReached(id: TickerStageId, p: RowWithTickerFields): boolean {
   }
 }
 
-function timestampForCurrentSalesStage(p: RowWithTickerFields): string | null {
-  switch (p.sales_command_stage) {
-    case "rfq_customer":
-      return p.rfq_received_at ?? p.created_at ?? null;
-    case "rfq_vendors":
-      return p.rfq_vendors_sent_at ?? null;
-    case "quote_sent":
-      return p.quote_sent_at ?? null;
-    case "po_issued":
-      return p.po_issued_at ?? null;
-    case "in_process":
-      return p.in_process_at ?? null;
-    case "complete":
-      return p.completed_at ?? null;
-    case "delivered":
-      return p.delivered_at ?? null;
-    case "invoiced":
-      return p.invoiced_at ?? null;
-    case "lost":
-      return p.lost_at ?? null;
-    case "cancelled":
-      return p.cancelled_at ?? null;
-    default:
-      return null;
-  }
-}
-
 function staleDaysForTicker(
   stages: TickerStage[],
   p: RowWithTickerFields,
   now: Date,
 ): number {
-  const currentStageMs = parseIsoMs(timestampForCurrentSalesStage(p));
-  if (currentStageMs !== null) {
-    return Math.floor(Math.max(0, now.getTime() - currentStageMs) / 86400000);
-  }
-
   let latestReachedMs: number | null = null;
 
   for (const stage of stages) {

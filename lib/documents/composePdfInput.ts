@@ -205,16 +205,44 @@ export function composeProjectDocumentPdfInput(args: {
       }
       break;
     }
-    case "packing_list":
-    case "bol":
-      toParty = partyFromShipMeta(
-        "Consignee",
-        args.meta,
-        args.customer?.legal_name ??
-          args.project.customer ??
-          "Consignee",
-      );
+    case "packing_list": {
+      const c = args.customer;
+      const legal = c?.legal_name ?? args.project.customer ?? "Consignee";
+      if (args.meta.shipToLine1 || args.meta.shipToCity) {
+        const fromMeta = partyFromShipMeta("Consignee", args.meta, legal);
+        toParty = { ...fromMeta, name: legal };
+      } else if (args.defaultShipTo && c) {
+        toParty = partyFromShippingRow("Consignee", c, args.defaultShipTo);
+      } else if (c) {
+        toParty = {
+          label: "Consignee",
+          name: c.legal_name,
+          lines: linesFromCustomer(c),
+        };
+      } else {
+        toParty = partyFromShipMeta("Consignee", args.meta, legal);
+      }
       break;
+    }
+    case "bol": {
+      const c = args.customer;
+      const legal = c?.legal_name ?? args.project.customer ?? "Consignee";
+      if (args.meta.shipToLine1 || args.meta.shipToCity) {
+        const fromMeta = partyFromShipMeta("Consignee", args.meta, legal);
+        toParty = { ...fromMeta, name: legal };
+      } else if (args.defaultShipTo && c) {
+        toParty = partyFromShippingRow("Consignee", c, args.defaultShipTo);
+      } else if (c) {
+        toParty = {
+          label: "Consignee",
+          name: c.legal_name,
+          lines: linesFromCustomer(c),
+        };
+      } else {
+        toParty = partyFromShipMeta("Consignee", args.meta, legal);
+      }
+      break;
+    }
     default:
       toParty = { label: "To", name: "", lines: [] };
   }

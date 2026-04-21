@@ -83,16 +83,13 @@ export function ProjectStatusTicker({
       <div className="flex flex-wrap items-center gap-2">
         {ticker.stages.map((stage) => {
           const label = TICKER_STAGE_LABELS[stage.id];
-          const showAgingDot = stage.isCurrent && tone !== "none";
+          const showCurrentStageDot = stage.isCurrent;
 
           const content = (
             <>
-              {showAgingDot && (
+              {showCurrentStageDot && (
                 <span
-                  className={cn(
-                    "inline-block size-1.5 rounded-full",
-                    tone === "red" ? "bg-red-400" : "bg-amber-400",
-                  )}
+                  className="inline-block size-1.5 rounded-full bg-red-400"
                 />
               )}
               <span>{isFull ? label : COMPACT_STAGE_LABELS[stage.id]}</span>
