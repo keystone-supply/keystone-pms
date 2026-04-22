@@ -1,6 +1,6 @@
 # Keystone PMS
 
-Project management system for a fabrication/CNC shop: projects, quotes, P&L tracking, material weight calculator, and OneDrive project folder integration.
+Project management system for a fabrication/CNC shop: projects, quotes, P&L tracking, material weight calculator, OneDrive project folder integration, immutable project document revision history, and a full Document Workspace editor (rich text, live PDF preview, calc sync, job packet builder) in project view.
 
 ## Tech stack
 
@@ -52,6 +52,16 @@ Azure AD app must request scope `Files.ReadWrite.All` for OneDrive folder creati
 - `lib/` – `supabaseClient.ts` (Supabase client + authenticated bridge token wiring), `onedrive.ts` (Microsoft Graph: project folders + tape upload), `utils.ts` (shared helpers).
 - `components/ui/` – shadcn UI components (button, table, badge, etc.).
 
+## Architecture and operations docs
+
+- `docs/project-view-page-overview.md` – detailed project workspace behavior, panel responsibilities, and OneDrive/document flows.
+- `docs/Project-view-major-update-overview.md` – original goals/spec for the project view documents workspace upgrade.
+- `docs/document_workspace_upgrade_f1fdea2d.plan.md` – implementation plan and phase tracking for the workspace build.
+- `docs/document-workspace-launch-checklist.md` – rollout verification checklist and latest launch status.
+- `docs/nesting-scale-and-timeouts.md` – proxy/runtime timeout guidance and large-nest operational constraints.
+- `docs/rbac-role-matrix.md` – canonical capability matrix for UI/API and DB policy expectations.
+- `supabase/README.md` – migration changelog, RBAC hardening notes, and required schema operation workflow.
+
 ## NestNow integration
 
 Nesting logic comes from [keystone-supply/NestNow](https://github.com/keystone-supply/NestNow) (a fork of deepnest-next). NestNow is developed in a **separate repo** under the Keystone Supply org. For local integration work:
@@ -86,7 +96,7 @@ This repository includes a `.cursor/` directory with rules, skills, and agents t
 
 - Open the `keystone-pms` folder (or the `keystone-pms.code-workspace` multi-root workspace file) in Cursor.
 - Cursor will automatically load:
-  - [`.cursor/rules/Keystone-PMS-Core-Standards.mdc`](.cursor/rules/Keystone-PMS-Core-Standards.mdc) (always applied)
+  - Project rules from `.cursor/rules/` (always applied)
   - Domain skills in [`.cursor/skills/`](.cursor/skills/)
   - Specialized agents in [`.cursor/agents/`](.cursor/agents/)
 

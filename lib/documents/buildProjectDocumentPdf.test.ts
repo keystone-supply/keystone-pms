@@ -40,6 +40,9 @@ const baseMeta: ProjectDocumentDraftMeta = {
   quotePdfLogisticsAmount: 10,
 };
 
+const TINY_PNG_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn8z1sAAAAASUVORK5CYII=";
+
 test("quote PDF builds without throw and produces non-empty output", () => {
   const input: BuildProjectDocumentPdfInput = {
     kind: "quote",
@@ -220,6 +223,718 @@ test("rfq PDF omits Customer PO line and prints heading above job number", () =>
   assert.ok(docNoIdx >= 0);
   assert.ok(headerIdx < jobIdx);
   assert.ok(jobIdx < docNoIdx);
+});
+
+test("all document kinds render line text when descriptionRich is present", () => {
+  for (const kind of PROJECT_DOCUMENT_KINDS) {
+    const input: BuildProjectDocumentPdfInput = {
+      kind,
+      documentNumber: `${DOCUMENT_KIND_FILE_CODE[kind]}-RICH-1`,
+      issuedDate: new Date("2026-03-29"),
+      company: {
+        legalName: "Keystone Supply",
+        line1: "P.O. Box 129",
+        line2: "",
+        city: "Riverside",
+        state: "UT",
+        postalCode: "84334",
+        country: "USA",
+        phone: "(435) 720-3714",
+        email: "sales@keystone-supply.com",
+        physicalLine1: "12090 North Hwy 38",
+        physicalLine2: "",
+        physicalCity: "Deweyville",
+        physicalState: "UT",
+        physicalPostalCode: "84309",
+        physicalCountry: "USA",
+      },
+      logoDataUrl: null,
+      project: {
+        project_number: "101365",
+        project_name: "Bucket liners",
+        customer: "Geneva Rock",
+        customer_po: "PO-XYZ-123",
+      },
+      fromParty: { label: "Seller", name: "Keystone Supply", lines: [] },
+      toParty: { label: "Customer", name: "Geneva Rock", lines: ["Ogden, UT"] },
+      meta: {
+        lines: [
+          {
+            lineNo: 1,
+            description: "Rich fallback text",
+            descriptionRich: {
+              type: "doc",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [
+                    { type: "text", text: "Rich " },
+                    { type: "text", text: "fallback", marks: [{ type: "bold" }] },
+                    { type: "text", text: " text" },
+                  ],
+                },
+              ],
+            },
+            qty: 1,
+            uom: "EA",
+            unitPrice: 10,
+            extended: 10,
+          },
+        ],
+        packingLines: [],
+        bolRows: [],
+      },
+      revisionIndex: 0,
+      ...(kind === "quote"
+        ? {
+            quoteResolved: {
+              paymentTerms: "NET 30",
+              customerContact: "Alex",
+              accountManager: "Luke (555-0200)",
+              quoteDescription: "BUCKET LINERS",
+              shippingMethod: "Prepaid",
+            },
+          }
+        : {}),
+    };
+    const buf = buildProjectDocumentPdf(input);
+    assert.ok(buf.byteLength > 2000);
+    assert.ok(pdfBytesInclude(buf, "Rich fallback text"));
+  }
+});
+
+test("PDF description prefers serialized rich text over plain fallback field", () => {
+  const input: BuildProjectDocumentPdfInput = {
+    kind: "quote",
+    documentNumber: "Q-RICH-SERIALIZER-1",
+    issuedDate: new Date(2026, 2, 29),
+    company: {
+      legalName: "Test Co",
+      line1: "1 Main",
+      line2: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "555-0100",
+      email: "sales@example.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
+    },
+    logoDataUrl: null,
+    project: {
+      project_number: "RICH-1",
+      project_name: "Rich serializer test",
+      customer: "Geneva Rock",
+      customer_po: null,
+    },
+    fromParty: { label: "Seller", name: "Test Co", lines: [] },
+    toParty: { label: "Customer", name: "Geneva Rock", lines: ["Ogden, UT"] },
+    meta: {
+      ...baseMeta,
+      lines: [
+        {
+          lineNo: 1,
+          description: "PLAIN_ONLY",
+          descriptionRich: {
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [{ type: "text", text: "RICH_ONLY" }],
+              },
+              {
+                type: "bulletList",
+                content: [
+                  {
+                    type: "listItem",
+                    content: [
+                      {
+                        type: "paragraph",
+                        content: [{ type: "text", text: "RICH_BULLET_ONLY" }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          qty: 1,
+          uom: "EA",
+          unitPrice: 10,
+          extended: 10,
+        },
+      ],
+    },
+    revisionIndex: 0,
+    quoteResolved: {
+      paymentTerms: "NET 30",
+      customerContact: "Alex",
+      accountManager: "Luke (555-0200)",
+      quoteDescription: "RICH",
+      shippingMethod: "Prepaid",
+    },
+  };
+
+  const buf = buildProjectDocumentPdf(input);
+  assert.ok(pdfBytesInclude(buf, "RICH_ONLY"));
+  assert.ok(pdfBytesInclude(buf, "RICH_BULLET_ONLY"));
+  assert.ok(!pdfBytesInclude(buf, "PLAIN_ONLY"));
+});
+
+test("quote PDF renders hierarchical line order with nested indentation", () => {
+  const input: BuildProjectDocumentPdfInput = {
+    kind: "quote",
+    documentNumber: "Q-HIER-1",
+    issuedDate: new Date(2026, 2, 29),
+    company: {
+      legalName: "Test Co",
+      line1: "1 Main",
+      line2: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "555-0100",
+      email: "sales@example.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
+    },
+    logoDataUrl: null,
+    project: {
+      project_number: "HIER-100",
+      project_name: "Hierarchy test",
+      customer: "Geneva Rock",
+      customer_po: null,
+    },
+    fromParty: { label: "Seller", name: "Test Co", lines: [] },
+    toParty: {
+      label: "Customer",
+      name: "Geneva Rock",
+      lines: ["Ogden, UT"],
+    },
+    meta: {
+      ...baseMeta,
+      lines: [
+        {
+          id: "child-1",
+          parentId: "parent-1",
+          lineNo: 2,
+          description: "Child_L2",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 5,
+          extended: 5,
+        },
+        {
+          id: "parent-1",
+          lineNo: 9,
+          description: "Parent_L1",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 10,
+          extended: 10,
+        },
+        {
+          id: "grand-1",
+          parentId: "child-1",
+          lineNo: 1,
+          description: "Grandchild_L3",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 2,
+          extended: 2,
+        },
+        {
+          id: "orphan-1",
+          parentId: "missing-parent",
+          lineNo: 3,
+          description: "OrphanRoot_L0",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 7,
+          extended: 7,
+        },
+        {
+          id: "cycle-a",
+          parentId: "cycle-b",
+          lineNo: 4,
+          description: "CycleA_L0",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 4,
+          extended: 4,
+        },
+        {
+          id: "cycle-b",
+          parentId: "cycle-a",
+          lineNo: 5,
+          description: "CycleB_L0",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 6,
+          extended: 6,
+        },
+      ],
+    },
+    revisionIndex: 0,
+    quoteResolved: {
+      paymentTerms: "NET 30",
+      customerContact: "Alex",
+      accountManager: "Luke (555-0200)",
+      quoteDescription: "HIERARCHY",
+      shippingMethod: "Prepaid",
+    },
+  };
+
+  const buf = buildProjectDocumentPdf(input);
+  assert.ok(pdfBytesInclude(buf, "OrphanRoot_L0"));
+  assert.ok(pdfBytesInclude(buf, "Parent_L1"));
+  assert.ok(pdfBytesInclude(buf, "  Child_L2"));
+  assert.ok(pdfBytesInclude(buf, "    Grandchild_L3"));
+  assert.ok(pdfBytesInclude(buf, "CycleA_L0"));
+  assert.ok(pdfBytesInclude(buf, "CycleB_L0"));
+
+  const orphanIdx = pdfBytesIndex(buf, "OrphanRoot_L0");
+  const parentIdx = pdfBytesIndex(buf, "Parent_L1");
+  const childIdx = pdfBytesIndex(buf, "  Child_L2");
+  const grandIdx = pdfBytesIndex(buf, "    Grandchild_L3");
+  assert.ok(orphanIdx >= 0);
+  assert.ok(parentIdx >= 0);
+  assert.ok(childIdx >= 0);
+  assert.ok(grandIdx >= 0);
+  assert.ok(orphanIdx < parentIdx);
+  assert.ok(parentIdx < childIdx);
+  assert.ok(childIdx < grandIdx);
+});
+
+test("invoice PDF table uses hierarchical line ordering and indentation", () => {
+  const input: BuildProjectDocumentPdfInput = {
+    kind: "invoice",
+    documentNumber: "INV-HIER-1",
+    issuedDate: new Date("2026-03-29"),
+    company: {
+      legalName: "Keystone Supply",
+      line1: "P.O. Box 129",
+      line2: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "(435) 720-3714",
+      email: "sales@keystone-supply.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
+    },
+    logoDataUrl: null,
+    project: {
+      project_number: "101365",
+      project_name: "Bucket liners",
+      customer: "Geneva Rock",
+      customer_po: "PO-XYZ-123",
+    },
+    fromParty: { label: "Seller", name: "Keystone Supply", lines: [] },
+    toParty: { label: "Bill to", name: "Geneva Rock", lines: ["Ogden, UT"] },
+    toPartySecondary: {
+      label: "Ship to",
+      name: "Geneva Rock",
+      lines: ["Ogden, UT"],
+    },
+    meta: {
+      lines: [
+        {
+          id: "child",
+          parentId: "parent",
+          lineNo: 1,
+          description: "InvoiceChild",
+          qty: 2,
+          uom: "EA",
+          unitPrice: 12,
+          extended: 24,
+          partRef: "INV-C",
+        },
+        {
+          id: "parent",
+          lineNo: 2,
+          description: "InvoiceParent",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 100,
+          extended: 100,
+          partRef: "INV-P",
+        },
+      ],
+      packingLines: [],
+      bolRows: [],
+    },
+    revisionIndex: 0,
+  };
+
+  const buf = buildProjectDocumentPdf(input);
+  assert.ok(pdfBytesInclude(buf, "InvoiceParent"));
+  assert.ok(pdfBytesInclude(buf, "  InvoiceChild"));
+  const parentIdx = pdfBytesIndex(buf, "InvoiceParent");
+  const childIdx = pdfBytesIndex(buf, "  InvoiceChild");
+  assert.ok(parentIdx >= 0);
+  assert.ok(childIdx >= 0);
+  assert.ok(parentIdx < childIdx);
+});
+
+test("quote PDF renders option sections with per-option subtotals", () => {
+  const input: BuildProjectDocumentPdfInput = {
+    kind: "quote",
+    documentNumber: "Q-OPT-1",
+    issuedDate: new Date(2026, 2, 29),
+    company: {
+      legalName: "Test Co",
+      line1: "1 Main",
+      line2: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "555-0100",
+      email: "sales@example.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
+    },
+    logoDataUrl: null,
+    project: {
+      project_number: "OPT-101",
+      project_name: "Options test",
+      customer: "Geneva Rock",
+      customer_po: null,
+    },
+    fromParty: { label: "Seller", name: "Test Co", lines: [] },
+    toParty: {
+      label: "Customer",
+      name: "Geneva Rock",
+      lines: ["Ogden, UT"],
+    },
+    meta: {
+      ...baseMeta,
+      optionGroups: [{ id: "opt-a", title: "Alt Liner", lineIds: [] }],
+      lines: [
+        {
+          id: "base-line-1",
+          lineNo: 1,
+          description: "Base line",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 100,
+          extended: 100,
+        },
+        {
+          id: "opt-line-1",
+          optionGroupId: "opt-a",
+          lineNo: 2,
+          description: "Option line",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 25,
+          extended: 25,
+        },
+      ],
+    },
+    revisionIndex: 0,
+    quoteResolved: {
+      paymentTerms: "NET 30",
+      customerContact: "Alex",
+      accountManager: "Luke (555-0200)",
+      quoteDescription: "OPTIONS",
+      shippingMethod: "Prepaid",
+    },
+  };
+  const buf = buildProjectDocumentPdf(input);
+  assert.ok(pdfBytesInclude(buf, "BASE SCOPE"));
+  assert.ok(pdfBytesInclude(buf, "OPTION: ALT LINER"));
+  assert.ok(pdfBytesInclude(buf, "OPTION SUBTOTAL"));
+  assert.ok(pdfBytesInclude(buf, "$25.00"));
+  assert.ok(pdfBytesInclude(buf, "$125.00"));
+});
+
+test("quote PDF can present options without single grand total", () => {
+  const input: BuildProjectDocumentPdfInput = {
+    kind: "quote",
+    documentNumber: "Q-OPT-2",
+    issuedDate: new Date(2026, 2, 29),
+    company: {
+      legalName: "Test Co",
+      line1: "1 Main",
+      line2: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "555-0100",
+      email: "sales@example.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
+    },
+    logoDataUrl: null,
+    project: {
+      project_number: "OPT-102",
+      project_name: "Options mode test",
+      customer: "Geneva Rock",
+      customer_po: null,
+    },
+    fromParty: { label: "Seller", name: "Test Co", lines: [] },
+    toParty: {
+      label: "Customer",
+      name: "Geneva Rock",
+      lines: ["Ogden, UT"],
+    },
+    meta: {
+      ...baseMeta,
+      optionGroups: [{ id: "opt-a", title: "Alt A", lineIds: [] }],
+      quotePresentAsMultipleOptions: true,
+      lines: [
+        {
+          id: "base-line-1",
+          lineNo: 1,
+          description: "Base line",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 50,
+          extended: 50,
+        },
+        {
+          id: "opt-line-1",
+          optionGroupId: "opt-a",
+          lineNo: 2,
+          description: "Option line",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 10,
+          extended: 10,
+        },
+      ],
+    },
+    revisionIndex: 0,
+    quoteResolved: {
+      paymentTerms: "NET 30",
+      customerContact: "Alex",
+      accountManager: "Luke (555-0200)",
+      quoteDescription: "OPTIONS",
+      shippingMethod: "Prepaid",
+    },
+  };
+  const buf = buildProjectDocumentPdf(input);
+  assert.ok(pdfBytesInclude(buf, "CUSTOMER TO SELECT OPTION"));
+  assert.ok(pdfBytesInclude(buf, "No single grand total is presented."));
+});
+
+test("quote PDF renders reference figures block for imageRef lines", () => {
+  const input: BuildProjectDocumentPdfInput = {
+    kind: "quote",
+    documentNumber: "Q-IMG-1",
+    issuedDate: new Date(2026, 2, 29),
+    company: {
+      legalName: "Test Co",
+      line1: "1 Main",
+      line2: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "555-0100",
+      email: "sales@example.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
+    },
+    logoDataUrl: null,
+    project: {
+      project_number: "IMG-1",
+      project_name: "Image ref test",
+      customer: "Geneva Rock",
+      customer_po: null,
+    },
+    fromParty: { label: "Seller", name: "Test Co", lines: [] },
+    toParty: { label: "Customer", name: "Geneva Rock", lines: ["Ogden, UT"] },
+    meta: {
+      ...baseMeta,
+      lines: [
+        {
+          id: "line-1",
+          lineNo: 1,
+          description: "Image backed line",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 10,
+          extended: 10,
+          imageRef: {
+            fileId: "f-1",
+            dataUrl: TINY_PNG_DATA_URL,
+          },
+        },
+      ],
+    },
+    revisionIndex: 0,
+    quoteResolved: {
+      paymentTerms: "NET 30",
+      customerContact: "Alex",
+      accountManager: "Luke (555-0200)",
+      quoteDescription: "IMAGES",
+      shippingMethod: "Prepaid",
+    },
+  };
+  const buf = buildProjectDocumentPdf(input);
+  assert.ok(pdfBytesInclude(buf, "Reference figures"));
+  assert.ok(pdfBytesInclude(buf, "L1 - BASE SCOPE"));
+});
+
+test("quote PDF renders option-specific reference figure captions", () => {
+  const input: BuildProjectDocumentPdfInput = {
+    kind: "quote",
+    documentNumber: "Q-IMG-OPT-1",
+    issuedDate: new Date(2026, 2, 29),
+    company: {
+      legalName: "Test Co",
+      line1: "1 Main",
+      line2: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "555-0100",
+      email: "sales@example.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
+    },
+    logoDataUrl: null,
+    project: {
+      project_number: "IMG-2",
+      project_name: "Image option test",
+      customer: "Geneva Rock",
+      customer_po: null,
+    },
+    fromParty: { label: "Seller", name: "Test Co", lines: [] },
+    toParty: { label: "Customer", name: "Geneva Rock", lines: ["Ogden, UT"] },
+    meta: {
+      ...baseMeta,
+      optionGroups: [{ id: "opt-1", title: "Alt Liner", lineIds: [] }],
+      lines: [
+        {
+          id: "line-1",
+          lineNo: 1,
+          description: "Option image line",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 10,
+          extended: 10,
+          optionGroupId: "opt-1",
+          imageRef: {
+            fileId: "f-1",
+            dataUrl: TINY_PNG_DATA_URL,
+          },
+        },
+      ],
+    },
+    revisionIndex: 0,
+    quoteResolved: {
+      paymentTerms: "NET 30",
+      customerContact: "Alex",
+      accountManager: "Luke (555-0200)",
+      quoteDescription: "IMAGES",
+      shippingMethod: "Prepaid",
+    },
+  };
+  const buf = buildProjectDocumentPdf(input);
+  assert.ok(pdfBytesInclude(buf, "L1 - OPTION: ALT LINER"));
+});
+
+test("purchase order PDF supports option sections with selection-required mode", () => {
+  const input: BuildProjectDocumentPdfInput = {
+    kind: "purchase_order",
+    documentNumber: "PO-OPT-1",
+    issuedDate: new Date("2026-03-29"),
+    company: {
+      legalName: "Keystone Supply",
+      line1: "P.O. Box 129",
+      line2: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "(435) 720-3714",
+      email: "sales@keystone-supply.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
+    },
+    logoDataUrl: null,
+    project: {
+      project_number: "POPT-1",
+      project_name: "PO options test",
+      customer: "Acme",
+      customer_po: "PO-77",
+    },
+    fromParty: { label: "Requesting", name: "Keystone Supply", lines: [] },
+    toParty: { label: "Vendor", name: "Acme", lines: ["Ogden, UT"] },
+    meta: {
+      lines: [
+        {
+          id: "base-line",
+          lineNo: 1,
+          description: "Base scope line",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 100,
+          extended: 100,
+        },
+        {
+          id: "opt-line",
+          lineNo: 2,
+          description: "Alt option line",
+          qty: 1,
+          uom: "EA",
+          unitPrice: 20,
+          extended: 20,
+          optionGroupId: "opt-po",
+        },
+      ],
+      optionGroups: [{ id: "opt-po", title: "Alternate Layout", lineIds: [] }],
+      quotePresentAsMultipleOptions: true,
+      packingLines: [],
+      bolRows: [],
+    },
+    revisionIndex: 0,
+  };
+  const buf = buildProjectDocumentPdf(input);
+  assert.ok(pdfBytesInclude(buf, "BASE SCOPE"));
+  assert.ok(pdfBytesInclude(buf, "OPTION: ALTERNATE LAYOUT"));
+  assert.ok(pdfBytesInclude(buf, "OPTION SELECTION REQUIRED"));
 });
 
 test("buildDocumentDownloadFilename quote matches plan shape", () => {

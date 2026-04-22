@@ -4,7 +4,6 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { supabase } from "@/lib/supabaseClient";
-import { createProjectFolders } from "@/lib/onedrive";
 import { nextSequentialJobNumber } from "@/lib/projectNumber";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Save, X } from "lucide-react";
@@ -84,18 +83,21 @@ function NewProjectForm({
         .single();
       if (error) throw error;
 
-      const freshSessionRes = await fetch("/api/auth/session");
-      const freshSession = await freshSessionRes.json();
-      const freshToken = freshSession?.accessToken;
-      if (freshToken) {
-        await createProjectFolders(
-          freshToken,
-          form.customer,
-          nextJob,
-          form.project_name,
+      const provisionRes = await fetch(
+        `/api/projects/${saved.id}/provision-folders`,
+        {
+          method: "POST",
+          cache: "no-store",
+        },
+      );
+      if (!provisionRes.ok) {
+        const body = (await provisionRes.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        console.warn(
+          "Project created, but folder provisioning was skipped:",
+          body.error ?? `HTTP ${provisionRes.status}`,
         );
-      } else {
-        console.error("❌ No fresh token - re-login required");
       }
 
       router.push(`/projects/${saved.id}`);

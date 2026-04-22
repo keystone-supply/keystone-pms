@@ -32,10 +32,18 @@ type ProjectWorkspaceContextValue = {
   applyPatch: (patch: Partial<ProjectRow>) => void;
   savePatch: (patch: Partial<ProjectRow>) => Promise<void>;
   refreshProject: () => Promise<void>;
+  activeDocumentId: string | null;
+  setActiveDocumentId: (id: string | null) => void;
+  showPreview: boolean;
+  setShowPreview: (show: boolean) => void;
+  previewZoom: number;
+  setPreviewZoom: (zoom: number) => void;
   selectedFileId: string | null;
   selectFile: (id: string | null) => void;
   lastSavedTapeId: string | null;
   notifyTapeSaved: (id: string) => void;
+  linkedCalcTapeIds: string[];
+  setLinkedCalcTapeIds: (ids: string[]) => void;
   pinnedCalcValues: PinnedCalcValue[];
   pinCalcValue: (value: PinnedCalcValue) => void;
   unpinCalcValue: (id: string) => void;
@@ -71,8 +79,12 @@ export function ProjectWorkspaceProvider({
   refreshProject,
   children,
 }: ProjectWorkspaceProviderProps) {
+  const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewZoom, setPreviewZoom] = useState(1);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [lastSavedTapeId, setLastSavedTapeId] = useState<string | null>(null);
+  const [linkedCalcTapeIds, setLinkedCalcTapeIds] = useState<string[]>([]);
   const [pinnedCalcValues, setPinnedCalcValues] = useState<PinnedCalcValue[]>([]);
   const [focusTarget, setFocusTarget] =
     useState<ProjectWorkspaceFocusTarget>("overview");
@@ -133,10 +145,18 @@ export function ProjectWorkspaceProvider({
       applyPatch,
       savePatch,
       refreshProject,
+      activeDocumentId,
+      setActiveDocumentId,
+      showPreview,
+      setShowPreview,
+      previewZoom,
+      setPreviewZoom,
       selectedFileId,
       selectFile,
       lastSavedTapeId,
       notifyTapeSaved,
+      linkedCalcTapeIds,
+      setLinkedCalcTapeIds,
       pinnedCalcValues,
       pinCalcValue,
       unpinCalcValue,
@@ -151,6 +171,7 @@ export function ProjectWorkspaceProvider({
       highlightedFileName,
     }),
     [
+      activeDocumentId,
       applyPatch,
       calcSeedFileId,
       calcSeedTapeName,
@@ -161,9 +182,11 @@ export function ProjectWorkspaceProvider({
       focusedDocKind,
       highlightedFileName,
       lastSavedTapeId,
+      linkedCalcTapeIds,
       notifyTapeSaved,
       pinCalcValue,
       pinnedCalcValues,
+      previewZoom,
       project,
       projectId,
       refreshProject,
@@ -171,6 +194,7 @@ export function ProjectWorkspaceProvider({
       savePatch,
       selectFile,
       selectedFileId,
+      showPreview,
       unpinCalcValue,
     ],
   );

@@ -2,6 +2,7 @@ import type { CustomerRow, CustomerShippingRow } from "@/lib/customerQueries";
 import type { ProjectRow } from "@/lib/projectTypes";
 import type { VendorRow } from "@/lib/vendorQueries";
 import type {
+  DocumentLineItem,
   ProjectDocumentDraftMeta,
   ProjectDocumentKind,
 } from "@/lib/documentTypes";
@@ -93,6 +94,66 @@ function requestingParty(): PdfParty {
   if (c.country) lines.push(c.country);
   if (c.phone) lines.push(`Tel: ${c.phone}`);
   return { label: "Requesting", name: c.legalName, lines };
+}
+
+function canHydrateReferenceImages(): boolean {
+  return (
+    typeof fetch === "function" &&
+    typeof FileReader !== "undefined" &&
+    typeof window !== "undefined"
+  );
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function fetchReferenceImageDataUrl(projectId: string, fileId: string): Promise<string | null> {
+  const previewResponse = await fetch(`/api/projects/${projectId}/files/${fileId}/preview`, {
+    cache: "no-store",
+  });
+  const previewBody = (await previewResponse.json().catch(() => ({}))) as {
+    url?: string;
+  };
+  if (!previewResponse.ok || !previewBody.url) return null;
+  const imageResponse = await fetch(previewBody.url, { cache: "no-store" });
+  if (!imageResponse.ok) return null;
+  const blob = await imageResponse.blob();
+  if (!blob.type.startsWith("image/")) return null;
+  return blobToDataUrl(blob);
+}
+
+async function hydrateReferenceImages(
+  projectId: string,
+  lines: DocumentLineItem[],
+): Promise<DocumentLineItem[]> {
+  if (!canHydrateReferenceImages()) return lines;
+  const dataUrlByFileId = new Map<string, string | null>();
+  return Promise.all(
+    lines.map(async (line) => {
+      const fileId = line.imageRef?.fileId?.trim();
+      if (!fileId) return line;
+      let dataUrl = dataUrlByFileId.get(fileId);
+      if (dataUrl === undefined) {
+        dataUrl = await fetchReferenceImageDataUrl(projectId, fileId);
+        dataUrlByFileId.set(fileId, dataUrl);
+      }
+      if (!dataUrl) return line;
+      return {
+        ...line,
+        imageRef: {
+          ...line.imageRef,
+          fileId,
+          dataUrl,
+        },
+      };
+    }),
+  );
 }
 
 export function composeProjectDocumentPdfInput(args: {
@@ -289,7 +350,7 @@ export function composeProjectDocumentPdfInput(args: {
   };
 }
 
-export function generateProjectDocumentPdfBuffer(args: {
+export async function generateProjectDocumentPdfBuffer(args: {
   kind: ProjectDocumentKind;
   documentNumber: string;
   issuedDate: Date;
@@ -300,7 +361,12 @@ export function generateProjectDocumentPdfBuffer(args: {
   customer: CustomerRow | null;
   defaultShipTo: CustomerShippingRow | null;
   revisionIndex?: number;
-}): ArrayBuffer {
-  const input = composeProjectDocumentPdfInput(args);
+}): Promise<ArrayBuffer> {
+  const nextMeta: ProjectDocumentDraftMeta = { ...args.meta };
+  const projectId = typeof args.project.id === "string" ? args.project.id : "";
+  if (projectId && Array.isArray(args.meta.lines) && args.meta.lines.length > 0) {
+    nextMeta.lines = await hydrateReferenceImages(projectId, args.meta.lines);
+  }
+  const input = composeProjectDocumentPdfInput({ ...args, meta: nextMeta });
   return buildProjectDocumentPdf(input);
 }

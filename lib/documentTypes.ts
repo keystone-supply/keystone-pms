@@ -38,16 +38,84 @@ export const DOCUMENT_KIND_ACCENT: Record<ProjectDocumentKind, [number, number, 
   invoice: [88, 55, 135],
 };
 
+/** Minimal JSON value shape for editor payloads in metadata. */
+export type JSONValue =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: JSONValue }
+  | JSONValue[];
+
+/** Minimal Tiptap-compatible JSON document/node type. */
+export type TiptapJSON = { [key: string]: JSONValue };
+
 export type DocumentLineItem = {
+  id?: string;
   lineNo: number;
   description: string;
+  descriptionRich?: TiptapJSON;
   qty: number;
   uom: string;
   unitPrice: number;
   extended: number;
   partRef?: string;
   sourceCalcLineId?: string;
+  parentId?: string | null;
+  optionGroupId?: string | null;
+  calcTapeId?: string | null;
+  calcLineId?: string | null;
+  calcSyncBaseline?: {
+    description: string;
+    qty: number;
+    uom: string;
+    totalSell: number;
+  } | null;
+  imageRef?: {
+    fileId: string;
+    storageKey?: string;
+    /** Transient, client-side hydrated image payload for PDF rendering. */
+    dataUrl?: string;
+  } | null;
 };
+
+export type TemplateChip = {
+  label: string;
+  text: string;
+};
+
+export type OptionGroup = {
+  id: string;
+  title: string;
+  lineIds: string[];
+};
+
+export type CalcSyncConflictReason = "calc_updated" | "missing_baseline" | "missing_calc_line";
+
+export type CalcSyncConflict = {
+  calcLineId: string;
+  lineNo: number;
+  reason: CalcSyncConflictReason;
+};
+
+export const DEFAULT_TEMPLATE_CHIPS: TemplateChip[] = [
+  {
+    label: "Paint Exclusion",
+    text: "THIS QUOTE DOES NOT INCLUDE PAINT",
+  },
+  {
+    label: "Material Grade",
+    text: "Materials: A36",
+  },
+  {
+    label: "Drawing Reference",
+    text: "Drawing #Cxxxx Rev X",
+  },
+  {
+    label: "Payment Terms",
+    text: "NET 30",
+  },
+];
 
 export type PackingLineItem = {
   lineNo: number;
@@ -68,6 +136,15 @@ export type BolCommoditiesRow = {
 /** Editable payload stored in `project_documents.metadata` / UI state. */
 export type ProjectDocumentDraftMeta = {
   lines: DocumentLineItem[];
+  /** Workspace metadata pane-only title override (editor UX only). */
+  workspaceDocumentTitle?: string;
+  /** Workspace metadata pane-only customer override (editor UX only). */
+  workspaceCustomerName?: string;
+  /** Workspace metadata pane-only project override (editor UX only). */
+  workspaceProjectName?: string;
+  optionGroups?: OptionGroup[];
+  /** Quote mode: render options as alternatives without one grand total. */
+  quotePresentAsMultipleOptions?: boolean;
   /** For packing lists */
   packingLines?: PackingLineItem[];
   /** BOL commodity rows */

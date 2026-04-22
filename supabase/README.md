@@ -109,6 +109,13 @@ Migration: `20260422020000_drop_duplicate_and_unused_indexes.sql`
 - Removes duplicate unique index `projects_project_number_unique`.
 - Drops advisor-flagged unused indexes to reduce write overhead.
 
+Migration: `20260422015524_fix_citext_search_path_for_app_user_functions.sql`
+
+- Pins `search_path` for CITEXT-driven auth helper functions:
+  - `public.current_app_user_id()`
+  - `public.current_app_user_has(...)`
+- Removes remaining mutable-search-path advisor findings for auth helpers.
+
 Migration: `20260422030000_fix_policy_and_fk_index_lints.sql`
 
 - Splits admin write policies by command (`insert`/`update`/`delete`) so there is
@@ -116,6 +123,48 @@ Migration: `20260422030000_fix_policy_and_fk_index_lints.sql`
 - Reintroduces FK-covering indexes required by performance advisor checks.
 - Leaves index-usage advisor INFOs expected on fresh indexes until workload
   naturally records usage.
+
+Migration: `20260423000000_add_app_capabilities_system.sql`
+
+- Introduces canonical capability registry table and helper routines used by
+  app-level RBAC policy checks.
+- Seeds current capability set as explicit data so role/capability evolution
+  can be migration-managed.
+
+Migration: `20260423001000_rewrite_projects_role_filtered_view.sql`
+
+- Rebuilds `projects_role_filtered` to align with capability-first field
+  masking and the lifecycle single-source model.
+- Keeps projected columns stable for downstream app consumers while enforcing
+  new masking semantics.
+
+Migration: `20260423002000_rewrite_rls_to_capabilities.sql`
+
+- Rewrites remaining legacy role-based RLS predicates to capability-based
+  checks backed by app capability claims.
+- Aligns table policies with the app's canonical capability matrix.
+
+Migration: `20260423003000_drop_role_column_and_enum.sql`
+
+- Removes legacy role enum/column dependencies superseded by capability-based
+  authorization.
+- Finalizes the data-model shift away from persona labels as DB policy inputs.
+
+Migration: `20260423004000_restore_rbac_policy_audit_anon_guard.sql`
+
+- Restores explicit anon-access guard behavior in `public.rbac_policy_audit()`
+  so CI checks keep flagging accidental anon regressions.
+
+Migration: `20260423005000_project_document_revisions_unified_versioning.sql`
+
+- Moves project documents to unified immutable revision semantics.
+- Standardizes revision indexing/export metadata used by document history and
+  export flows.
+
+Migration: `20260423006000_riverside_timezone_doc_timestamps.sql`
+
+- Normalizes document revision/export timestamps to Riverside timezone handling
+  for consistent numbering labels and UI history displays.
 
 ### Current RBAC policy shape (app identity tables)
 
@@ -327,4 +376,4 @@ Use this matrix to validate behavior after environment upgrades:
 
 Always delete repro files after validating the matrix.
 
-Last updated: 2026-04-21
+Last updated: 2026-04-23

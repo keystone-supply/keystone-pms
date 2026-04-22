@@ -27,6 +27,8 @@ export function buildDefaultDocumentMetaFromProject(
           extended: total,
         },
       ],
+      optionGroups: [],
+      quotePresentAsMultipleOptions: false,
       packingLines: [],
       bolRows: [],
     };
@@ -52,6 +54,8 @@ export function buildDefaultDocumentMetaFromProject(
 
   return {
     lines,
+    optionGroups: [],
+    quotePresentAsMultipleOptions: false,
     packingLines: [],
     bolRows: [],
   };

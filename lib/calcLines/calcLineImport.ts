@@ -49,6 +49,14 @@ export function buildDocumentLinesFromCalc({
         extended: roundCents(qty * unitPrice),
         partRef: `${row.tape_id.slice(0, 8)}-${row.position + 1}`,
         sourceCalcLineId: row.id,
+        calcTapeId: row.tape_id,
+        calcLineId: row.id,
+        calcSyncBaseline: {
+          description: row.description || "Calc line",
+          qty,
+          uom: row.uom || "EA",
+          totalSell: roundCents(qty * unitPrice),
+        },
       };
     });
   }
@@ -87,6 +95,14 @@ export function buildDocumentLinesFromCalc({
       extended: roundCents(unitPrice * qty),
       partRef: `${row.tape_id.slice(0, 8)}-${row.position + 1}`,
       sourceCalcLineId: row.id,
+      calcTapeId: row.tape_id,
+      calcLineId: row.id,
+      calcSyncBaseline: {
+        description: row.description || "Calc line",
+        qty,
+        uom: row.uom || "EA",
+        totalSell: roundCents(unitPrice * qty),
+      },
     };
   });
 }

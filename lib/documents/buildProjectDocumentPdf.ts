@@ -5,6 +5,8 @@ import type { VendorRow } from "@/lib/vendorQueries";
 import {
   DOCUMENT_KIND_ACCENT,
   DOCUMENT_KIND_LABEL,
+  type DocumentLineItem,
+  type OptionGroup,
   type ProjectDocumentDraftMeta,
   type ProjectDocumentKind,
 } from "@/lib/documentTypes";
@@ -19,6 +21,7 @@ import {
   formatPhysicalAddress,
   type CompanyBlock,
 } from "@/lib/documents/company";
+import { serializeRichTextForPdf } from "@/lib/documents/richTextSerializer";
 import {
   formatRiversideDateLong,
   formatRiversideDateStampMdY,
@@ -98,7 +101,8 @@ function fmtMoney(n: number): string {
 
 export async function fetchLogoDataUrl(kind?: ProjectDocumentKind): Promise<string | null> {
   try {
-    const logoPaths = ["/rfq-logo.png", "/logo.png"];
+    const logoPaths =
+      kind === "rfq" ? ["/rfq-logo.png", "/logo.png"] : ["/logo.png", "/rfq-logo.png"];
     for (const path of logoPaths) {
       const res = await fetch(path);
       if (!res.ok) continue;
@@ -135,6 +139,356 @@ export function vendorToParty(v: VendorRow, label = "Vendor"): PdfParty {
 
 function partyBlockText(p: PdfParty): string {
   return [p.name, ...p.lines].filter(Boolean).join("\n");
+}
+
+type FlattenedDocumentLine = {
+  line: DocumentLineItem;
+  depth: number;
+};
+
+function sortLineNodeIndexes(indexes: number[], lines: DocumentLineItem[]): number[] {
+  return indexes
+    .slice()
+    .sort((a, b) => {
+      const lineNoDiff = lines[a].lineNo - lines[b].lineNo;
+      if (lineNoDiff !== 0) return lineNoDiff;
+      return a - b;
+    });
+}
+
+function normalizeLineId(id: string | undefined): string | null {
+  if (typeof id !== "string") return null;
+  const trimmed = id.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+export function flattenDocumentLinesForPdf(lines: DocumentLineItem[]): FlattenedDocumentLine[] {
+  if (!lines.length) return [];
+
+  const byId = new Map<string, number>();
+  for (let i = 0; i < lines.length; i++) {
+    const id = normalizeLineId(lines[i].id);
+    if (id && !byId.has(id)) byId.set(id, i);
+  }
+
+  const childrenByParent = new Map<number, number[]>();
+  const rootIndexes: number[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const parentId = normalizeLineId(lines[i].parentId ?? undefined);
+    const ownId = normalizeLineId(lines[i].id);
+    const parentIndex =
+      parentId && parentId !== ownId ? byId.get(parentId) : undefined;
+
+    if (parentIndex == null || parentIndex === i) {
+      rootIndexes.push(i);
+      continue;
+    }
+
+    const bucket = childrenByParent.get(parentIndex);
+    if (bucket) {
+      bucket.push(i);
+    } else {
+      childrenByParent.set(parentIndex, [i]);
+    }
+  }
+
+  for (const [parentIndex, children] of childrenByParent.entries()) {
+    childrenByParent.set(parentIndex, sortLineNodeIndexes(children, lines));
+  }
+
+  const sortedRoots = sortLineNodeIndexes(rootIndexes, lines);
+  const flattened: FlattenedDocumentLine[] = [];
+  const seen = new Set<number>();
+
+  const visit = (index: number, depth: number, path: Set<number>) => {
+    if (seen.has(index)) return;
+    if (path.has(index)) return;
+
+    path.add(index);
+    seen.add(index);
+    flattened.push({ line: lines[index], depth });
+
+    const children = childrenByParent.get(index) ?? [];
+    for (const childIndex of children) {
+      visit(childIndex, depth + 1, path);
+    }
+
+    path.delete(index);
+  };
+
+  for (const rootIndex of sortedRoots) {
+    visit(rootIndex, 0, new Set<number>());
+  }
+
+  const allIndexes = sortLineNodeIndexes(
+    lines.map((_, index) => index),
+    lines,
+  );
+  for (const index of allIndexes) {
+    if (!seen.has(index)) {
+      // Unvisited nodes usually indicate a parent cycle; treat as a fresh root.
+      visit(index, 0, new Set<number>());
+    }
+  }
+
+  return flattened;
+}
+
+function descriptionLinesFromRich(line: DocumentLineItem): string[] {
+  if (!line.descriptionRich) {
+    return [line.description];
+  }
+  const serialized = serializeRichTextForPdf(line.descriptionRich);
+  if (serialized.blocks.length === 0) {
+    return [line.description];
+  }
+  const lines: string[] = [];
+  for (const block of serialized.blocks) {
+    if (block.type === "paragraph") {
+      lines.push(block.segments.map((segment) => segment.text).join(""));
+      continue;
+    }
+    for (const item of block.items) {
+      lines.push(`• ${item.segments.map((segment) => segment.text).join("")}`);
+    }
+  }
+  return lines.length ? lines : [line.description];
+}
+
+type PdfRgbTuple = [number, number, number];
+
+type DescriptionRichStyle = {
+  fontStyle: "normal" | "bold" | "italic" | "bolditalic";
+  textColor?: PdfRgbTuple;
+  fillColor?: PdfRgbTuple;
+};
+
+function parseCssHexColor(value: string | undefined): PdfRgbTuple | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  const shortHex = normalized.match(/^#([0-9a-f]{3})$/i);
+  if (shortHex) {
+    const [r, g, b] = shortHex[1].split("").map((char) => parseInt(`${char}${char}`, 16));
+    return [r, g, b];
+  }
+  const longHex = normalized.match(/^#([0-9a-f]{6})$/i);
+  if (longHex) {
+    const raw = longHex[1];
+    return [parseInt(raw.slice(0, 2), 16), parseInt(raw.slice(2, 4), 16), parseInt(raw.slice(4, 6), 16)];
+  }
+  return null;
+}
+
+function descriptionStyleFromRich(line: DocumentLineItem): DescriptionRichStyle | null {
+  if (!line.descriptionRich) return null;
+  const serialized = serializeRichTextForPdf(line.descriptionRich);
+  if (!serialized.blocks.length) return null;
+
+  let hasBold = false;
+  let hasItalic = false;
+  let textColor: PdfRgbTuple | null = null;
+  let highlightColor: PdfRgbTuple | null = null;
+
+  for (const block of serialized.blocks) {
+    const segments = block.type === "paragraph" ? block.segments : block.items.flatMap((item) => item.segments);
+    for (const segment of segments) {
+      for (const mark of segment.marks) {
+        if (mark.kind === "bold") hasBold = true;
+        if (mark.kind === "italic") hasItalic = true;
+        if (mark.kind === "color" && textColor == null) {
+          textColor = parseCssHexColor(mark.value);
+        }
+        if (mark.kind === "highlight" && highlightColor == null) {
+          highlightColor = parseCssHexColor(mark.value) ?? [255, 245, 157];
+        }
+      }
+    }
+  }
+
+  const fontStyle: DescriptionRichStyle["fontStyle"] = hasBold
+    ? hasItalic
+      ? "bolditalic"
+      : "bold"
+    : hasItalic
+      ? "italic"
+      : "normal";
+
+  if (fontStyle === "normal" && !textColor && !highlightColor) {
+    return null;
+  }
+  return {
+    fontStyle,
+    textColor: textColor ?? undefined,
+    fillColor: highlightColor ?? undefined,
+  };
+}
+
+function formatDescriptionForPdf(line: DocumentLineItem, depth: number, maxLength: number): string {
+  const prefix = depth > 0 ? `${"  ".repeat(depth)}` : "";
+  return descriptionLinesFromRich(line)
+    .map((lineText) => `${prefix}${lineText}`.slice(0, maxLength))
+    .join("\n");
+}
+
+function addLineLinkForTableCell(
+  doc: jsPDF,
+  data: { cell: { x: number; y: number; width: number; height: number } },
+  lineNo: number | null,
+): void {
+  if (!lineNo || lineNo <= 0) return;
+  doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, {
+    url: `docline:${lineNo}`,
+  });
+}
+
+type QuoteLineSection = {
+  id: string;
+  title: string;
+  rows: FlattenedDocumentLine[];
+};
+
+function buildQuoteLineSections(
+  lines: DocumentLineItem[],
+  optionGroups: OptionGroup[],
+): QuoteLineSection[] {
+  const groupSet = new Set(optionGroups.map((group) => group.id));
+  const baseLines = lines.filter((line) => !line.optionGroupId || !groupSet.has(line.optionGroupId));
+  const sections: QuoteLineSection[] = [
+    {
+      id: "base-scope",
+      title: "BASE SCOPE",
+      rows: flattenDocumentLinesForPdf(baseLines),
+    },
+  ];
+  for (const group of optionGroups) {
+    const groupLines = lines.filter((line) => line.optionGroupId === group.id);
+    sections.push({
+      id: group.id,
+      title: `OPTION: ${(group.title || "Option").toUpperCase()}`,
+      rows: flattenDocumentLinesForPdf(groupLines),
+    });
+  }
+  return sections;
+}
+
+type ReferenceFigureItem = {
+  lineNo: number;
+  sectionLabel: string;
+  dataUrl: string;
+};
+
+function imageFormatFromDataUrl(dataUrl: string): "PNG" | "JPEG" {
+  const prefix = dataUrl.slice(0, 32).toLowerCase();
+  if (prefix.includes("image/png")) return "PNG";
+  return "JPEG";
+}
+
+function collectReferenceFigureItems(
+  lines: DocumentLineItem[],
+  optionGroups: OptionGroup[],
+): ReferenceFigureItem[] {
+  const sectionLabelByGroupId = new Map(optionGroups.map((group) => [group.id, group.title]));
+  return flattenDocumentLinesForPdf(lines)
+    .map(({ line }) => {
+      const dataUrl = line.imageRef?.dataUrl;
+      if (!dataUrl || !dataUrl.startsWith("data:image/")) return null;
+      const sectionLabel = line.optionGroupId
+        ? (sectionLabelByGroupId.get(line.optionGroupId) ?? "Option")
+        : "Base scope";
+      return {
+        lineNo: line.lineNo,
+        sectionLabel,
+        dataUrl,
+      } as ReferenceFigureItem;
+    })
+    .filter((item): item is ReferenceFigureItem => Boolean(item));
+}
+
+function collectReferenceFigureItemsForSectionRows(
+  rows: FlattenedDocumentLine[],
+  sectionLabel: string,
+): ReferenceFigureItem[] {
+  return rows
+    .map(({ line }) => {
+      const dataUrl = line.imageRef?.dataUrl;
+      if (!dataUrl || !dataUrl.startsWith("data:image/")) return null;
+      return {
+        lineNo: line.lineNo,
+        sectionLabel,
+        dataUrl,
+      } as ReferenceFigureItem;
+    })
+    .filter((item): item is ReferenceFigureItem => Boolean(item));
+}
+
+function renderReferenceFigureBlock(
+  doc: jsPDF,
+  y: number,
+  figures: ReferenceFigureItem[],
+): number {
+  if (figures.length === 0) return y;
+  const available = figures.slice(0, 8);
+  const figureWidth = 40;
+  const figureHeight = 28;
+  const rowGap = 8;
+  const colGap = 10;
+  const maxY = PAGE_H - FOOTER_GAP - 8;
+
+  const ensureSpace = (requiredHeight: number) => {
+    if (y + requiredHeight <= maxY) return;
+    doc.addPage();
+    y = MARGIN;
+  };
+
+  ensureSpace(8);
+  doc.setFontSize(9);
+  doc.setTextColor(50, 50, 50);
+  doc.text("Reference figures", MARGIN, y);
+  y += 4;
+
+  for (let rowStart = 0; rowStart < available.length; rowStart += 2) {
+    const rowItems = available.slice(rowStart, rowStart + 2);
+    ensureSpace(figureHeight + rowGap + 6);
+    rowItems.forEach((item, columnIndex) => {
+      const x = MARGIN + columnIndex * (figureWidth + colGap);
+      doc.setDrawColor(180, 180, 180);
+      doc.rect(x, y, figureWidth, figureHeight);
+      try {
+        doc.addImage(
+          item.dataUrl,
+          imageFormatFromDataUrl(item.dataUrl),
+          x + 1,
+          y + 1,
+          figureWidth - 2,
+          figureHeight - 2,
+          undefined,
+          "FAST",
+        );
+      } catch {
+        doc.setFontSize(7);
+        doc.setTextColor(120, 120, 120);
+        doc.text("Image unavailable", x + 3, y + figureHeight / 2);
+      }
+      doc.setFontSize(7);
+      doc.setTextColor(70, 70, 70);
+      const caption = `L${item.lineNo} - ${item.sectionLabel}`;
+      doc.text(caption.slice(0, 38), x, y + figureHeight + 3);
+    });
+    y += figureHeight + rowGap;
+  }
+
+  if (figures.length > available.length) {
+    doc.setFontSize(7);
+    doc.setTextColor(110, 110, 110);
+    doc.text(
+      `+${figures.length - available.length} more reference image(s)`,
+      MARGIN,
+      y,
+    );
+    y += 4;
+  }
+  return y + 2;
 }
 
 type FooterKind = "default" | "quote_cover" | "quote_terms";
@@ -340,81 +694,147 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
 
   y += compact ? 1 : 2;
 
-  const body = input.meta.lines.map((l) => [
-    l.partRef?.trim() ? l.partRef.trim() : String(l.lineNo),
-    l.description.slice(0, 100),
-    fmtMoney(l.extended),
-  ]);
+  const quoteSections = buildQuoteLineSections(
+    input.meta.lines,
+    input.meta.optionGroups ?? [],
+  );
+  const showSectionSubtotals = quoteSections.length > 1;
+  let subtotal = 0;
+  for (const section of quoteSections) {
+    doc.setFontSize(compact ? 7 : 8);
+    doc.setTextColor(85, 85, 85);
+    doc.text(section.title, MARGIN, y);
+    y += compact ? 2.5 : 3;
 
-  autoTable(doc, {
-    startY: y,
-    head: [["ITEM #", "DESCRIPTION", "TOTAL"]],
-    body,
-    margin: { left: MARGIN, right: MARGIN },
-    styles: { fontSize: compact ? 6 : 8, cellPadding: compact ? 1.2 : 2 },
-    columnStyles: {
-      2: { halign: "right" },
-    },
-    headStyles: {
-      fillColor: [accent[0], accent[1], accent[2]],
-      textColor: [255, 255, 255],
-      fontSize: compact ? 6 : 8,
-      cellPadding: compact ? 1 : 2,
-    },
-  });
+    const body = section.rows.map(({ line, depth }) => [
+      line.partRef?.trim() ? line.partRef.trim() : String(line.lineNo),
+      formatDescriptionForPdf(line, depth, 100),
+      fmtMoney(line.extended),
+    ]);
+    const sectionLineNos = section.rows.map(({ line }) => line.lineNo);
+    const sectionLineStyles = new Map(
+      section.rows.map(({ line }) => [line.lineNo, descriptionStyleFromRich(line)]),
+    );
+    if (body.length > 0) {
+      autoTable(doc, {
+        startY: y,
+        head: [["ITEM #", "DESCRIPTION", "TOTAL"]],
+        body,
+        margin: { left: MARGIN, right: MARGIN },
+        styles: { fontSize: compact ? 6 : 8, cellPadding: compact ? 1.2 : 2 },
+        columnStyles: {
+          2: { halign: "right" },
+        },
+        headStyles: {
+          fillColor: [accent[0], accent[1], accent[2]],
+          textColor: [255, 255, 255],
+          fontSize: compact ? 6 : 8,
+          cellPadding: compact ? 1 : 2,
+        },
+        didParseCell: (data) => {
+          if (data.section !== "body" || data.column.index !== 1) return;
+          const lineNo = sectionLineNos[data.row.index] ?? null;
+          if (!lineNo) return;
+          const richStyle = sectionLineStyles.get(lineNo);
+          if (!richStyle) return;
+          data.cell.styles.fontStyle = richStyle.fontStyle;
+          if (richStyle.textColor) data.cell.styles.textColor = richStyle.textColor;
+          if (richStyle.fillColor) data.cell.styles.fillColor = richStyle.fillColor;
+        },
+        didDrawCell: (data) => {
+          if (data.section !== "body" || data.column.index !== 1) return;
+          addLineLinkForTableCell(doc, data, sectionLineNos[data.row.index] ?? null);
+        },
+      });
+      const tableSlot = doc as jsPDF & { lastAutoTable?: { finalY: number } };
+      y = (tableSlot.lastAutoTable?.finalY ?? y) + (compact ? 2 : 3);
+    } else {
+      doc.setFontSize(compact ? 6 : 8);
+      doc.setTextColor(120, 120, 120);
+      doc.text("No line items in this section.", MARGIN, y + 1.5);
+      y += compact ? 4 : 5;
+    }
 
-  const tSlot = doc as jsPDF & { lastAutoTable?: { finalY: number } };
-  y = (tSlot.lastAutoTable?.finalY ?? y) + (compact ? 4 : 6);
+    const sectionSubtotal = section.rows.reduce((sum, row) => sum + (row.line.extended || 0), 0);
+    subtotal += sectionSubtotal;
+    if (showSectionSubtotals) {
+      doc.setFontSize(compact ? 7 : 8);
+      doc.setTextColor(55, 55, 55);
+      doc.text(section.id === "base-scope" ? "SUBTOTAL" : "OPTION SUBTOTAL", PAGE_W - MARGIN - 44, y, {
+        align: "right",
+      });
+      doc.text(fmtMoney(sectionSubtotal), PAGE_W - MARGIN, y, { align: "right" });
+      y += compact ? 4 : 6;
+    }
 
-  const subtotal = input.meta.lines.reduce((s, l) => s + (l.extended || 0), 0);
+    const sectionFigures = collectReferenceFigureItemsForSectionRows(section.rows, section.title);
+    y = renderReferenceFigureBlock(doc, y, sectionFigures);
+  }
+
   const labelX = PAGE_W - MARGIN - 44;
   const amtX = PAGE_W - MARGIN;
+  const presentAsMultipleOptions =
+    Boolean(input.meta.quotePresentAsMultipleOptions) &&
+    (input.meta.optionGroups?.length ?? 0) > 0;
 
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(40, 40, 40);
-  doc.text("SUBTOTAL", labelX, y, { align: "right" });
-  doc.text(fmtMoney(subtotal), amtX, y, { align: "right" });
-  y += 5;
-
-  let running = subtotal;
-  const meta = input.meta;
-  const taxPct = meta.quotePdfTaxRatePct;
-  const taxAmt = meta.quotePdfTaxAmount;
-
-  if (taxPct != null && Number.isFinite(taxPct)) {
-    doc.text(`(TAX RATE) ${taxPct}%`, labelX, y, { align: "right" });
+  if (presentAsMultipleOptions) {
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(50, 50, 50);
+    doc.text("CUSTOMER TO SELECT OPTION", MARGIN, y);
+    y += 4.5;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(80, 80, 80);
+    doc.text("Totals are shown per section above. No single grand total is presented.", MARGIN, y);
+    y += 6;
+  } else {
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(40, 40, 40);
+    doc.text("SUBTOTAL", labelX, y, { align: "right" });
+    doc.text(fmtMoney(subtotal), amtX, y, { align: "right" });
     y += 5;
-  }
-  if (taxAmt != null && Number.isFinite(taxAmt)) {
-    doc.text("TAX", labelX, y, { align: "right" });
-    doc.text(fmtMoney(taxAmt), amtX, y, { align: "right" });
-    running += taxAmt;
-    y += 5;
-  }
 
-  const logAmt = meta.quotePdfLogisticsAmount;
-  if (logAmt != null && Number.isFinite(logAmt)) {
-    doc.text("LOGISTICS", labelX, y, { align: "right" });
-    doc.text(fmtMoney(logAmt), amtX, y, { align: "right" });
-    running += logAmt;
-    y += 5;
-  }
+    let running = subtotal;
+    const meta = input.meta;
+    const taxPct = meta.quotePdfTaxRatePct;
+    const taxAmt = meta.quotePdfTaxAmount;
 
-  const otherAmt = meta.quotePdfOtherAmount;
-  if (otherAmt != null && Number.isFinite(otherAmt)) {
-    doc.text("OTHER", labelX, y, { align: "right" });
-    doc.text(fmtMoney(otherAmt), amtX, y, { align: "right" });
-    running += otherAmt;
-    y += 5;
-  }
+    if (taxPct != null && Number.isFinite(taxPct)) {
+      doc.text(`(TAX RATE) ${taxPct}%`, labelX, y, { align: "right" });
+      y += 5;
+    }
+    if (taxAmt != null && Number.isFinite(taxAmt)) {
+      doc.text("TAX", labelX, y, { align: "right" });
+      doc.text(fmtMoney(taxAmt), amtX, y, { align: "right" });
+      running += taxAmt;
+      y += 5;
+    }
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.text("TOTAL", labelX, y, { align: "right" });
-  doc.text(fmtMoney(running), amtX, y, { align: "right" });
-  doc.setFont("helvetica", "normal");
-  y += 8;
+    const logAmt = meta.quotePdfLogisticsAmount;
+    if (logAmt != null && Number.isFinite(logAmt)) {
+      doc.text("LOGISTICS", labelX, y, { align: "right" });
+      doc.text(fmtMoney(logAmt), amtX, y, { align: "right" });
+      running += logAmt;
+      y += 5;
+    }
+
+    const otherAmt = meta.quotePdfOtherAmount;
+    if (otherAmt != null && Number.isFinite(otherAmt)) {
+      doc.text("OTHER", labelX, y, { align: "right" });
+      doc.text(fmtMoney(otherAmt), amtX, y, { align: "right" });
+      running += otherAmt;
+      y += 5;
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("TOTAL", labelX, y, { align: "right" });
+    doc.text(fmtMoney(running), amtX, y, { align: "right" });
+    doc.setFont("helvetica", "normal");
+    y += 8;
+  }
 
   doc.setFontSize(8);
   doc.setTextColor(45, 45, 45);
@@ -465,6 +885,8 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
 }
 
 export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer {
+  const flattenedLines = flattenDocumentLinesForPdf(input.meta.lines);
+
   if (input.kind === "quote") {
     return buildQuoteDocumentPdf(input);
   }
@@ -684,48 +1106,166 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
     y += 20;
   };
 
+  let renderedReferenceFiguresInline = false;
+
   if (
     input.kind === "invoice" ||
     input.kind === "rfq" ||
     input.kind === "purchase_order"
   ) {
-    const body = input.meta.lines.map((l) => [
-      String(l.lineNo),
-      l.partRef ?? "—",
-      l.description.slice(0, 80),
-      String(l.qty),
-      l.uom,
-      fmtMoney(l.unitPrice),
-      fmtMoney(l.extended),
-    ]);
-    autoTable(doc, {
-      startY: y,
-      head: [["#", "Part / dwg", "Description", "Qty", "UOM", "Unit", "Ext."]],
-      body,
-      margin: { left: MARGIN, right: MARGIN },
-      styles: {
-        fontSize: rfqCompact ? 6 : 8,
-        cellPadding: rfqCompact ? 1.2 : 2,
-      },
-      headStyles: {
-        fillColor: [accent[0], accent[1], accent[2]],
-        textColor: [255, 255, 255],
-        fontSize: rfqCompact ? 6 : 8,
-        cellPadding: rfqCompact ? 1 : 2,
-      },
-    });
-    const t = doc as jsPDF & { lastAutoTable?: { finalY: number } };
-    y = (t.lastAutoTable?.finalY ?? y) + (rfqCompact ? 5 : 8);
-    const subtotal = input.meta.lines.reduce((s, l) => s + (l.extended || 0), 0);
-    addTotals(subtotal);
+    const optionsModeEnabled =
+      (input.kind === "rfq" || input.kind === "purchase_order") &&
+      (input.meta.optionGroups?.length ?? 0) > 0;
+    const presentAsMultipleOptions =
+      optionsModeEnabled && Boolean(input.meta.quotePresentAsMultipleOptions);
+
+    if (optionsModeEnabled) {
+      const sections = buildQuoteLineSections(input.meta.lines, input.meta.optionGroups ?? []);
+      let runningSubtotal = 0;
+      for (const section of sections) {
+        doc.setFontSize(rfqCompact ? 6 : 8);
+        doc.setTextColor(90, 90, 90);
+        doc.text(section.title, MARGIN, y);
+        y += rfqCompact ? 3 : 4;
+
+        const body = section.rows.map(({ line, depth }) => [
+          String(line.lineNo),
+          line.partRef ?? "—",
+          formatDescriptionForPdf(line, depth, 80),
+          String(line.qty),
+          line.uom,
+          fmtMoney(line.unitPrice),
+          fmtMoney(line.extended),
+        ]);
+        const sectionLineNos = section.rows.map(({ line }) => line.lineNo);
+        const sectionLineStyles = new Map(
+          section.rows.map(({ line }) => [line.lineNo, descriptionStyleFromRich(line)]),
+        );
+        autoTable(doc, {
+          startY: y,
+          head: [["#", "Part / dwg", "Description", "Qty", "UOM", "Unit", "Ext."]],
+          body,
+          margin: { left: MARGIN, right: MARGIN },
+          styles: {
+            fontSize: rfqCompact ? 6 : 8,
+            cellPadding: rfqCompact ? 1.2 : 2,
+          },
+          headStyles: {
+            fillColor: [accent[0], accent[1], accent[2]],
+            textColor: [255, 255, 255],
+            fontSize: rfqCompact ? 6 : 8,
+            cellPadding: rfqCompact ? 1 : 2,
+          },
+          didParseCell: (data) => {
+            if (data.section !== "body" || data.column.index !== 2) return;
+            const lineNo = sectionLineNos[data.row.index] ?? null;
+            if (!lineNo) return;
+            const richStyle = sectionLineStyles.get(lineNo);
+            if (!richStyle) return;
+            data.cell.styles.fontStyle = richStyle.fontStyle;
+            if (richStyle.textColor) data.cell.styles.textColor = richStyle.textColor;
+            if (richStyle.fillColor) data.cell.styles.fillColor = richStyle.fillColor;
+          },
+          didDrawCell: (data) => {
+            if (data.section !== "body" || data.column.index !== 2) return;
+            addLineLinkForTableCell(doc, data, sectionLineNos[data.row.index] ?? null);
+          },
+        });
+        const t = doc as jsPDF & { lastAutoTable?: { finalY: number } };
+        y = (t.lastAutoTable?.finalY ?? y) + (rfqCompact ? 2 : 3);
+        const sectionSubtotal = section.rows.reduce(
+          (sum, row) => sum + (row.line.extended || 0),
+          0,
+        );
+        doc.setFontSize(rfqCompact ? 7 : 9);
+        doc.setTextColor(50, 50, 50);
+        doc.text(
+          section.id === "base-scope" ? "Subtotal" : "Option subtotal",
+          PAGE_W - MARGIN - 36,
+          y,
+          { align: "right" },
+        );
+        doc.text(fmtMoney(sectionSubtotal), PAGE_W - MARGIN, y, { align: "right" });
+        y += rfqCompact ? 4 : 6;
+        const sectionFigures = collectReferenceFigureItemsForSectionRows(section.rows, section.title);
+        if (sectionFigures.length > 0) {
+          y = renderReferenceFigureBlock(doc, y, sectionFigures);
+          renderedReferenceFiguresInline = true;
+        }
+        runningSubtotal += sectionSubtotal;
+      }
+
+      if (presentAsMultipleOptions) {
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(50, 50, 50);
+        doc.text("OPTION SELECTION REQUIRED", MARGIN, y);
+        y += 4.5;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(80, 80, 80);
+        doc.text("Section subtotals are shown above; no single grand total is presented.", MARGIN, y);
+        y += 6;
+      } else {
+        addTotals(runningSubtotal);
+      }
+    } else {
+      const body = flattenedLines.map(({ line, depth }) => [
+        String(line.lineNo),
+        line.partRef ?? "—",
+        formatDescriptionForPdf(line, depth, 80),
+        String(line.qty),
+        line.uom,
+        fmtMoney(line.unitPrice),
+        fmtMoney(line.extended),
+      ]);
+      const flattenedLineNos = flattenedLines.map(({ line }) => line.lineNo);
+      const flattenedLineStyles = new Map(
+        flattenedLines.map(({ line }) => [line.lineNo, descriptionStyleFromRich(line)]),
+      );
+      autoTable(doc, {
+        startY: y,
+        head: [["#", "Part / dwg", "Description", "Qty", "UOM", "Unit", "Ext."]],
+        body,
+        margin: { left: MARGIN, right: MARGIN },
+        styles: {
+          fontSize: rfqCompact ? 6 : 8,
+          cellPadding: rfqCompact ? 1.2 : 2,
+        },
+        headStyles: {
+          fillColor: [accent[0], accent[1], accent[2]],
+          textColor: [255, 255, 255],
+          fontSize: rfqCompact ? 6 : 8,
+          cellPadding: rfqCompact ? 1 : 2,
+        },
+        didParseCell: (data) => {
+          if (data.section !== "body" || data.column.index !== 2) return;
+          const lineNo = flattenedLineNos[data.row.index] ?? null;
+          if (!lineNo) return;
+          const richStyle = flattenedLineStyles.get(lineNo);
+          if (!richStyle) return;
+          data.cell.styles.fontStyle = richStyle.fontStyle;
+          if (richStyle.textColor) data.cell.styles.textColor = richStyle.textColor;
+          if (richStyle.fillColor) data.cell.styles.fillColor = richStyle.fillColor;
+        },
+        didDrawCell: (data) => {
+          if (data.section !== "body" || data.column.index !== 2) return;
+          addLineLinkForTableCell(doc, data, flattenedLineNos[data.row.index] ?? null);
+        },
+      });
+      const t = doc as jsPDF & { lastAutoTable?: { finalY: number } };
+      y = (t.lastAutoTable?.finalY ?? y) + (rfqCompact ? 5 : 8);
+      const subtotal = flattenedLines.reduce((s, { line }) => s + (line.extended || 0), 0);
+      addTotals(subtotal);
+    }
   } else if (input.kind === "packing_list") {
     const rows = input.meta.packingLines?.length
       ? input.meta.packingLines
-      : input.meta.lines.map((l, i) => ({
+      : flattenedLines.map(({ line, depth }, i) => ({
           lineNo: i + 1,
-          description: l.description,
-          quantity: l.qty,
-          uom: l.uom,
+          description: formatDescriptionForPdf(line, depth, 72),
+          quantity: line.qty,
+          uom: line.uom,
           weightLb: undefined,
           dims: undefined,
         }));
@@ -758,10 +1298,10 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
   } else if (input.kind === "bol") {
     const bolRows = input.meta.bolRows?.length
       ? input.meta.bolRows
-      : input.meta.lines.map((l) => ({
-          description: l.description,
+      : flattenedLines.map(({ line, depth }) => ({
+          description: formatDescriptionForPdf(line, depth, 56),
           weightLb: undefined,
-          qty: l.qty,
+          qty: line.qty,
           nmfc: undefined,
         }));
     const body = bolRows.map((r) => [
@@ -801,6 +1341,14 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
     doc.line(PAGE_W - MARGIN - 60, y + 22, PAGE_W - MARGIN - 3, y + 22);
     doc.text("Date", PAGE_W - MARGIN - 60, y + 26);
     y += 36;
+  }
+
+  if (!renderedReferenceFiguresInline) {
+    y = renderReferenceFigureBlock(
+      doc,
+      y,
+      collectReferenceFigureItems(input.meta.lines, input.meta.optionGroups ?? []),
+    );
   }
 
   if (input.meta.notes) {

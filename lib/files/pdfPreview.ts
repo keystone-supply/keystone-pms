@@ -8,14 +8,14 @@ export function buildPdfPageNumbers(pageCount: number | null): number[] {
 export type PdfPreviewRenderConfig = {
   canvasBackground: "rgba(255,255,255,1)";
   renderTextLayer: false;
-  renderAnnotationLayer: false;
+  renderAnnotationLayer: true;
 };
 
 export function getPdfPreviewRenderConfig(): PdfPreviewRenderConfig {
   return {
     canvasBackground: "rgba(255,255,255,1)",
     renderTextLayer: false,
-    renderAnnotationLayer: false,
+    renderAnnotationLayer: true,
   };
 }
 

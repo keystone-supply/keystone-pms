@@ -53,11 +53,15 @@ function normalizeRevisionIndex(value: number): number {
 }
 
 function coerceMeta(raw: unknown): ProjectDocumentDraftMeta {
-  if (!raw || typeof raw !== "object") return { lines: [] };
-  const candidate = raw as Partial<ProjectDocumentDraftMeta>;
+  if (!raw || typeof raw !== "object") {
+    return { lines: [], optionGroups: [], quotePresentAsMultipleOptions: false };
+  }
+  const candidate = raw as Partial<ProjectDocumentDraftMeta> & Record<string, unknown>;
   return {
     ...candidate,
     lines: Array.isArray(candidate.lines) ? candidate.lines : [],
+    optionGroups: Array.isArray(candidate.optionGroups) ? candidate.optionGroups : [],
+    quotePresentAsMultipleOptions: Boolean(candidate.quotePresentAsMultipleOptions),
   };
 }
 
