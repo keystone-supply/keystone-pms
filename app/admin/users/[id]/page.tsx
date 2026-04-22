@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 import { apiJson } from "@/app/admin/users/actions";
 import { APP_CAPABILITIES } from "@/lib/auth/roles";
@@ -20,6 +20,7 @@ type ProjectAccess = { project_id: string; can_read: boolean; can_write: boolean
 
 export default function AdminUserDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const userId = params.id;
   const [user, setUser] = useState<UserDetail | null>(null);
   const [capabilities, setCapabilities] = useState<string[]>([]);
@@ -27,6 +28,7 @@ export default function AdminUserDetailPage() {
   const [projectAccess, setProjectAccess] = useState<ProjectAccess[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const accessByProjectId = useMemo(() => {
     const map = new Map<string, ProjectAccess>();
@@ -114,14 +116,19 @@ export default function AdminUserDetailPage() {
             />
           </label>
           <label className="flex items-center gap-2 text-sm text-zinc-200">
-            <input
-              type="checkbox"
-              checked={user.is_active}
-              onChange={(event) =>
-                setUser((prev) => (prev ? { ...prev, is_active: event.target.checked } : prev))
-              }
-            />
-            Active
+            <div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={user.is_active}
+                  onChange={(event) =>
+                    setUser((prev) => (prev ? { ...prev, is_active: event.target.checked } : prev))
+                  }
+                />
+                <span>Active</span>
+              </div>
+              <p className="mt-1 text-xs text-zinc-400">Uncheck + Save identity to deactivate.</p>
+            </div>
           </label>
           <button
             type="button"
@@ -341,6 +348,38 @@ export default function AdminUserDetailPage() {
         >
           Save project access
         </button>
+      </section>
+
+      <section className="rounded-2xl border border-red-900/60 bg-red-950/30 p-5">
+        <h2 className="mb-2 text-lg font-semibold text-red-200">Danger zone</h2>
+        <p className="mb-4 text-xs text-red-300/80">
+          Deactivate users from the Identity section by unchecking Active. Delete permanently removes the user.
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={isDeleting}
+            className="rounded-lg border border-red-500/45 bg-red-500/10 px-3 py-2 text-sm text-red-200 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => {
+              const confirmed = window.confirm(
+                "Delete this user permanently? This cannot be undone.",
+              );
+              if (!confirmed) return;
+
+              setMessage(null);
+              setError(null);
+              setIsDeleting(true);
+              void apiJson(`/api/admin/users/${userId}`, { method: "DELETE" })
+                .then(() => {
+                  router.push("/admin/users");
+                })
+                .catch((err) => setError(err instanceof Error ? err.message : "Delete failed."))
+                .finally(() => setIsDeleting(false));
+            }}
+          >
+            {isDeleting ? "Deleting…" : "Delete user"}
+          </button>
+        </div>
       </section>
     </div>
   );
