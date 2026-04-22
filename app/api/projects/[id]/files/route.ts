@@ -4,7 +4,7 @@ import { requireApiCapability } from "@/lib/auth/api-guard";
 import { adminSupabase } from "@/lib/supabaseAdmin";
 import { PROJECT_FILE_SELECT, type ProjectFileRow } from "@/lib/projectFiles";
 import { deltaSyncProject } from "@/lib/files/oneDriveSync";
-import { getGraphAccessToken } from "@/lib/auth/apiAccessToken";
+import { resolveOneDriveAccessToken } from "@/lib/auth/oneDriveAccessToken";
 
 type ProjectFlagResult = {
   enabled: boolean;
@@ -84,7 +84,7 @@ export async function GET(
   const stale =
     !lastDeltaAt || Date.now() - new Date(lastDeltaAt).getTime() > 60_000;
   if (stale) {
-    const accessToken = await getGraphAccessToken(request);
+    const accessToken = await resolveOneDriveAccessToken(request);
     if (accessToken) {
       void deltaSyncProject(projectId, accessToken).catch(() => undefined);
     }

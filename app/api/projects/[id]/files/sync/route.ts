@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireApiRole } from "@/lib/auth/api-guard";
 import { canEditProjects } from "@/lib/auth/roles";
 import { deltaSyncProject, indexProjectFolder } from "@/lib/files/oneDriveSync";
-import { getGraphAccessToken } from "@/lib/auth/apiAccessToken";
+import { resolveOneDriveAccessToken } from "@/lib/auth/oneDriveAccessToken";
 import { adminSupabase } from "@/lib/supabaseAdmin";
 
 async function featureEnabled(projectId: string): Promise<boolean> {
@@ -27,10 +27,10 @@ export async function POST(
   );
   if (!authResult.ok) return authResult.response;
 
-  const accessToken = await getGraphAccessToken(request);
+  const accessToken = await resolveOneDriveAccessToken(request);
   if (!accessToken) {
     return NextResponse.json(
-      { error: "Sign in with Azure AD to sync OneDrive files." },
+      { error: "OneDrive is not connected. Ask an admin to reconnect the service account." },
       { status: 401 },
     );
   }

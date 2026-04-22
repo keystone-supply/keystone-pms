@@ -34,6 +34,7 @@
     "test:nest-dual-lane": "npx tsx scripts/verify-nest-dual-lane.ts",
     "test:nest-dxf-export": "npx tsx scripts/verify-nest-dxf-export.ts",
     "sheet-previews:repair": "node --import tsx scripts/run-sheet-preview-repair.ts",
+    "onedrive:capture-refresh-token": "node scripts/capture-onedrive-refresh-token.mjs",
     "security:blocked-deps": "node scripts/security/check-blocked-packages.mjs",
     "security:db-schema-guard": "node scripts/security/check-db-schema-guard.mjs"
   },

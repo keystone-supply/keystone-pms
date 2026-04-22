@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireApiCapability } from "@/lib/auth/api-guard";
-import { getGraphAccessToken } from "@/lib/auth/apiAccessToken";
+import { resolveOneDriveAccessToken } from "@/lib/auth/oneDriveAccessToken";
 import { mirrorFile } from "@/lib/files/oneDriveSync";
 import type { ProjectFileRow } from "@/lib/projectFiles";
 import { adminSupabase } from "@/lib/supabaseAdmin";
@@ -36,10 +36,10 @@ export async function GET(
 
   let row = data as ProjectFileRow;
   if (!row.storage_object_key || row.mirror_status === "stale") {
-    const accessToken = await getGraphAccessToken(request);
+    const accessToken = await resolveOneDriveAccessToken(request);
     if (!accessToken) {
       return NextResponse.json(
-        { error: "Sign in with Azure AD to print OneDrive files." },
+        { error: "OneDrive is not connected. Ask an admin to reconnect the service account." },
         { status: 401 },
       );
     }

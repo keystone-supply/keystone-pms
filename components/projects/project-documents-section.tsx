@@ -52,7 +52,6 @@ import {
 } from "@/lib/documents/buildProjectDocumentPdf";
 import { generateProjectDocumentPdfBuffer } from "@/lib/documents/composePdfInput";
 import { formatRiversideDateStampYmd } from "@/lib/documents/riversideTime";
-import { uploadPdfToDocs } from "@/lib/onedrive";
 import { openPdfPrintWindow } from "@/lib/print/openPrintWindow";
 import {
   buildQuoteFinancialsSnapshot,
@@ -115,6 +114,13 @@ function suggestDocNumber(project: ProjectRow, kind: ProjectDocumentKind): strin
                 ? "PK"
                 : "DOC";
   return `${prefix}-${pn}-${formatRiversideDateStampYmd(new Date())}`;
+}
+
+function createPdfBlob(buffer: ArrayBuffer | Uint8Array): Blob {
+  const source = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const byteCopy = new Uint8Array(source.byteLength);
+  byteCopy.set(source);
+  return new Blob([byteCopy.buffer], { type: "application/pdf" });
 }
 
 export function ProjectDocumentsSection({
@@ -512,7 +518,7 @@ export function ProjectDocumentsSection({
       );
 
       if (exportMethod === "download") {
-        const blob = new Blob([buffer], { type: "application/pdf" });
+        const blob = createPdfBlob(buffer);
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -532,19 +538,28 @@ export function ProjectDocumentsSection({
         );
         if (exportErr) throw exportErr;
       } else {
-        const freshSessionRes = await fetch("/api/auth/session");
-        const freshSession = await freshSessionRes.json();
-        const token = freshSession?.accessToken;
-        if (!token) throw new Error("No access token. Sign in again.");
-        const path = await uploadPdfToDocs(
-          token,
-          project.customer ?? "",
-          String(project.project_number ?? ""),
-          project.project_name ?? "",
-          filename,
-          revisionIndex,
-          buffer,
+        const file = new File([createPdfBlob(buffer)], filename, {
+          type: "application/pdf",
+        });
+        const uploadForm = new FormData();
+        uploadForm.set("file", file);
+        uploadForm.set("filename", filename);
+        uploadForm.set("revisionIndex", String(revisionIndex));
+        const uploadRes = await fetch(
+          `/api/projects/${projectId}/documents/export-onedrive`,
+          {
+            method: "POST",
+            body: uploadForm,
+          },
         );
+        const uploadPayload = (await uploadRes.json().catch(() => ({}))) as {
+          path?: string;
+          error?: string;
+        };
+        if (!uploadRes.ok || !uploadPayload.path) {
+          throw new Error(uploadPayload.error ?? "OneDrive export failed.");
+        }
+        const path = uploadPayload.path;
         const { error: exportErr } = await supabase.rpc(
           "mark_project_document_revision_exported",
           {
@@ -633,8 +648,8 @@ export function ProjectDocumentsSection({
     setExportRevisionsLoading(false);
   };
 
-  const openPdfBuffer = (buffer: Uint8Array, shouldPrint = false) => {
-    const blob = new Blob([buffer], { type: "application/pdf" });
+  const openPdfBuffer = (buffer: ArrayBuffer | Uint8Array, shouldPrint = false) => {
+    const blob = createPdfBlob(buffer);
     const url = URL.createObjectURL(blob);
     if (!shouldPrint) {
       window.open(url, "_blank", "noopener,noreferrer");

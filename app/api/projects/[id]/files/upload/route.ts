@@ -6,7 +6,7 @@ import { adminSupabase } from "@/lib/supabaseAdmin";
 import { createProjectFolders, ensureFolder } from "@/lib/onedrive";
 import { deltaSyncProject, mirrorFile } from "@/lib/files/oneDriveSync";
 import type { ProjectFileRow, ProjectFolderSlot } from "@/lib/projectFiles";
-import { getGraphAccessToken } from "@/lib/auth/apiAccessToken";
+import { resolveOneDriveAccessToken } from "@/lib/auth/oneDriveAccessToken";
 
 const SLOT_TO_SUFFIX: Record<ProjectFolderSlot, string | null> = {
   cad: "_CAD",
@@ -53,10 +53,10 @@ export async function POST(
     );
   }
 
-  const accessToken = await getGraphAccessToken(request);
+  const accessToken = await resolveOneDriveAccessToken(request);
   if (!accessToken) {
     return NextResponse.json(
-      { error: "Sign in with Azure AD to upload to OneDrive." },
+      { error: "OneDrive is not connected. Ask an admin to reconnect the service account." },
       { status: 401 },
     );
   }
