@@ -4,6 +4,12 @@
 
 > Implementation status (Apr 22, 2026): This spec has been substantially delivered and the Document Workspace is now the default editor path for all users in `project-documents-section`. Keep this file as the original product intent reference; see `docs/document_workspace_upgrade_f1fdea2d.plan.md` and `docs/document-workspace-launch-checklist.md` for current execution/launch state.
 
+### Release History (Short)
+- **2026-04-22 — Document Workspace launch (`4b74b06`)**
+  - Project view now uses a centralized Document Workspace for authoring, preview, sync, and export.
+  - Added richer content tooling (snippets, template chips, rich-text controls, inline image flows).
+  - Added calc import/sync support plus job packet and PDF pipeline enhancements for more consistent outputs.
+
 ### Executive Summary
 This plan upgrades the document creation experience inside the existing **Project View page** (`app/projects/[id]/page.tsx` and its child panels) to replace the current simple modal + flat line grid with a modern, visual, low-friction **Document Workspace**.  
 
