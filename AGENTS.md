@@ -38,3 +38,12 @@ When local and remote history diverge:
 4. Re-run:
    - `npm run db:push`
    - `npm run supabase:migration:list:linked`
+
+## Git Branching Rules
+
+When performing git operations:
+
+1. Do not create a new local or remote branch unless the user explicitly asks.
+2. If the user says "commit and push", push only to the current tracked branch.
+3. If the current branch has no upstream, stop and ask which existing branch to push to.
+4. Do not use `git push -u` to create tracking for a new branch unless explicitly requested.
