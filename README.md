@@ -58,6 +58,7 @@ Azure AD app must request scope `Files.ReadWrite.All` for OneDrive folder creati
 - `docs/Project-view-major-update-overview.md` – original goals/spec for the project view documents workspace upgrade.
 - `docs/document_workspace_upgrade_f1fdea2d.plan.md` – implementation plan and phase tracking for the workspace build.
 - `docs/document-workspace-launch-checklist.md` – rollout verification checklist and latest launch status.
+- `docs/document-type-porting-checklist.md` – quote-first checklist for porting workspace and PDF behavior to other document types.
 - `docs/nesting-scale-and-timeouts.md` – proxy/runtime timeout guidance and large-nest operational constraints.
 - `docs/rbac-role-matrix.md` – canonical capability matrix for UI/API and DB policy expectations.
 - `supabase/README.md` – migration changelog, RBAC hardening notes, and required schema operation workflow.

@@ -269,7 +269,7 @@ export function ProjectDocumentsSection({
 
       {documents.editorOpen ? (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm">
-          <div className="mx-auto flex h-full w-full max-w-[1800px] items-center justify-center p-4 sm:p-6">
+          <div className="mx-auto flex h-full w-full max-w-[2340px] items-center justify-center p-4 sm:p-6">
             <div className="flex h-full max-h-[95vh] w-full flex-col rounded-2xl border border-zinc-800 bg-zinc-900 p-4 shadow-2xl sm:p-5">
               <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-2">
                 <p className="text-sm text-zinc-300">
@@ -372,6 +372,7 @@ export function ProjectDocumentsSection({
                   onRemoveOptionGroup={documents.removeOptionGroup}
                   onAssignLineOptionGroup={documents.assignLineOptionGroup}
                   onReorderLineItem={documents.reorderLine}
+                  onMoveLineItemAcrossSections={documents.moveLineAcrossSections}
                   onRemoveLineItem={documents.removeLine}
                   onPatchLineItem={documents.patchLine}
                   onFocusedLineChange={setFocusedLineNo}

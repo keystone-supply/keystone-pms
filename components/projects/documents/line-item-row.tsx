@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, GripVertical, ImagePlus } from "lucide-react";
+import type { DraggableAttributes, SyntheticListenerMap } from "@dnd-kit/core";
 
 import { Button } from "@/components/ui/button";
 import { ImageInsertPicker } from "@/components/projects/documents/image-insert-picker";
@@ -34,6 +35,7 @@ function calcSyncStatus(
 type LineItemRowProps = {
   projectId: string;
   item: DocumentLineItem;
+  displayLineNo?: string;
   indentLevel?: number;
   disabled?: boolean;
   showRowRefPicButton?: boolean;
@@ -41,6 +43,12 @@ type LineItemRowProps = {
   hasCalcConflict?: boolean;
   optionGroups?: OptionGroup[];
   isSelected?: boolean;
+  dragHandleBindings?: {
+    attributes: DraggableAttributes;
+    listeners: SyntheticListenerMap | undefined;
+    setActivatorNodeRef: (element: HTMLElement | null) => void;
+    disabled: boolean;
+  };
   onAddSubItem: (lineNo: number) => void;
   onOptionGroupChange?: (lineNo: number, optionGroupId: string | null) => void;
   onMoveUp: (lineNo: number) => void;
@@ -53,6 +61,7 @@ type LineItemRowProps = {
 export function LineItemRow({
   projectId,
   item,
+  displayLineNo,
   indentLevel = 0,
   disabled = false,
   showRowRefPicButton = false,
@@ -60,6 +69,7 @@ export function LineItemRow({
   hasCalcConflict = false,
   optionGroups = [],
   isSelected = false,
+  dragHandleBindings,
   onAddSubItem,
   onOptionGroupChange,
   onMoveUp,
@@ -115,9 +125,9 @@ export function LineItemRow({
       <div className="sm:col-span-1 space-y-1">
         <input
           className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-zinc-200"
-          value={item.lineNo}
+          value={displayLineNo ?? String(item.lineNo)}
           readOnly
-          title="Line #"
+          title="Item #"
         />
         {status !== "unlinked" ? (
           <span
@@ -139,7 +149,12 @@ export function LineItemRow({
       </div>
       <div className="sm:col-span-1 flex items-start justify-center">
         <span
-          className="inline-flex cursor-grab items-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-[10px] uppercase tracking-wide text-zinc-400"
+          ref={dragHandleBindings?.setActivatorNodeRef}
+          {...dragHandleBindings?.attributes}
+          {...dragHandleBindings?.listeners}
+          className={`inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-[10px] uppercase tracking-wide text-zinc-400 ${
+            dragHandleBindings?.disabled ? "cursor-not-allowed opacity-60" : "cursor-grab active:cursor-grabbing"
+          }`}
           title="Drag to reorder"
         >
           <GripVertical className="size-3" />
@@ -155,7 +170,7 @@ export function LineItemRow({
             partRef: event.target.value.trim() ? event.target.value.trim() : undefined,
           })
         }
-        placeholder="Item #"
+        placeholder="PART #"
       />
       <input
         className="sm:col-span-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white"

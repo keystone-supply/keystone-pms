@@ -37,7 +37,7 @@ export default function WeightCalcPage() {
 
   return (
     <div className="space-y-4">
-      <section className="mx-auto mt-8 max-w-[92.4rem] rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-4 text-zinc-200 sm:px-6">
+      <section className="mx-auto mt-8 max-w-[132rem] rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-4 text-zinc-200 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
         <p className="text-sm text-zinc-300">
           For pricing and quote workflow, open this tape on a project. Standalone mode
           is a scratchpad and only supports local download export.

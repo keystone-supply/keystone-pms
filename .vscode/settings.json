@@ -6,5 +6,6 @@
   "tailwindCSS.includeLanguages": {
     "typescript": "typescript",
     "typescriptreact": "typescriptreact"
-  }
+  },
+  "continue.enableQuickActions": true
 }

@@ -4,12 +4,17 @@ import { test } from "node:test";
 import type { ProjectDocumentDraftMeta } from "@/lib/documentTypes";
 import { PROJECT_DOCUMENT_KINDS } from "@/lib/documentTypes";
 import {
+  buildQuoteLineSections,
   buildDocumentDownloadFilename,
   buildProjectDocumentPdf,
   DOCUMENT_KIND_FILE_CODE,
+  expandOptionModeRowsForOverflow,
+  expandQuoteTableRowsForOverflow,
   formatRevisionSuffix,
   formatPdfJobRevLine,
   normalizeRevisionIndex,
+  optionModeLineColumnStyles,
+  quoteLineSectionColumnStyles,
   type BuildProjectDocumentPdfInput,
 } from "@/lib/documents/buildProjectDocumentPdf";
 
@@ -98,6 +103,7 @@ test("quote PDF builds without throw and produces non-empty output", () => {
   assert.ok(buf.byteLength > 8000);
   assert.ok(pdfBytesInclude(buf, "101365 REV. 0"));
   assert.ok(pdfBytesInclude(buf, "QUOTATION"));
+  assert.ok(pdfBytesInclude(buf, "PART #"));
   assert.ok(pdfBytesInclude(buf, "Doc No. Q-TEST-1"));
   assert.ok(pdfBytesInclude(buf, "Date: Mar 29, 2026"));
   assert.ok(!pdfBytesInclude(buf, "Customer PO:"));
@@ -744,6 +750,198 @@ test("quote PDF can present options without single grand total", () => {
   assert.ok(pdfBytesInclude(buf, "No single grand total is presented."));
 });
 
+test("quote sections reset item numbering per section", () => {
+  const sections = buildQuoteLineSections(
+    [
+      {
+        id: "base-line-1",
+        lineNo: 5,
+        description: "Base line",
+        qty: 1,
+        uom: "EA",
+        unitPrice: 50,
+        extended: 50,
+      },
+      {
+        id: "opt-line-1",
+        optionGroupId: "opt-a",
+        lineNo: 9,
+        description: "Option line 1",
+        qty: 1,
+        uom: "EA",
+        unitPrice: 10,
+        extended: 10,
+      },
+      {
+        id: "opt-line-1-1",
+        parentId: "opt-line-1",
+        optionGroupId: "opt-a",
+        lineNo: 10,
+        description: "Option line 1.1",
+        qty: 1,
+        uom: "EA",
+        unitPrice: 5,
+        extended: 5,
+      },
+      {
+        id: "opt-line-2",
+        optionGroupId: "opt-a",
+        lineNo: 11,
+        description: "Option line 2",
+        qty: 1,
+        uom: "EA",
+        unitPrice: 12,
+        extended: 12,
+      },
+    ],
+    [{ id: "opt-a", title: "Alt A", lineIds: [] }],
+  );
+
+  assert.deepEqual(
+    sections.map((section) => ({
+      id: section.id,
+      itemNos: section.rows.map((row) => row.displayItemNo),
+    })),
+    [
+      { id: "base-scope", itemNos: ["1"] },
+      { id: "opt-a", itemNos: ["1", "1.1", "2"] },
+    ],
+  );
+});
+
+test("PDF section table column widths stay fixed", () => {
+  const quoteColumns = quoteLineSectionColumnStyles();
+  assert.deepEqual(quoteColumns, {
+    0: { cellWidth: 16 },
+    1: { cellWidth: 40 },
+    2: { cellWidth: 93.9 },
+    3: { cellWidth: 30, halign: "right" },
+  });
+
+  const optionColumns = optionModeLineColumnStyles();
+  assert.deepEqual(optionColumns, {
+    0: { cellWidth: 12 },
+    1: { cellWidth: 18 },
+    2: { cellWidth: 66 },
+    3: { cellWidth: 14 },
+    4: { cellWidth: 14 },
+    5: { cellWidth: 18, halign: "right" },
+    6: { cellWidth: 18, halign: "right" },
+  });
+});
+
+test("quote PDF overflow creates continuation row for part and description", () => {
+  const expanded = expandQuoteTableRowsForOverflow([
+    {
+      itemNo: "1",
+      partNo: "PART-1234567890-ABCDEFG",
+      description:
+        "This description is intentionally long so it overflows beyond the single row limit and creates continuation rows.",
+      total: "$42.00",
+      lineNo: 1,
+    },
+  ]);
+
+  assert.ok(expanded.body.length > 1);
+  assert.equal(expanded.body[0][0], "1");
+  assert.equal(expanded.body[0][3], "$42.00");
+  assert.equal(expanded.body[1][0], "");
+  assert.equal(expanded.body[1][3], "");
+  assert.ok(expanded.lineNos.every((lineNo) => lineNo === 1));
+});
+
+test("option-mode PDF overflow creates continuation row for part and description", () => {
+  const expanded = expandOptionModeRowsForOverflow([
+    {
+      itemNo: "1.1",
+      partNo: "PART-1234567890-ABCDEFG",
+      description:
+        "This description is intentionally long so it overflows beyond the option-mode row and creates continuation rows.",
+      qty: "5",
+      uom: "EA",
+      unitPrice: "$10.00",
+      extPrice: "$50.00",
+      lineNo: 7,
+      descriptionIndentPrefix: "  ",
+    },
+  ]);
+
+  assert.ok(expanded.body.length > 1);
+  assert.equal(expanded.body[0][0], "1.1");
+  assert.equal(expanded.body[0][3], "5");
+  assert.equal(expanded.body[0][6], "$50.00");
+  assert.equal(expanded.body[1][0], "");
+  assert.ok(expanded.body[1][2].startsWith("  "));
+  assert.equal(expanded.body[1][3], "");
+  assert.equal(expanded.body[1][6], "");
+  assert.ok(expanded.lineNos.every((lineNo) => lineNo === 7));
+});
+
+test("quote PDF preserves long description tail text", () => {
+  const tailMarker = "TAIL_MARKER_987654321";
+  const longDescription =
+    "This is a very long line item description that should not be truncated in PDF output when wrapping is applied. " +
+    "It must continue rendering all remaining text until the end. " +
+    tailMarker;
+  const input: BuildProjectDocumentPdfInput = {
+    kind: "quote",
+    documentNumber: "Q-LONG-1",
+    issuedDate: new Date(2026, 2, 29),
+    company: {
+      legalName: "Test Co",
+      line1: "1 Main",
+      line2: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "555-0100",
+      email: "sales@example.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
+    },
+    logoDataUrl: null,
+    project: {
+      project_number: "LONG-1",
+      project_name: "Long text",
+      customer: "Geneva Rock",
+      customer_po: null,
+    },
+    fromParty: { label: "Seller", name: "Test Co", lines: [] },
+    toParty: { label: "Customer", name: "Geneva Rock", lines: ["Ogden, UT"] },
+    meta: {
+      ...baseMeta,
+      lines: [
+        {
+          id: "line-1",
+          lineNo: 1,
+          description: longDescription,
+          qty: 1,
+          uom: "EA",
+          unitPrice: 10,
+          extended: 10,
+          partRef: "PART-1",
+        },
+      ],
+    },
+    revisionIndex: 0,
+    quoteResolved: {
+      paymentTerms: "NET 30",
+      customerContact: "Alex",
+      accountManager: "Luke (555-0200)",
+      quoteDescription: "LONG",
+      shippingMethod: "Prepaid",
+    },
+  };
+
+  const buf = buildProjectDocumentPdf(input);
+  assert.ok(pdfBytesInclude(buf, tailMarker));
+});
+
 test("quote PDF renders reference figures block for imageRef lines", () => {
   const input: BuildProjectDocumentPdfInput = {
     kind: "quote",
@@ -935,6 +1133,61 @@ test("purchase order PDF supports option sections with selection-required mode",
   assert.ok(pdfBytesInclude(buf, "BASE SCOPE"));
   assert.ok(pdfBytesInclude(buf, "OPTION: ALTERNATE LAYOUT"));
   assert.ok(pdfBytesInclude(buf, "OPTION SELECTION REQUIRED"));
+});
+
+test("purchase order PDF adds continuation markers when first page overflows", () => {
+  const lines = Array.from({ length: 90 }, (_, index) => ({
+    lineNo: index + 1,
+    description: `Overflow line ${index + 1} - extended description to force pagination`,
+    qty: 1,
+    uom: "EA",
+    unitPrice: 10,
+    extended: 10,
+    partRef: `PART-${index + 1}`,
+  }));
+
+  const input: BuildProjectDocumentPdfInput = {
+    kind: "purchase_order",
+    documentNumber: "PO-CONT-1",
+    issuedDate: new Date("2026-03-29"),
+    company: {
+      legalName: "Keystone Supply",
+      line1: "P.O. Box 129",
+      line2: "",
+      city: "Riverside",
+      state: "UT",
+      postalCode: "84334",
+      country: "USA",
+      phone: "(435) 720-3714",
+      email: "sales@keystone-supply.com",
+      physicalLine1: "12090 North Hwy 38",
+      physicalLine2: "",
+      physicalCity: "Deweyville",
+      physicalState: "UT",
+      physicalPostalCode: "84309",
+      physicalCountry: "USA",
+    },
+    logoDataUrl: null,
+    project: {
+      project_number: "PO-CONT",
+      project_name: "Continuation test",
+      customer: "Acme",
+      customer_po: "PO-77",
+    },
+    fromParty: { label: "Requesting", name: "Keystone Supply", lines: [] },
+    toParty: { label: "Vendor", name: "Acme", lines: ["Ogden, UT"] },
+    meta: {
+      lines,
+      optionGroups: [],
+      packingLines: [],
+      bolRows: [],
+    },
+    revisionIndex: 0,
+  };
+
+  const buf = buildProjectDocumentPdf(input);
+  assert.ok(pdfBytesInclude(buf, "Continues on next page"));
+  assert.ok(pdfBytesInclude(buf, "Continued from page 1"));
 });
 
 test("buildDocumentDownloadFilename quote matches plan shape", () => {

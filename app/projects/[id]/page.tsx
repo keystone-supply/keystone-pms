@@ -399,7 +399,7 @@ export default function ProjectDetail() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
-      <div className="mx-auto max-w-[1700px] px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
+      <div className="mx-auto max-w-[132rem] px-4 py-8 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 lg:py-10">
         <DashboardHeader
           userName={session.user?.name}
           lastUpdated={lastUpdated}
@@ -425,7 +425,7 @@ export default function ProjectDetail() {
         ) : !project ? (
           <div className="mt-16 text-center text-lg text-zinc-400">Project not found</div>
         ) : (
-          <div className="mx-auto mt-10 max-w-[1700px]">
+          <div className="mx-auto mt-10 max-w-[132rem]">
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-800/90 bg-zinc-900/55 p-3">
               <Button type="button" variant="outline" asChild>
                 <Link href="/projects">All projects</Link>

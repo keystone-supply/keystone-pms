@@ -66,7 +66,7 @@ export function DocumentEditorModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm">
-      <div className="my-8 max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
+      <div className="my-8 max-h-[90vh] w-full max-w-[92rem] overflow-y-auto rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
         <h3 className="text-lg font-semibold text-white">{editingId ? "Edit document" : "New document"}</h3>
 
         <div className="mt-4">

@@ -77,7 +77,7 @@ export function RichTextEditor({
     editorProps: {
       attributes: {
         class:
-          "min-h-[180px] w-full bg-zinc-950 px-4 py-3 text-sm text-white focus:outline-none [&_p]:my-1 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-6",
+          "min-h-[180px] w-full bg-zinc-950 px-4 py-3 text-sm text-white break-words [overflow-wrap:anywhere] focus:outline-none [&_p]:my-1 [&_p]:break-words [&_p]:[overflow-wrap:anywhere] [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-6 [&_li]:break-words [&_li]:[overflow-wrap:anywhere]",
       },
     },
     onUpdate: ({ editor: nextEditor }) => {

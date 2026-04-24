@@ -40,7 +40,7 @@ export function DashboardHeader({
     <header className="flex flex-col gap-6 border-b border-zinc-800/90 pb-8 lg:flex-row lg:items-end lg:justify-between">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
         <Image
-          src="/logo.png"
+          src="/main-logo.png"
           alt="Keystone Supply"
           width={220}
           height={108}

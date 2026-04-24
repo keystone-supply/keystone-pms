@@ -152,7 +152,7 @@ export default function ShopTVPage() {
 
   return (
     <div className="min-h-screen overflow-hidden bg-zinc-950 text-white">
-      <div className="mx-auto max-w-[1800px] px-8 py-6">
+      <div className="mx-auto max-w-[2000px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
         <div className="flex items-center justify-between border-b border-zinc-800 pb-6">
           <div className="flex items-center gap-4">
             <div className="flex size-12 items-center justify-center rounded-2xl bg-emerald-500/10">

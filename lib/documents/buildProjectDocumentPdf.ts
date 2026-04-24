@@ -26,6 +26,7 @@ import {
   formatRiversideDateLong,
   formatRiversideDateStampMdY,
 } from "@/lib/documents/riversideTime";
+import { buildHierarchicalItemNumbers } from "@/lib/documents/itemNumbering";
 
 export type PdfProjectContext = {
   project_number: string;
@@ -73,6 +74,15 @@ const PAGE_W = 215.9;
 const PAGE_H = 279.4;
 const TERMS_LINE_HEIGHT = 3.5;
 const FOOTER_GAP = 16;
+const CONTENT_WIDTH = PAGE_W - 2 * MARGIN;
+const CONTINUATION_NOTE = "Continues on next page";
+const CONTINUED_FROM_PREFIX = "Continued from page ";
+const TABLE_MARGIN = {
+  left: MARGIN,
+  right: MARGIN,
+  top: MARGIN + 10,
+  bottom: FOOTER_GAP + 8,
+} as const;
 
 export function normalizeRevisionIndex(revisionIndex?: number): number {
   if (typeof revisionIndex !== "number" || !Number.isFinite(revisionIndex)) {
@@ -101,8 +111,8 @@ function fmtMoney(n: number): string {
 
 export async function fetchLogoDataUrl(kind?: ProjectDocumentKind): Promise<string | null> {
   try {
-    const logoPaths =
-      kind === "rfq" ? ["/rfq-logo.png", "/logo.png"] : ["/logo.png", "/rfq-logo.png"];
+    void kind;
+    const logoPaths = ["/main-logo.png"];
     for (const path of logoPaths) {
       const res = await fetch(path);
       if (!res.ok) continue;
@@ -324,10 +334,11 @@ function descriptionStyleFromRich(line: DocumentLineItem): DescriptionRichStyle 
   };
 }
 
-function formatDescriptionForPdf(line: DocumentLineItem, depth: number, maxLength: number): string {
+function formatDescriptionForPdf(line: DocumentLineItem, depth: number, _maxLength: number): string {
+  void _maxLength;
   const prefix = depth > 0 ? `${"  ".repeat(depth)}` : "";
   return descriptionLinesFromRich(line)
-    .map((lineText) => `${prefix}${lineText}`.slice(0, maxLength))
+    .map((lineText) => `${prefix}${lineText}`)
     .join("\n");
 }
 
@@ -342,38 +353,193 @@ function addLineLinkForTableCell(
   });
 }
 
-type QuoteLineSection = {
-  id: string;
-  title: string;
-  rows: FlattenedDocumentLine[];
+export type QuoteLineSectionRow = FlattenedDocumentLine & {
+  displayItemNo: string;
 };
 
-function buildQuoteLineSections(
+export type QuoteLineSection = {
+  id: string;
+  title: string;
+  rows: QuoteLineSectionRow[];
+};
+
+export function quoteLineSectionColumnStyles(): Record<number, { cellWidth: number; halign?: "right" }> {
+  const itemColWidth = 16;
+  const partColWidth = 40;
+  const totalColWidth = 30;
+  return {
+    0: { cellWidth: itemColWidth },
+    1: { cellWidth: partColWidth },
+    2: { cellWidth: CONTENT_WIDTH - itemColWidth - partColWidth - totalColWidth },
+    3: { cellWidth: totalColWidth, halign: "right" },
+  };
+}
+
+export function optionModeLineColumnStyles(): Record<number, { cellWidth: number; halign?: "right" }> {
+  return {
+    0: { cellWidth: 12 },
+    1: { cellWidth: 18 },
+    2: { cellWidth: 66 },
+    3: { cellWidth: 14 },
+    4: { cellWidth: 14 },
+    5: { cellWidth: 18, halign: "right" },
+    6: { cellWidth: 18, halign: "right" },
+  };
+}
+
+function wrapTextForPdfCell(text: string, maxCharsPerRow: number): string[] {
+  const normalized = (text ?? "").replace(/\r/g, "");
+  if (!normalized.length) return [""];
+  const rows: string[] = [];
+  for (const sourceLine of normalized.split("\n")) {
+    if (!sourceLine.length) {
+      rows.push("");
+      continue;
+    }
+    let cursor = sourceLine;
+    while (cursor.length > maxCharsPerRow) {
+      rows.push(cursor.slice(0, maxCharsPerRow));
+      cursor = cursor.slice(maxCharsPerRow);
+    }
+    rows.push(cursor);
+  }
+  return rows.length ? rows : [""];
+}
+
+function wrapTextToPdfWidth(doc: jsPDF, text: string, maxWidth: number): string[] {
+  const normalized = (text ?? "").replace(/\r/g, "");
+  if (!normalized.length) return [""];
+  const lines = doc.splitTextToSize(normalized, Math.max(1, maxWidth));
+  if (!Array.isArray(lines) || lines.length === 0) return [""];
+  return lines.map((line) => String(line));
+}
+
+type QuoteTableRowPayload = {
+  itemNo: string;
+  partNo: string;
+  description: string;
+  total: string;
+  lineNo: number;
+  descriptionIndentPrefix?: string;
+};
+
+export function expandQuoteTableRowsForOverflow(
+  rows: QuoteTableRowPayload[],
+  partMaxChars = 20,
+  descriptionMaxChars = 72,
+  partWrapFn?: (text: string) => string[],
+  descriptionWrapFn?: (text: string) => string[],
+): { body: string[][]; lineNos: number[] } {
+  const body: string[][] = [];
+  const lineNos: number[] = [];
+  for (const row of rows) {
+    const partRows = partWrapFn
+      ? partWrapFn(row.partNo)
+      : wrapTextForPdfCell(row.partNo, partMaxChars);
+    const wrappedDescriptionRows = descriptionWrapFn
+      ? descriptionWrapFn(row.description)
+      : wrapTextForPdfCell(row.description, descriptionMaxChars);
+    const descriptionRows = wrappedDescriptionRows.map((line) =>
+      `${row.descriptionIndentPrefix ?? ""}${line}`,
+    );
+    const maxRows = Math.max(partRows.length, descriptionRows.length);
+    for (let idx = 0; idx < maxRows; idx += 1) {
+      body.push([
+        idx === 0 ? row.itemNo : "",
+        partRows[idx] ?? "",
+        descriptionRows[idx] ?? "",
+        idx === 0 ? row.total : "",
+      ]);
+      lineNos.push(row.lineNo);
+    }
+  }
+  return { body, lineNos };
+}
+
+type OptionModeTableRowPayload = {
+  itemNo: string;
+  partNo: string;
+  description: string;
+  qty: string;
+  uom: string;
+  unitPrice: string;
+  extPrice: string;
+  lineNo: number;
+  descriptionIndentPrefix?: string;
+};
+
+export function expandOptionModeRowsForOverflow(
+  rows: OptionModeTableRowPayload[],
+  partMaxChars = 20,
+  descriptionMaxChars = 62,
+  partWrapFn?: (text: string) => string[],
+  descriptionWrapFn?: (text: string) => string[],
+): { body: string[][]; lineNos: number[] } {
+  const body: string[][] = [];
+  const lineNos: number[] = [];
+  for (const row of rows) {
+    const partRows = partWrapFn
+      ? partWrapFn(row.partNo)
+      : wrapTextForPdfCell(row.partNo, partMaxChars);
+    const wrappedDescriptionRows = descriptionWrapFn
+      ? descriptionWrapFn(row.description)
+      : wrapTextForPdfCell(row.description, descriptionMaxChars);
+    const descriptionRows = wrappedDescriptionRows.map((line) =>
+      `${row.descriptionIndentPrefix ?? ""}${line}`,
+    );
+    const maxRows = Math.max(partRows.length, descriptionRows.length);
+    for (let idx = 0; idx < maxRows; idx += 1) {
+      body.push([
+        idx === 0 ? row.itemNo : "",
+        partRows[idx] ?? "",
+        descriptionRows[idx] ?? "",
+        idx === 0 ? row.qty : "",
+        idx === 0 ? row.uom : "",
+        idx === 0 ? row.unitPrice : "",
+        idx === 0 ? row.extPrice : "",
+      ]);
+      lineNos.push(row.lineNo);
+    }
+  }
+  return { body, lineNos };
+}
+
+export function buildQuoteLineSections(
   lines: DocumentLineItem[],
   optionGroups: OptionGroup[],
 ): QuoteLineSection[] {
   const groupSet = new Set(optionGroups.map((group) => group.id));
   const baseLines = lines.filter((line) => !line.optionGroupId || !groupSet.has(line.optionGroupId));
+  const baseRows = flattenDocumentLinesForPdf(baseLines);
+  const baseItemNos = buildHierarchicalItemNumbers(baseRows.map((entry) => entry.depth));
   const sections: QuoteLineSection[] = [
     {
       id: "base-scope",
       title: "BASE SCOPE",
-      rows: flattenDocumentLinesForPdf(baseLines),
+      rows: baseRows.map((row, index) => ({
+        ...row,
+        displayItemNo: baseItemNos[index],
+      })),
     },
   ];
   for (const group of optionGroups) {
     const groupLines = lines.filter((line) => line.optionGroupId === group.id);
+    const groupRows = flattenDocumentLinesForPdf(groupLines);
+    const groupItemNos = buildHierarchicalItemNumbers(groupRows.map((entry) => entry.depth));
     sections.push({
       id: group.id,
       title: `OPTION: ${(group.title || "Option").toUpperCase()}`,
-      rows: flattenDocumentLinesForPdf(groupLines),
+      rows: groupRows.map((row, index) => ({
+        ...row,
+        displayItemNo: groupItemNos[index],
+      })),
     });
   }
   return sections;
 }
 
 type ReferenceFigureItem = {
-  lineNo: number;
+  displayItemNo: string;
   sectionLabel: string;
   dataUrl: string;
 };
@@ -388,17 +554,21 @@ function collectReferenceFigureItems(
   lines: DocumentLineItem[],
   optionGroups: OptionGroup[],
 ): ReferenceFigureItem[] {
-  const sectionLabelByGroupId = new Map(optionGroups.map((group) => [group.id, group.title]));
-  return flattenDocumentLinesForPdf(lines)
-    .map(({ line }) => {
+  const grouped = buildQuoteLineSections(lines, optionGroups);
+  return grouped
+    .flatMap((section) =>
+      section.rows.map(({ line, displayItemNo }) => ({
+        line,
+        displayItemNo,
+        sectionLabel: section.title,
+      })),
+    )
+    .map(({ line, displayItemNo, sectionLabel }) => {
       const dataUrl = line.imageRef?.dataUrl;
       if (!dataUrl || !dataUrl.startsWith("data:image/")) return null;
-      const sectionLabel = line.optionGroupId
-        ? (sectionLabelByGroupId.get(line.optionGroupId) ?? "Option")
-        : "Base scope";
       return {
-        lineNo: line.lineNo,
-        sectionLabel,
+        displayItemNo,
+        sectionLabel: line.optionGroupId ? sectionLabel : "BASE SCOPE",
         dataUrl,
       } as ReferenceFigureItem;
     })
@@ -406,15 +576,15 @@ function collectReferenceFigureItems(
 }
 
 function collectReferenceFigureItemsForSectionRows(
-  rows: FlattenedDocumentLine[],
+  rows: QuoteLineSectionRow[],
   sectionLabel: string,
 ): ReferenceFigureItem[] {
   return rows
-    .map(({ line }) => {
+    .map(({ line, displayItemNo }) => {
       const dataUrl = line.imageRef?.dataUrl;
       if (!dataUrl || !dataUrl.startsWith("data:image/")) return null;
       return {
-        lineNo: line.lineNo,
+        displayItemNo,
         sectionLabel,
         dataUrl,
       } as ReferenceFigureItem;
@@ -472,7 +642,7 @@ function renderReferenceFigureBlock(
       }
       doc.setFontSize(7);
       doc.setTextColor(70, 70, 70);
-      const caption = `L${item.lineNo} - ${item.sectionLabel}`;
+      const caption = `L${item.displayItemNo} - ${item.sectionLabel}`;
       doc.text(caption.slice(0, 38), x, y + figureHeight + 3);
     });
     y += figureHeight + rowGap;
@@ -513,6 +683,78 @@ function drawFooter(doc: jsPDF, page: number, total: number, footerKind: FooterK
     align: "right",
   });
   doc.setTextColor(0, 0, 0);
+}
+
+type CondensedHeaderInput = {
+  logoDataUrl: string | null;
+  title: string;
+  projectNumber: string;
+  revisionIndex?: number;
+  documentNumber: string;
+  issuedDate: Date;
+  continuedFromPage: number;
+};
+
+function drawCondensedContinuationHeader(
+  doc: jsPDF,
+  accent: [number, number, number],
+  input: CondensedHeaderInput,
+): void {
+  const y = 9;
+  doc.setDrawColor(220, 220, 220);
+  doc.line(MARGIN, y + 10, PAGE_W - MARGIN, y + 10);
+
+  if (input.logoDataUrl) {
+    try {
+      doc.addImage(input.logoDataUrl, "PNG", MARGIN, y - 1, 22, 10);
+    } catch {
+      /* ignore bad image */
+    }
+  }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(accent[0], accent[1], accent[2]);
+  doc.text(input.title.toUpperCase(), PAGE_W - MARGIN, y + 1, { align: "right" });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7);
+  doc.setTextColor(60, 60, 60);
+  doc.text(
+    `${formatPdfJobRevLine(input.projectNumber, input.revisionIndex)}  •  Doc No. ${input.documentNumber}`,
+    PAGE_W - MARGIN,
+    y + 5,
+    { align: "right" },
+  );
+  doc.text(
+    `Date: ${formatRiversideDateLong(input.issuedDate)}  •  ${CONTINUED_FROM_PREFIX}${input.continuedFromPage}`,
+    PAGE_W - MARGIN,
+    y + 8.5,
+    { align: "right" },
+  );
+  doc.setTextColor(0, 0, 0);
+}
+
+function drawContinuationNoteAboveFooter(doc: jsPDF): void {
+  doc.setFontSize(7);
+  doc.setTextColor(85, 85, 85);
+  doc.text(CONTINUATION_NOTE, PAGE_W - MARGIN, PAGE_H - FOOTER_GAP - 2.5, {
+    align: "right",
+  });
+  doc.setTextColor(0, 0, 0);
+}
+
+function annotateFirstPageContinuation(
+  doc: jsPDF,
+  accent: [number, number, number],
+  input: CondensedHeaderInput,
+  pageCount: number,
+): void {
+  if (pageCount <= 1) return;
+  doc.setPage(1);
+  drawContinuationNoteAboveFooter(doc);
+  doc.setPage(2);
+  drawCondensedContinuationHeader(doc, accent, input);
 }
 
 function appendQuoteTermsPages(doc: jsPDF, accent: [number, number, number]): void {
@@ -699,6 +941,8 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     input.meta.optionGroups ?? [],
   );
   const showSectionSubtotals = quoteSections.length > 1;
+  const subtotalTopGap = compact ? 2 : 3;
+  const noteTopGap = compact ? 7 : 10;
   let subtotal = 0;
   for (const section of quoteSections) {
     doc.setFontSize(compact ? 7 : 8);
@@ -706,25 +950,38 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     doc.text(section.title, MARGIN, y);
     y += compact ? 2.5 : 3;
 
-    const body = section.rows.map(({ line, depth }) => [
-      line.partRef?.trim() ? line.partRef.trim() : String(line.lineNo),
-      formatDescriptionForPdf(line, depth, 100),
-      fmtMoney(line.extended),
-    ]);
-    const sectionLineNos = section.rows.map(({ line }) => line.lineNo);
+    const tableRows = section.rows.map(({ line, depth, displayItemNo }) => ({
+      itemNo: `${"  ".repeat(depth)}${displayItemNo}`,
+      partNo: line.partRef?.trim() ? line.partRef.trim() : "—",
+      description: formatDescriptionForPdf(line, 0, 100),
+      total: fmtMoney(line.extended),
+      lineNo: line.lineNo,
+      descriptionIndentPrefix: "  ".repeat(depth),
+    }));
+    const quoteColumns = quoteLineSectionColumnStyles();
+    const quoteBodyFontSize = compact ? 6 : 8;
+    const quoteCellPadding = compact ? 1.2 : 2;
+    doc.setFontSize(quoteBodyFontSize);
+    const expandedRows = expandQuoteTableRowsForOverflow(
+      tableRows,
+      20,
+      72,
+      (value) => wrapTextToPdfWidth(doc, value, quoteColumns[1].cellWidth - quoteCellPadding * 2),
+      (value) => wrapTextToPdfWidth(doc, value, quoteColumns[2].cellWidth - quoteCellPadding * 2),
+    );
+    const body = expandedRows.body;
+    const sectionLineNos = expandedRows.lineNos;
     const sectionLineStyles = new Map(
       section.rows.map(({ line }) => [line.lineNo, descriptionStyleFromRich(line)]),
     );
     if (body.length > 0) {
       autoTable(doc, {
         startY: y,
-        head: [["ITEM #", "DESCRIPTION", "TOTAL"]],
+        head: [["ITEM #", "PART #", "DESCRIPTION", "TOTAL"]],
         body,
-        margin: { left: MARGIN, right: MARGIN },
-        styles: { fontSize: compact ? 6 : 8, cellPadding: compact ? 1.2 : 2 },
-        columnStyles: {
-          2: { halign: "right" },
-        },
+        margin: TABLE_MARGIN,
+        styles: { fontSize: quoteBodyFontSize, cellPadding: quoteCellPadding },
+        columnStyles: quoteColumns,
         headStyles: {
           fillColor: [accent[0], accent[1], accent[2]],
           textColor: [255, 255, 255],
@@ -732,7 +989,7 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
           cellPadding: compact ? 1 : 2,
         },
         didParseCell: (data) => {
-          if (data.section !== "body" || data.column.index !== 1) return;
+          if (data.section !== "body" || data.column.index !== 2) return;
           const lineNo = sectionLineNos[data.row.index] ?? null;
           if (!lineNo) return;
           const richStyle = sectionLineStyles.get(lineNo);
@@ -742,7 +999,7 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
           if (richStyle.fillColor) data.cell.styles.fillColor = richStyle.fillColor;
         },
         didDrawCell: (data) => {
-          if (data.section !== "body" || data.column.index !== 1) return;
+          if (data.section !== "body" || data.column.index !== 2) return;
           addLineLinkForTableCell(doc, data, sectionLineNos[data.row.index] ?? null);
         },
       });
@@ -758,6 +1015,7 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     const sectionSubtotal = section.rows.reduce((sum, row) => sum + (row.line.extended || 0), 0);
     subtotal += sectionSubtotal;
     if (showSectionSubtotals) {
+      y += subtotalTopGap;
       doc.setFontSize(compact ? 7 : 8);
       doc.setTextColor(55, 55, 55);
       doc.text(section.id === "base-scope" ? "SUBTOTAL" : "OPTION SUBTOTAL", PAGE_W - MARGIN - 44, y, {
@@ -778,6 +1036,7 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     (input.meta.optionGroups?.length ?? 0) > 0;
 
   if (presentAsMultipleOptions) {
+    y += noteTopGap;
     doc.setFontSize(9);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(50, 50, 50);
@@ -789,6 +1048,7 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     doc.text("Totals are shown per section above. No single grand total is presented.", MARGIN, y);
     y += 6;
   } else {
+    y += compact ? 6 : 8;
     doc.setFontSize(9);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(40, 40, 40);
@@ -828,6 +1088,7 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
       y += 5;
     }
 
+    y += compact ? 6 : 8;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.text("TOTAL", labelX, y, { align: "right" });
@@ -836,6 +1097,9 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     y += 8;
   }
 
+  if (!presentAsMultipleOptions) {
+    y += noteTopGap;
+  }
   doc.setFontSize(8);
   doc.setTextColor(45, 45, 45);
   if (qr.paymentTerms.trim()) {
@@ -870,6 +1134,22 @@ function buildQuoteDocumentPdf(input: BuildProjectDocumentPdfInput): ArrayBuffer
     doc.text(noteLines, MARGIN, y);
     y += noteLines.length * 3.5 + 4;
   }
+
+  const quoteBodyPageCount = doc.getNumberOfPages();
+  annotateFirstPageContinuation(
+    doc,
+    accent,
+    {
+      logoDataUrl: input.logoDataUrl,
+      title: "Quotation",
+      projectNumber: input.project.project_number,
+      revisionIndex: input.revisionIndex,
+      documentNumber: input.documentNumber,
+      issuedDate: input.issuedDate,
+      continuedFromPage: 1,
+    },
+    quoteBodyPageCount,
+  );
 
   appendQuoteTermsPages(doc, accent);
 
@@ -1121,6 +1401,8 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
 
     if (optionsModeEnabled) {
       const sections = buildQuoteLineSections(input.meta.lines, input.meta.optionGroups ?? []);
+      const optionSubtotalTopGap = rfqCompact ? 2 : 3;
+      const optionNoteTopGap = rfqCompact ? 7 : 10;
       let runningSubtotal = 0;
       for (const section of sections) {
         doc.setFontSize(rfqCompact ? 6 : 8);
@@ -1128,16 +1410,30 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
         doc.text(section.title, MARGIN, y);
         y += rfqCompact ? 3 : 4;
 
-        const body = section.rows.map(({ line, depth }) => [
-          String(line.lineNo),
-          line.partRef ?? "—",
-          formatDescriptionForPdf(line, depth, 80),
-          String(line.qty),
-          line.uom,
-          fmtMoney(line.unitPrice),
-          fmtMoney(line.extended),
-        ]);
-        const sectionLineNos = section.rows.map(({ line }) => line.lineNo);
+        const tableRows = section.rows.map(({ line, depth, displayItemNo }) => ({
+          itemNo: `${"  ".repeat(depth)}${displayItemNo}`,
+          partNo: line.partRef ?? "—",
+          description: formatDescriptionForPdf(line, 0, 80),
+          qty: String(line.qty),
+          uom: line.uom,
+          unitPrice: fmtMoney(line.unitPrice),
+          extPrice: fmtMoney(line.extended),
+          lineNo: line.lineNo,
+          descriptionIndentPrefix: "  ".repeat(depth),
+        }));
+        const optionColumns = optionModeLineColumnStyles();
+        const optionBodyFontSize = rfqCompact ? 6 : 8;
+        const optionCellPadding = rfqCompact ? 1.2 : 2;
+        doc.setFontSize(optionBodyFontSize);
+        const expandedRows = expandOptionModeRowsForOverflow(
+          tableRows,
+          20,
+          62,
+          (value) => wrapTextToPdfWidth(doc, value, optionColumns[1].cellWidth - optionCellPadding * 2),
+          (value) => wrapTextToPdfWidth(doc, value, optionColumns[2].cellWidth - optionCellPadding * 2),
+        );
+        const body = expandedRows.body;
+        const sectionLineNos = expandedRows.lineNos;
         const sectionLineStyles = new Map(
           section.rows.map(({ line }) => [line.lineNo, descriptionStyleFromRich(line)]),
         );
@@ -1145,11 +1441,12 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
           startY: y,
           head: [["#", "Part / dwg", "Description", "Qty", "UOM", "Unit", "Ext."]],
           body,
-          margin: { left: MARGIN, right: MARGIN },
+          margin: TABLE_MARGIN,
           styles: {
-            fontSize: rfqCompact ? 6 : 8,
-            cellPadding: rfqCompact ? 1.2 : 2,
+            fontSize: optionBodyFontSize,
+            cellPadding: optionCellPadding,
           },
+          columnStyles: optionColumns,
           headStyles: {
             fillColor: [accent[0], accent[1], accent[2]],
             textColor: [255, 255, 255],
@@ -1177,6 +1474,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
           (sum, row) => sum + (row.line.extended || 0),
           0,
         );
+        y += optionSubtotalTopGap;
         doc.setFontSize(rfqCompact ? 7 : 9);
         doc.setTextColor(50, 50, 50);
         doc.text(
@@ -1196,6 +1494,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
       }
 
       if (presentAsMultipleOptions) {
+        y += optionNoteTopGap;
         doc.setFontSize(9);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(50, 50, 50);
@@ -1227,7 +1526,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
         startY: y,
         head: [["#", "Part / dwg", "Description", "Qty", "UOM", "Unit", "Ext."]],
         body,
-        margin: { left: MARGIN, right: MARGIN },
+        margin: TABLE_MARGIN,
         styles: {
           fontSize: rfqCompact ? 6 : 8,
           cellPadding: rfqCompact ? 1.2 : 2,
@@ -1281,7 +1580,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
       startY: y,
       head: [["#", "Description", "Qty", "UOM", "Wt (lb)", "Dims"]],
       body,
-      margin: { left: MARGIN, right: MARGIN },
+      margin: TABLE_MARGIN,
       styles: {
         fontSize: rfqCompact ? 6 : 8,
         cellPadding: rfqCompact ? 1.2 : 2,
@@ -1314,7 +1613,7 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
       startY: y,
       head: [["Commodity / description", "Qty", "Weight (lb)", "NMFC"]],
       body,
-      margin: { left: MARGIN, right: MARGIN },
+      margin: TABLE_MARGIN,
       styles: {
         fontSize: rfqCompact ? 6 : 8,
         cellPadding: rfqCompact ? 1.2 : 2,
@@ -1364,6 +1663,22 @@ export function buildProjectDocumentPdf(input: BuildProjectDocumentPdfInput): Ar
     doc.text(noteLines, MARGIN, y);
     y += noteLines.length * 3.5 + 4;
   }
+
+  const bodyPageCount = doc.getNumberOfPages();
+  annotateFirstPageContinuation(
+    doc,
+    accent,
+    {
+      logoDataUrl: input.logoDataUrl,
+      title,
+      projectNumber: input.project.project_number,
+      revisionIndex: input.revisionIndex,
+      documentNumber: input.documentNumber,
+      issuedDate: input.issuedDate,
+      continuedFromPage: 1,
+    },
+    bodyPageCount,
+  );
 
   const totalPages = doc.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {

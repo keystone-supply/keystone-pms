@@ -110,7 +110,7 @@ function NewProjectForm({
   };
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-[60rem]">
       {submitError ? (
         <div
           className="mb-6 flex items-start justify-between gap-3 rounded-2xl border border-red-500/35 bg-red-500/10 px-4 py-3 text-sm text-red-200"
@@ -240,7 +240,7 @@ function NewProjectWithReturnTo() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
+      <div className="mx-auto max-w-[115rem] px-4 py-8 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 lg:py-10">
         <DashboardHeader
           userName={session.user?.name}
           lastUpdated={lastUpdated}

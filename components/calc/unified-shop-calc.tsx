@@ -540,7 +540,7 @@ export function UnifiedShopCalc({
       <div
         className={
           layout === "page"
-            ? "mx-auto max-w-[92.4rem] px-4 py-8 sm:px-6 lg:px-8 lg:py-10"
+            ? "mx-auto max-w-[132rem] px-4 py-8 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 lg:py-10"
             : "rounded-3xl border border-zinc-800 bg-zinc-900 p-5 sm:p-6"
         }
       >

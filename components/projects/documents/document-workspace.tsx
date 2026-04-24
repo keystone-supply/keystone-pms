@@ -55,6 +55,11 @@ type DocumentWorkspaceProps = {
   onRemoveOptionGroup: (optionGroupId: string) => void;
   onAssignLineOptionGroup: (lineNo: number, optionGroupId: string | null) => void;
   onReorderLineItem: (lineNo: number, targetLineNo: number) => void;
+  onMoveLineItemAcrossSections: (
+    lineNo: number,
+    targetLineNo: number | null,
+    targetOptionGroupId: string | null,
+  ) => void;
   onRemoveLineItem: (lineNo: number) => void;
   onPatchLineItem: (lineNo: number, patch: Partial<DocumentLineItem>) => void;
   onFocusedLineChange: (lineNo: number) => void;
@@ -115,6 +120,7 @@ export function DocumentWorkspace({
   onRemoveOptionGroup,
   onAssignLineOptionGroup,
   onReorderLineItem,
+  onMoveLineItemAcrossSections,
   onRemoveLineItem,
   onPatchLineItem,
   onFocusedLineChange,
@@ -259,6 +265,7 @@ export function DocumentWorkspace({
             onRemoveOptionGroup={onRemoveOptionGroup}
             onAssignLineOptionGroup={onAssignLineOptionGroup}
             onReorderLine={onReorderLineItem}
+            onMoveLineAcrossSections={onMoveLineItemAcrossSections}
             onRemoveLine={onRemoveLineItem}
             onPatchLine={onPatchLineItem}
             onSelectLine={onFocusedLineChange}
@@ -318,6 +325,7 @@ export function DocumentWorkspace({
             onRemoveOptionGroup={onRemoveOptionGroup}
             onAssignLineOptionGroup={onAssignLineOptionGroup}
             onReorderLine={onReorderLineItem}
+            onMoveLineAcrossSections={onMoveLineItemAcrossSections}
             onRemoveLine={onRemoveLineItem}
             onPatchLine={onPatchLineItem}
             onSelectLine={onFocusedLineChange}

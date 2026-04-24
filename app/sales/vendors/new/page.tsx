@@ -135,7 +135,7 @@ export default function NewVendorPage() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
-      <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[70rem] px-4 py-8 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
         <DashboardHeader
           userName={session.user?.name}
           lastUpdated={null}

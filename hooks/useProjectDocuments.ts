@@ -153,7 +153,7 @@ function normalizeDocumentLines(lines: DocumentLineItem[]): DocumentLineItem[] {
   });
 }
 
-function moveLineWithinHierarchy(
+export function moveLineWithinHierarchy(
   lines: DocumentLineItem[],
   lineNo: number,
   direction: "up" | "down",
@@ -172,10 +172,20 @@ function moveLineWithinHierarchy(
   if (!target?.id) return normalized;
   const parentId = target.parentId && byId.has(target.parentId) ? target.parentId : null;
   const siblings = [...(childrenByParent.get(parentId) ?? [])];
+  const targetOptionGroup = target.optionGroupId ?? null;
+  const siblingIndexes = siblings
+    .map((siblingId, siblingIndex) => {
+      const sibling = byId.get(siblingId);
+      return sibling && (sibling.optionGroupId ?? null) === targetOptionGroup ? siblingIndex : -1;
+    })
+    .filter((siblingIndex) => siblingIndex >= 0);
   const index = siblings.indexOf(target.id);
   if (index < 0) return normalized;
-  const swapIndex = direction === "up" ? index - 1 : index + 1;
-  if (swapIndex < 0 || swapIndex >= siblings.length) return normalized;
+  const targetPositionInGroup = siblingIndexes.indexOf(index);
+  if (targetPositionInGroup < 0) return normalized;
+  const swapPositionInGroup = direction === "up" ? targetPositionInGroup - 1 : targetPositionInGroup + 1;
+  if (swapPositionInGroup < 0 || swapPositionInGroup >= siblingIndexes.length) return normalized;
+  const swapIndex = siblingIndexes[swapPositionInGroup];
   const [moved] = siblings.splice(index, 1);
   siblings.splice(swapIndex, 0, moved);
   childrenByParent.set(parentId, siblings);
@@ -191,10 +201,10 @@ function moveLineWithinHierarchy(
     }
   };
   walk(null);
-  return next;
+  return next.map((line, lineIndex) => ({ ...line, lineNo: lineIndex + 1 }));
 }
 
-function reorderLineWithinHierarchy(
+export function reorderLineWithinHierarchy(
   lines: DocumentLineItem[],
   activeLineNo: number,
   targetLineNo: number,
@@ -237,7 +247,93 @@ function reorderLineWithinHierarchy(
     }
   };
   walk(null);
-  return next;
+  return next.map((line, index) => ({ ...line, lineNo: index + 1 }));
+}
+
+export function moveLineBetweenSectionsWithinHierarchy(
+  lines: DocumentLineItem[],
+  activeLineNo: number,
+  targetLineNo: number | null,
+  targetOptionGroupId: string | null,
+): DocumentLineItem[] {
+  const normalized = normalizeDocumentLines(lines);
+  const active = normalized.find((line) => line.lineNo === activeLineNo);
+  if (!active?.id) return normalized;
+
+  const movedIds = new Set<string>([active.id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const line of normalized) {
+      if (!line.id || !line.parentId) continue;
+      if (movedIds.has(line.parentId) && !movedIds.has(line.id)) {
+        movedIds.add(line.id);
+        changed = true;
+      }
+    }
+  }
+
+  const movingBlock = normalized.filter((line) => line.id && movedIds.has(line.id));
+  if (movingBlock.length === 0) return normalized;
+  const remaining = normalized.filter((line) => !line.id || !movedIds.has(line.id));
+
+  const targetLine = targetLineNo == null ? null : remaining.find((line) => line.lineNo === targetLineNo) ?? null;
+  if (targetLineNo != null && !targetLine) return normalized;
+
+  const normalizedTargetGroup = targetOptionGroupId ?? null;
+  const activeCurrentGroup = active.optionGroupId ?? null;
+  const sectionChanged = activeCurrentGroup !== normalizedTargetGroup;
+
+  const first = movingBlock[0];
+  const rebasedBlock = movingBlock.map((line) => {
+    const baseLine = { ...line, optionGroupId: normalizedTargetGroup };
+    if (line.id === first.id && sectionChanged) {
+      return { ...baseLine, parentId: null };
+    }
+    if (line.parentId && !movedIds.has(line.parentId)) {
+      return { ...baseLine, parentId: null };
+    }
+    return baseLine;
+  });
+
+  const insertIndex = (() => {
+    if (targetLine) {
+      const index = remaining.findIndex((line) => line.id === targetLine.id);
+      if (index >= 0) return index;
+    }
+    let lastIndexForSection = -1;
+    for (let index = 0; index < remaining.length; index += 1) {
+      if ((remaining[index].optionGroupId ?? null) === normalizedTargetGroup) {
+        lastIndexForSection = index;
+      }
+    }
+    return lastIndexForSection >= 0 ? lastIndexForSection + 1 : remaining.length;
+  })();
+
+  const next = [...remaining.slice(0, insertIndex), ...rebasedBlock, ...remaining.slice(insertIndex)];
+  return next.map((line, index) => ({ ...line, lineNo: index + 1 }));
+}
+
+export function removeLineWithinHierarchy(lines: DocumentLineItem[], lineNo: number): DocumentLineItem[] {
+  const normalized = normalizeDocumentLines(lines);
+  const targetLine = normalized.find((line) => line.lineNo === lineNo);
+  if (!targetLine?.id) return normalized;
+
+  const removedIds = new Set<string>([targetLine.id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const line of normalized) {
+      if (!line.id || !line.parentId) continue;
+      if (removedIds.has(line.parentId) && !removedIds.has(line.id)) {
+        removedIds.add(line.id);
+        changed = true;
+      }
+    }
+  }
+
+  const kept = normalized.filter((line) => !line.id || !removedIds.has(line.id));
+  return kept.map((line, index) => ({ ...line, lineNo: index + 1 }));
 }
 
 function normalizeMeta(raw: unknown): ProjectDocumentDraftMeta {
@@ -589,24 +685,8 @@ export function useProjectDocuments({
   const removeLine = useCallback(
     (lineNo: number) => {
       const normalizedLines = normalizeDocumentLines(meta.lines);
-      const targetLine = normalizedLines.find((line) => line.lineNo === lineNo);
-      if (!targetLine?.id) return;
-
-      const removedIds = new Set<string>([targetLine.id]);
-      let changed = true;
-      while (changed) {
-        changed = false;
-        for (const line of normalizedLines) {
-          if (!line.id || !line.parentId) continue;
-          if (removedIds.has(line.parentId) && !removedIds.has(line.id)) {
-            removedIds.add(line.id);
-            changed = true;
-          }
-        }
-      }
-
       pushLineUndoSnapshot(normalizedLines);
-      syncLines(normalizedLines.filter((line) => !line.id || !removedIds.has(line.id)));
+      syncLines(removeLineWithinHierarchy(normalizedLines, lineNo));
     },
     [meta.lines, pushLineUndoSnapshot, syncLines],
   );
@@ -657,6 +737,16 @@ export function useProjectDocuments({
     (lineNo: number, targetLineNo: number) => {
       pushLineUndoSnapshot(meta.lines);
       syncLines(reorderLineWithinHierarchy(meta.lines, lineNo, targetLineNo));
+    },
+    [meta.lines, pushLineUndoSnapshot, syncLines],
+  );
+
+  const moveLineAcrossSections = useCallback(
+    (lineNo: number, targetLineNo: number | null, targetOptionGroupId: string | null) => {
+      pushLineUndoSnapshot(meta.lines);
+      syncLines(
+        moveLineBetweenSectionsWithinHierarchy(meta.lines, lineNo, targetLineNo, targetOptionGroupId),
+      );
     },
     [meta.lines, pushLineUndoSnapshot, syncLines],
   );
@@ -1556,6 +1646,7 @@ export function useProjectDocuments({
     moveLineUp,
     moveLineDown,
     reorderLine,
+    moveLineAcrossSections,
     indentLine,
     outdentLine,
     removeLine,
