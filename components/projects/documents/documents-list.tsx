@@ -1,8 +1,12 @@
 "use client";
 
-import { CornerDownLeft, Eye, FileText, HardDriveDownload, History, Printer } from "lucide-react";
+import { CornerDownLeft, Eye, HardDriveDownload, History, Printer } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  DocumentKindIcon,
+  documentKindIconTone,
+} from "@/components/projects/documents/document-kind-icon";
 import { DOCUMENT_KIND_LABEL } from "@/lib/documentTypes";
 import type { ProjectDocumentRevisionRow, ProjectDocumentRow } from "@/lib/projectDocumentDb";
 import { buildRevisionHistoryLabel } from "@/lib/projectDocumentDb";
@@ -69,7 +73,11 @@ export function DocumentsList({
             className="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-950/50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
           >
             <div className="flex items-start gap-3">
-              <FileText className="mt-0.5 size-5 shrink-0 text-sky-400" aria-hidden />
+              <span
+                className={`mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${documentKindIconTone(row.kind)}`}
+              >
+                <DocumentKindIcon kind={row.kind} className="size-4" />
+              </span>
               <div>
                 <p className="font-medium text-white">{DOCUMENT_KIND_LABEL[row.kind]}</p>
                 <p className="font-mono text-sm text-zinc-400">

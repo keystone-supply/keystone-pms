@@ -7,6 +7,7 @@ import {
   moveLineBetweenSectionsWithinHierarchy,
   removeLineWithinHierarchy,
   reorderLineWithinHierarchy,
+  resolveWorkspaceDrivenDocumentKind,
 } from "@/hooks/useProjectDocuments";
 
 function buildLine(id: string, lineNo: number): DocumentLineItem {
@@ -145,5 +146,27 @@ describe("moveLineBetweenSectionsWithinHierarchy", () => {
         { id: "opt-a-1", lineNo: 3, optionGroupId: "opt-a" },
       ],
     );
+  });
+});
+
+describe("resolveWorkspaceDrivenDocumentKind", () => {
+  it("does not override existing edit kind from previous new-document focus", () => {
+    const resolved = resolveWorkspaceDrivenDocumentKind({
+      currentKind: "purchase_order",
+      focusedDocKind: "invoice",
+      editingId: "existing-row-id",
+    });
+
+    assert.equal(resolved, "purchase_order");
+  });
+
+  it("applies focused kind while creating a new document", () => {
+    const resolved = resolveWorkspaceDrivenDocumentKind({
+      currentKind: "quote",
+      focusedDocKind: "invoice",
+      editingId: null,
+    });
+
+    assert.equal(resolved, "invoice");
   });
 });

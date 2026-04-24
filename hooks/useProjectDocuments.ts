@@ -400,6 +400,20 @@ type UseProjectDocumentsParams = {
   canManageDocuments?: boolean;
 };
 
+export function resolveWorkspaceDrivenDocumentKind({
+  currentKind,
+  focusedDocKind,
+  editingId,
+}: {
+  currentKind: ProjectDocumentKind;
+  focusedDocKind: ProjectDocumentKind | null;
+  editingId: string | null;
+}): ProjectDocumentKind {
+  if (editingId != null) return currentKind;
+  if (!focusedDocKind) return currentKind;
+  return focusedDocKind;
+}
+
 export function useProjectDocuments({
   projectId,
   project,
@@ -524,10 +538,11 @@ export function useProjectDocuments({
     };
   }, [project.customer_id, supabase]);
 
-  const openNew = useCallback(() => {
+  const openNew = useCallback((preferredKind?: ProjectDocumentKind) => {
+    const initialKind = preferredKind ?? workspace?.focusedDocKind ?? "quote";
     setEditingId(null);
-    setKind("quote");
-    setDocNumber(suggestDocNumber(project, "quote"));
+    setKind(initialKind);
+    setDocNumber(suggestDocNumber(project, initialKind));
     setVendorId("");
     setMeta(normalizeMeta(buildDefaultDocumentMetaFromProject(project)));
     setCollapsedOptionGroupIds([]);
@@ -538,6 +553,7 @@ export function useProjectDocuments({
     clearLineUndoStack();
     setEditorOpen(true);
     workspace?.setActiveDocumentId(null);
+    workspace?.focus("docs", { docKind: initialKind });
   }, [clearLineUndoStack, project, workspace]);
 
   const closeEditor = useCallback(() => {
@@ -564,6 +580,7 @@ export function useProjectDocuments({
       clearLineUndoStack();
       setEditorOpen(true);
       workspace?.setActiveDocumentId(row.id);
+      workspace?.focus("docs", { docKind: row.kind });
     },
     [clearLineUndoStack, project, workspace],
   );
@@ -924,9 +941,13 @@ export function useProjectDocuments({
   useEffect(() => {
     if (!workspace) return;
     if (workspace.focusTarget !== "docs") return;
-    if (workspace.focusedDocKind) {
-      setKind(workspace.focusedDocKind);
-    }
+    setKind((currentKind) =>
+      resolveWorkspaceDrivenDocumentKind({
+        currentKind,
+        focusedDocKind: workspace.focusedDocKind,
+        editingId,
+      }),
+    );
     if (
       workspace.lastSavedTapeId &&
       lastWorkspaceTapeHandledRef.current !== workspace.lastSavedTapeId
@@ -934,7 +955,7 @@ export function useProjectDocuments({
       lastWorkspaceTapeHandledRef.current = workspace.lastSavedTapeId;
       void openCalcImport(workspace.lastSavedTapeId);
     }
-  }, [openCalcImport, workspace, workspace?.focusTarget, workspace?.focusedDocKind, workspace?.lastSavedTapeId]);
+  }, [editingId, openCalcImport, workspace, workspace?.focusTarget, workspace?.focusedDocKind, workspace?.lastSavedTapeId]);
 
   const loadCalcTapeLines = useCallback(
     async (tapeId: string) => {

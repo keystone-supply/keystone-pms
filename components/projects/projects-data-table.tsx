@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   type ColumnSizingState,
@@ -150,8 +150,9 @@ const baseColumns = [
   columnHelper.accessor((row) => row.customer, {
     id: "customer",
     header: "Customer",
+    size: 126,
     cell: (info) => (
-      <span className="max-w-[10rem] truncate uppercase sm:max-w-[14rem]">
+      <span className="break-words whitespace-normal uppercase">
         {(info.getValue() || "—") as string}
       </span>
     ),
@@ -165,8 +166,9 @@ const baseColumns = [
   columnHelper.accessor((row) => row.created_at, {
     id: "created_at",
     header: "Created",
+    size: 135,
     cell: (info) => (
-      <span className="whitespace-nowrap tabular-nums text-sm text-zinc-300">
+      <span className="tabular-nums text-sm text-zinc-300">
         {formatCreatedAt(info.getValue() as string | null | undefined)}
       </span>
     ),
@@ -184,7 +186,7 @@ const baseColumns = [
     id: "project_name",
     header: "Project name",
     cell: (info) => (
-      <span className="max-w-[12rem] truncate uppercase sm:max-w-xs">
+      <span className="break-words whitespace-normal uppercase">
         {(info.getValue() || "—") as string}
       </span>
     ),
@@ -198,11 +200,12 @@ const baseColumns = [
   columnHelper.display({
     id: "ticker",
     header: "Status ticker",
+    size: 234,
     cell: ({ row }) => (
       <ProjectStatusTicker
         ticker={deriveProjectStatusTicker(row.original)}
         variant="compact"
-        className="min-w-[22rem]"
+        className="min-w-0"
       />
     ),
     sortingFn: (a, b) => {
@@ -230,6 +233,7 @@ const baseColumns = [
   columnHelper.accessor((row) => projectRowHealth(row), {
     id: "health",
     header: "Health",
+    size: 108,
     cell: (info) => {
       const h = info.getValue();
       return (
@@ -265,6 +269,7 @@ const baseColumns = [
   columnHelper.accessor((row) => row.total_quoted ?? 0, {
     id: "total_quoted",
     header: "Quoted",
+    size: 90,
     cell: (info) => (
       <span className="tabular-nums">{formatUsd(Number(info.getValue()) || 0)}</span>
     ),
@@ -316,6 +321,29 @@ export type CompletionFilter = "all" | "active" | "complete" | "cancelled";
 export type SegmentFilter = "all" | "supply" | "industrial" | "other";
 export type YearFilter = "all" | number;
 
+const PROJECTS_TABLE_COLUMN_SIZING_KEY = "projects-data-table:column-sizing:v1";
+const DEFAULT_COLUMN_MIN_SIZE = 40;
+const DEFAULT_COLUMN_MAX_SIZE = 2000;
+const KNOWN_COLUMN_IDS = new Set(
+  baseColumns
+    .map((column) => column.id)
+    .filter((id): id is string => typeof id === "string"),
+);
+
+export function sanitizeColumnSizingState(raw: unknown): ColumnSizingState {
+  if (!raw || typeof raw !== "object") return {};
+  const next: ColumnSizingState = {};
+  for (const [columnId, size] of Object.entries(raw)) {
+    if (!KNOWN_COLUMN_IDS.has(columnId)) continue;
+    if (typeof size !== "number" || !Number.isFinite(size)) continue;
+    next[columnId] = Math.max(
+      DEFAULT_COLUMN_MIN_SIZE,
+      Math.min(DEFAULT_COLUMN_MAX_SIZE, Math.round(size)),
+    );
+  }
+  return next;
+}
+
 type ProjectsDataTableProps = {
   data: DashboardProjectRow[];
   canViewFinancialColumns: boolean;
@@ -330,23 +358,50 @@ const FINANCIAL_COLUMN_IDS = [
 const VISIBLE_ROW_COUNT = 20;
 const TABLE_HEADER_HEIGHT_PX = 44;
 const TABLE_ROW_HEIGHT_PX = 52;
+const DEFAULT_COLUMN_SIZE = 180;
+const CONTROL_INPUT_CLASS =
+  "rounded-xl border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
+
+function isFinancialColumnId(
+  columnId: string,
+): columnId is (typeof FINANCIAL_COLUMN_IDS)[number] {
+  return FINANCIAL_COLUMN_IDS.includes(
+    columnId as (typeof FINANCIAL_COLUMN_IDS)[number],
+  );
+}
 
 export function ProjectsDataTable({
   data,
   canViewFinancialColumns,
 }: ProjectsDataTableProps) {
+  const tableViewportRef = useRef<HTMLDivElement | null>(null);
+  const [tableViewportWidth, setTableViewportWidth] = useState(0);
   const tableViewportMaxHeight =
     TABLE_HEADER_HEIGHT_PX + VISIBLE_ROW_COUNT * TABLE_ROW_HEIGHT_PX;
   const [sorting, setSorting] = useState<SortingState>([
     { id: "project_number", desc: true },
   ]);
-  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const persisted = window.localStorage.getItem(
+        PROJECTS_TABLE_COLUMN_SIZING_KEY,
+      );
+      if (!persisted) return {};
+      return sanitizeColumnSizingState(JSON.parse(persisted));
+    } catch {
+      return {};
+    }
+  });
   const [globalFilter, setGlobalFilter] = useState("");
   const [completion, setCompletion] = useState<CompletionFilter>("all");
   const [segment, setSegment] = useState<SegmentFilter>("all");
-  const [year, setYear] = useState<YearFilter>("all");
+  const [year, setYear] = useState<YearFilter>(() => {
+    const currentYear = riversideYear(new Date().toISOString());
+    return currentYear ?? "all";
+  });
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
-    project_number: false,
+    project_number: true,
     customer: true,
     created_at: true,
     project_name: true,
@@ -390,6 +445,38 @@ export function ProjectsDataTable({
     }));
   }, [canViewFinancialColumns]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (Object.keys(columnSizing).length === 0) {
+        window.localStorage.removeItem(PROJECTS_TABLE_COLUMN_SIZING_KEY);
+        return;
+      }
+      window.localStorage.setItem(
+        PROJECTS_TABLE_COLUMN_SIZING_KEY,
+        JSON.stringify(columnSizing),
+      );
+    } catch {
+      // ignore storage failures to keep table interactive
+    }
+  }, [columnSizing]);
+
+  useEffect(() => {
+    const viewport = tableViewportRef.current;
+    if (!viewport) return;
+    if (typeof window === "undefined") return;
+
+    const measure = () => {
+      setTableViewportWidth(Math.max(0, Math.floor(viewport.clientWidth)));
+    };
+    measure();
+
+    if (!("ResizeObserver" in window)) return;
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
   const yearOptions = useMemo(() => {
     const set = new Set<number>();
     for (const p of data) {
@@ -423,7 +510,7 @@ export function ProjectsDataTable({
     columns: baseColumns,
     defaultColumn: {
       size: 180,
-      minSize: 56,
+      minSize: 40,
       maxSize: 2000,
     },
     state: { sorting, globalFilter, columnVisibility, columnSizing },
@@ -454,6 +541,47 @@ export function ProjectsDataTable({
 
   const rowCount = table.getRowModel().rows.length;
   const scopedCount = filteredSource.length;
+  const visibleLeafColumns = table.getVisibleLeafColumns();
+  const columnWidths = new Map<string, number>();
+  const baseWidthByColumn = new Map<string, number>();
+  let baseTableWidth = 0;
+
+  for (const column of visibleLeafColumns) {
+    const explicitSize = columnSizing[column.id];
+    const columnDefault = column.columnDef.size ?? DEFAULT_COLUMN_SIZE;
+    const min = column.columnDef.minSize ?? DEFAULT_COLUMN_MIN_SIZE;
+    const max = column.columnDef.maxSize ?? DEFAULT_COLUMN_MAX_SIZE;
+    const base = Number.isFinite(explicitSize)
+      ? Number(explicitSize)
+      : columnDefault;
+    const clampedBase = Math.max(min, Math.min(max, base));
+    baseWidthByColumn.set(column.id, clampedBase);
+    baseTableWidth += clampedBase;
+  }
+
+  const scaleFactor =
+    tableViewportWidth > 0 && baseTableWidth > 0
+      ? tableViewportWidth / baseTableWidth
+      : 1;
+
+  let resolvedTableWidth = 0;
+  for (const column of visibleLeafColumns) {
+    const base = baseWidthByColumn.get(column.id) ?? DEFAULT_COLUMN_SIZE;
+    const min = column.columnDef.minSize ?? DEFAULT_COLUMN_MIN_SIZE;
+    const max = column.columnDef.maxSize ?? DEFAULT_COLUMN_MAX_SIZE;
+    const scaled = Math.round(base * scaleFactor);
+    const width = Math.max(min, Math.min(max, scaled));
+    columnWidths.set(column.id, width);
+    resolvedTableWidth += width;
+  }
+
+  if (resolvedTableWidth <= 0) resolvedTableWidth = table.getTotalSize();
+  const visibleColumnCount = visibleLeafColumns.length;
+
+  const resetToDefaultColumnLayout = () => {
+    table.resetColumnSizing(true);
+    setColumnSizing({});
+  };
 
   return (
     <div className="space-y-4">
@@ -481,7 +609,7 @@ export function ProjectsDataTable({
               onChange={(e) =>
                 setCompletion(e.target.value as CompletionFilter)
               }
-              className="rounded-xl border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              className={CONTROL_INPUT_CLASS}
               aria-label="Filter by completion status"
             >
               <option value="all">All</option>
@@ -497,7 +625,7 @@ export function ProjectsDataTable({
               onChange={(e) =>
                 setSegment(e.target.value as SegmentFilter)
               }
-              className="rounded-xl border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              className={CONTROL_INPUT_CLASS}
               aria-label="Filter supply / industrial"
             >
               <option value="all">All</option>
@@ -519,7 +647,7 @@ export function ProjectsDataTable({
                 const n = Number.parseInt(v, 10);
                 setYear(Number.isFinite(n) ? n : "all");
               }}
-              className="rounded-xl border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              className={CONTROL_INPUT_CLASS}
               aria-label="Filter by job created year"
             >
               <option value="all">All years</option>
@@ -531,6 +659,14 @@ export function ProjectsDataTable({
             </select>
           </div>
 
+          <button
+            type="button"
+            onClick={resetToDefaultColumnLayout}
+            className="rounded-xl border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
+          >
+            Reset column sizes
+          </button>
+
           <details className="group relative">
             <summary className="cursor-pointer list-none rounded-xl border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-sm font-medium text-zinc-200 marker:hidden [&::-webkit-details-marker]:hidden">
               <span className="inline-flex items-center gap-2">
@@ -541,12 +677,7 @@ export function ProjectsDataTable({
             <div className="absolute right-0 z-20 mt-2 min-w-[12rem] space-y-2 rounded-xl border border-zinc-700 bg-zinc-900 p-3 shadow-xl">
               {table.getAllLeafColumns().map((column) => {
                 if (!column.getCanHide()) return null;
-                if (
-                  !canViewFinancialColumns &&
-                  FINANCIAL_COLUMN_IDS.includes(
-                    column.id as (typeof FINANCIAL_COLUMN_IDS)[number],
-                  )
-                ) {
+                if (!canViewFinancialColumns && isFinancialColumnId(column.id)) {
                   return null;
                 }
                 return (
@@ -585,14 +716,21 @@ export function ProjectsDataTable({
         loaded
       </p>
 
-      <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/50">
+      <div
+        className={cn(
+          "overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/50",
+          table.getState().columnSizingInfo.isResizingColumn &&
+            "cursor-col-resize select-none",
+        )}
+      >
         <div
+          ref={tableViewportRef}
           className="overflow-auto"
           style={{ maxHeight: `${tableViewportMaxHeight}px` }}
         >
           <Table
             className="w-max table-fixed border-0 text-white"
-            style={{ minWidth: table.getTotalSize() }}
+            style={{ minWidth: resolvedTableWidth, width: resolvedTableWidth }}
           >
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -608,12 +746,12 @@ export function ProjectsDataTable({
                     <TableHead
                       key={header.id}
                       className={cn(
-                        "relative h-11 whitespace-nowrap bg-zinc-950 px-3 text-xs font-medium uppercase tracking-wider text-zinc-400",
+                        "relative h-11 break-words whitespace-normal bg-zinc-950 px-3 text-xs font-medium uppercase tracking-wider text-zinc-400",
                         sticky &&
                           "sticky left-0 z-20 border-r border-zinc-800 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.5)]",
                       )}
                       style={{
-                        width: header.getSize(),
+                        width: columnWidths.get(header.column.id) ?? header.getSize(),
                         minWidth: header.column.columnDef.minSize,
                       }}
                     >
@@ -621,7 +759,7 @@ export function ProjectsDataTable({
                         <button
                           type="button"
                           className={cn(
-                            "inline-flex items-center gap-1 select-none hover:text-zinc-200",
+                            "flex w-full items-start gap-1 text-left select-none hover:text-zinc-200",
                             header.column.getCanSort() &&
                               "cursor-pointer rounded-md px-1 py-0.5 -mx-1 hover:bg-zinc-800/80",
                           )}
@@ -638,7 +776,7 @@ export function ProjectsDataTable({
                             header.getContext(),
                           )}
                           {header.column.getCanSort() ? (
-                            <span className="inline-flex w-4 flex-col leading-none text-zinc-600">
+                            <span className="inline-flex w-4 shrink-0 flex-col leading-none text-zinc-600">
                               <ChevronUp
                                 className={cn(
                                   "-mb-1 size-3",
@@ -662,13 +800,55 @@ export function ProjectsDataTable({
                       {header.column.getCanResize() ? (
                         <div
                           role="separator"
+                          tabIndex={0}
+                          aria-orientation="vertical"
                           aria-label={`Resize ${String(header.column.columnDef.header)} column`}
+                          aria-valuemin={header.column.columnDef.minSize ?? DEFAULT_COLUMN_MIN_SIZE}
+                          aria-valuemax={header.column.columnDef.maxSize ?? DEFAULT_COLUMN_MAX_SIZE}
+                          aria-valuenow={
+                            columnWidths.get(header.column.id) ?? header.getSize()
+                          }
+                          title="Drag to resize. Double-click to reset width."
                           onClick={(event) => event.stopPropagation()}
                           onDoubleClick={() => header.column.resetSize()}
-                          onMouseDown={header.getResizeHandler()}
-                          onTouchStart={header.getResizeHandler()}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            header.getResizeHandler()(event);
+                          }}
+                          onTouchStart={(event) => {
+                            event.stopPropagation();
+                            header.getResizeHandler()(event);
+                          }}
+                          onKeyDown={(event) => {
+                            const min = header.column.columnDef.minSize ?? DEFAULT_COLUMN_MIN_SIZE;
+                            const max = header.column.columnDef.maxSize ?? DEFAULT_COLUMN_MAX_SIZE;
+                            const columnId = header.column.id;
+                            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                              event.preventDefault();
+                              const delta = event.key === "ArrowRight" ? 16 : -16;
+                              setColumnSizing((prev) => {
+                                const current = prev[columnId] ?? header.getSize();
+                                return {
+                                  ...prev,
+                                  [columnId]: Math.max(
+                                    min,
+                                    Math.min(max, Math.round(current + delta)),
+                                  ),
+                                };
+                              });
+                            }
+                            if (event.key === "Home") {
+                              event.preventDefault();
+                              setColumnSizing((prev) => ({ ...prev, [columnId]: min }));
+                            }
+                            if (event.key === "End") {
+                              event.preventDefault();
+                              setColumnSizing((prev) => ({ ...prev, [columnId]: max }));
+                            }
+                          }}
                           className={cn(
-                            "absolute right-0 top-0 h-full w-2 translate-x-1/2 cursor-col-resize select-none touch-none bg-zinc-700/20 transition-colors hover:bg-blue-400/60",
+                            "absolute right-0 top-0 h-full w-4 translate-x-1/2 cursor-col-resize select-none touch-none rounded-sm transition-colors before:absolute before:bottom-1 before:left-1/2 before:top-1 before:w-px before:-translate-x-1/2 before:bg-zinc-600/60 hover:bg-blue-400/20 hover:before:bg-blue-400/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50",
                             header.column.getIsResizing() && "bg-blue-400/80",
                           )}
                         />
@@ -683,7 +863,7 @@ export function ProjectsDataTable({
             {table.getRowModel().rows.length === 0 ? (
               <TableRow className="border-zinc-800 hover:bg-transparent">
                 <TableCell
-                  colSpan={baseColumns.length}
+                  colSpan={visibleColumnCount}
                   className="h-32 text-center text-zinc-500"
                 >
                   No projects match filters — try clearing search or filters
@@ -703,12 +883,13 @@ export function ProjectsDataTable({
                       <TableCell
                         key={cell.id}
                         className={cn(
-                          "py-3 text-sm text-zinc-100",
+                          "break-words whitespace-normal py-3 text-sm text-zinc-100",
                           sticky &&
                             "sticky left-0 z-10 border-r border-zinc-800 bg-zinc-900 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.45)]",
                         )}
                         style={{
-                          width: cell.column.getSize(),
+                          width:
+                            columnWidths.get(cell.column.id) ?? cell.column.getSize(),
                           minWidth: cell.column.columnDef.minSize,
                         }}
                       >

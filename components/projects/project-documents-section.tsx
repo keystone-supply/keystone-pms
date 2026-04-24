@@ -10,10 +10,17 @@ import { DocumentWorkspace } from "@/components/projects/documents/document-work
 import { DocumentExportModal } from "@/components/projects/documents/document-export-modal";
 import { DocumentsList } from "@/components/projects/documents/documents-list";
 import {
+  DocumentKindIcon,
+  documentKindIconTone,
+} from "@/components/projects/documents/document-kind-icon";
+import {
   JobPacketBuilder,
   type JobPacketSelectedFile,
 } from "@/components/projects/documents/job-packet-builder";
-import { DOCUMENT_KIND_LABEL } from "@/lib/documentTypes";
+import {
+  DOCUMENT_KIND_LABEL,
+  PROJECT_DOCUMENT_KINDS,
+} from "@/lib/documentTypes";
 import {
   buildJobPacketFilename,
   buildJobPacketPdf,
@@ -28,6 +35,18 @@ import {
 import { useProjectDocuments } from "@/hooks/useProjectDocuments";
 import { useLivePreview } from "@/hooks/useLivePreview";
 import { generateProjectDocumentPdfBuffer } from "@/lib/documents/composePdfInput";
+
+const DOCUMENT_KIND_PICKER_HINT: Record<
+  (typeof PROJECT_DOCUMENT_KINDS)[number],
+  string
+> = {
+  rfq: "Request pricing from vendor",
+  quote: "Send pricing to customer",
+  purchase_order: "Issue purchase order to vendor",
+  packing_list: "Prepare shipping pack list",
+  bol: "Create bill of lading",
+  invoice: "Bill customer for completed work",
+};
 
 async function buildPacketDocumentSection(
   row: ProjectDocumentRow,
@@ -105,6 +124,7 @@ export function ProjectDocumentsSection({
   const [jobPacketOpen, setJobPacketOpen] = useState(false);
   const [jobPacketBusy, setJobPacketBusy] = useState(false);
   const [jobPacketError, setJobPacketError] = useState<string | null>(null);
+  const [newDocumentPickerOpen, setNewDocumentPickerOpen] = useState(false);
 
   const activeFocusedLineNo = documents.editorOpen ? focusedLineNo : null;
   const canBuildPacket = canManageDocuments && (documents.rows.length > 0 || project.files_phase1_enabled);
@@ -236,7 +256,12 @@ export function ProjectDocumentsSection({
             <BriefcaseBusiness className="size-4" />
             Build Job Packet
           </Button>
-          <Button type="button" onClick={documents.openNew} disabled={!canManageDocuments} className="gap-2">
+          <Button
+            type="button"
+            onClick={() => setNewDocumentPickerOpen(true)}
+            disabled={!canManageDocuments}
+            className="gap-2"
+          >
             <Plus className="size-4" />
             New document
           </Button>
@@ -437,6 +462,58 @@ export function ProjectDocumentsSection({
           onClose={() => setJobPacketOpen(false)}
           onBuild={buildJobPacket}
         />
+      ) : null}
+
+      {newDocumentPickerOpen ? (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm">
+          <div className="mx-auto flex h-full w-full max-w-4xl items-center justify-center p-4 sm:p-6">
+            <div className="w-full rounded-3xl border border-zinc-800 bg-zinc-900/95 p-5 shadow-2xl sm:p-6">
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-semibold text-white">Create new document</h3>
+                  <p className="mt-1 text-sm text-zinc-400">
+                    Choose the document type to open in the workspace editor.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setNewDocumentPickerOpen(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {PROJECT_DOCUMENT_KINDS.map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    className="flex items-start gap-3 rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3 text-left transition hover:border-zinc-700 hover:bg-zinc-900"
+                    onClick={() => {
+                      documents.openNew(kind);
+                      setNewDocumentPickerOpen(false);
+                    }}
+                  >
+                    <span
+                      className={`inline-flex size-9 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${documentKindIconTone(kind)}`}
+                    >
+                      <DocumentKindIcon kind={kind} className="size-4" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-zinc-100">
+                        {DOCUMENT_KIND_LABEL[kind]}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-zinc-400">
+                        {DOCUMENT_KIND_PICKER_HINT[kind]}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );
